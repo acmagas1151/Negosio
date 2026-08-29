@@ -20,6 +20,11 @@ public sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
             .HasConversion<int>();
 
         builder.Property(t => t.IsActive).IsRequired();
+        // Default constraints exist so the Phase 3 migration can back-fill existing tenant rows;
+        // ValueGeneratedNever keeps these out of the INSERT OUTPUT clause (which would split the
+        // tenant + branch + owner insert batch and break duplicate-key translation on register).
+        builder.Property(t => t.TaxRatePercent).IsRequired().HasPrecision(5, 2).HasDefaultValue(0m).ValueGeneratedNever();
+        builder.Property(t => t.PricesIncludeTax).IsRequired().HasDefaultValue(false).ValueGeneratedNever();
         builder.Property(t => t.CreatedAtUtc).IsRequired();
         builder.Property(t => t.UpdatedAtUtc).IsRequired();
 

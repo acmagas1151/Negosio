@@ -1,0 +1,44 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Negosio.Api.Authorization;
+using Negosio.Application.Common;
+using Negosio.Application.Pos;
+
+namespace Negosio.Api.Controllers;
+
+[ApiController]
+[Authorize(Policy = AuthorizationPolicies.PosOperate)]
+[Route("api/pos")]
+public sealed class PosController : ControllerBase
+{
+    private readonly IPosCatalogService _catalog;
+    private readonly ICheckoutService _checkout;
+
+    public PosController(IPosCatalogService catalog, ICheckoutService checkout)
+    {
+        _catalog = catalog;
+        _checkout = checkout;
+    }
+
+    [HttpGet("catalog")]
+    [ProducesResponseType(typeof(PagedResult<PosCatalogItemDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedResult<PosCatalogItemDto>>> Catalog(
+        [FromQuery] PosCatalogQuery query,
+        CancellationToken cancellationToken)
+        => Ok(await _catalog.SearchAsync(query, cancellationToken));
+
+    [HttpGet("catalog/barcode/{barcode}")]
+    [ProducesResponseType(typeof(PosCatalogItemDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PosCatalogItemDto>> Barcode(
+        string barcode,
+        [FromQuery] Guid branchId,
+        CancellationToken cancellationToken)
+        => Ok(await _catalog.BarcodeLookupAsync(branchId, barcode, cancellationToken));
+
+    [HttpPost("checkout")]
+    [ProducesResponseType(typeof(SaleResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<SaleResultDto>> Checkout(
+        [FromBody] CheckoutRequest request,
+        CancellationToken cancellationToken)
+        => Ok(await _checkout.CheckoutAsync(request, cancellationToken));
+}

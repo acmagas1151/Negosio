@@ -15,6 +15,24 @@ public static class SqlUniqueViolation
 
     public static bool Is(DbUpdateException exception) => TryGetConstraintName(exception, out _);
 
+    /// <summary>
+    /// True when this exception (or any inner) is a SQL Server unique violation. Accepts a raw
+    /// <see cref="Exception"/> so callers running raw SQL (e.g. a counter INSERT) can catch it too.
+    /// </summary>
+    public static bool Is(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            var number = current.GetType().GetProperty("Number")?.GetValue(current) as int?;
+            if (number is not null && Array.IndexOf(UniqueViolationNumbers, number.Value) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static bool TryGetConstraintName(DbUpdateException exception, out string? constraintName)
     {
         constraintName = null;

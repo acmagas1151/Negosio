@@ -5,6 +5,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Negosio.Application.Auth;
 using Negosio.Application.Catalog;
 using Negosio.Application.Inventory;
+using Negosio.Application.Pos;
+using Negosio.Application.Registers;
 using Negosio.Infrastructure.Persistence;
 
 namespace Negosio.IntegrationTests.Infrastructure;
@@ -33,6 +35,9 @@ public abstract class IntegrationTest : IAsyncLifetime
 
         // Order respects FKs; cascade would also work but explicit is clearer for a test helper.
         await db.Database.ExecuteSqlRawAsync(
+            "DELETE FROM RefundPayments; DELETE FROM SaleReturnItems; DELETE FROM SaleReturns; " +
+            "DELETE FROM Payments; DELETE FROM SaleItems; DELETE FROM Sales; " +
+            "DELETE FROM RegisterSessions; DELETE FROM Registers; DELETE FROM DocumentNumberCounters; " +
             "DELETE FROM StockMovements; DELETE FROM BranchInventories; DELETE FROM ProductVariants; " +
             "DELETE FROM Products; DELETE FROM Categories; " +
             "DELETE FROM Users; DELETE FROM Branches; DELETE FROM Tenants;");
@@ -122,4 +127,52 @@ public abstract class IntegrationTest : IAsyncLifetime
             .Where(b => b.TenantId == login.User.TenantId)
             .Select(b => b.Id)
             .FirstAsync());
+
+    // ---- Phase 3 helpers ----
+
+    protected async Task<RegisterDto> CreateRegisterAsync(Guid branchId, string name = "Main Counter", string code = "R1")
+    {
+        var response = await Client.PostAsJsonAsync("/api/registers", new CreateRegisterRequest(branchId, name, code));
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<RegisterDto>(TestJson.Options))!;
+    }
+
+    protected async Task<RegisterSessionDto> OpenSessionAsync(Guid registerId, decimal openingCash = 1000m)
+    {
+        var response = await Client.PostAsJsonAsync("/api/register-sessions/open", new OpenRegisterSessionRequest(registerId, openingCash));
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+    }
+
+    /// <summary>Create a simple tracked product and give it opening stock at the branch. Returns (productId, variantId).</summary>
+    protected async Task<(Guid ProductId, Guid VariantId)> SeedStockedProductAsync(
+        Guid branchId,
+        Guid categoryId,
+        string name = "Coke 1.5L",
+        string sku = "SKU-1",
+        decimal sellingPrice = 75m,
+        decimal costPrice = 40m,
+        decimal openingStock = 20m)
+    {
+        var product = await CreateSimpleProductAsync(categoryId, name, sku: sku, sellingPrice: sellingPrice, costPrice: costPrice);
+        var variantId = product.Variants.Single().Id;
+
+        if (openingStock > 0m)
+        {
+            await AdjustInventoryOkAsync(new AdjustInventoryRequest(
+                branchId, product.Product.Id, null, openingStock, "Opening stock", ReorderLevel: null, ExpectedConcurrencyToken: null));
+        }
+
+        return (product.Product.Id, variantId);
+    }
+
+    protected Task<HttpResponseMessage> CheckoutAsync(CheckoutRequest request) =>
+        Client.PostAsJsonAsync("/api/pos/checkout", request);
+
+    protected async Task<SaleResultDto> CheckoutOkAsync(CheckoutRequest request)
+    {
+        var response = await CheckoutAsync(request);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<SaleResultDto>(TestJson.Options))!;
+    }
 }

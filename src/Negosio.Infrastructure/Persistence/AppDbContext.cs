@@ -29,6 +29,24 @@ public sealed class AppDbContext : DbContext, IApplicationDbContext
 
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
 
+    public DbSet<Register> Registers => Set<Register>();
+
+    public DbSet<RegisterSession> RegisterSessions => Set<RegisterSession>();
+
+    public DbSet<Sale> Sales => Set<Sale>();
+
+    public DbSet<SaleItem> SaleItems => Set<SaleItem>();
+
+    public DbSet<Payment> Payments => Set<Payment>();
+
+    public DbSet<SaleReturn> SaleReturns => Set<SaleReturn>();
+
+    public DbSet<SaleReturnItem> SaleReturnItems => Set<SaleReturnItem>();
+
+    public DbSet<RefundPayment> RefundPayments => Set<RefundPayment>();
+
+    public DbSet<DocumentNumberCounter> DocumentNumberCounters => Set<DocumentNumberCounter>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());

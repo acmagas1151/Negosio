@@ -21,6 +21,8 @@ public class Tenant : Entity
         Name = name;
         BusinessType = businessType;
         IsActive = true;
+        TaxRatePercent = 0m;
+        PricesIncludeTax = false;
     }
 
     public string Name { get; private set; }
@@ -28,6 +30,27 @@ public class Tenant : Entity
     public BusinessType BusinessType { get; private set; }
 
     public bool IsActive { get; private set; }
+
+    /// <summary>Sales tax rate applied at checkout, as a percentage (e.g. 12.00). 0 = no tax.</summary>
+    public decimal TaxRatePercent { get; private set; }
+
+    /// <summary>
+    /// When true, catalog selling prices already include tax (tax-inclusive). When false (default),
+    /// tax is added on top at checkout (tax-exclusive). The two modes are never mixed.
+    /// </summary>
+    public bool PricesIncludeTax { get; private set; }
+
+    public void ConfigureTax(decimal taxRatePercent, bool pricesIncludeTax)
+    {
+        if (taxRatePercent < 0m || taxRatePercent > 100m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(taxRatePercent), "Tax rate must be between 0 and 100.");
+        }
+
+        TaxRatePercent = taxRatePercent;
+        PricesIncludeTax = pricesIncludeTax;
+        Touch();
+    }
 
     public IReadOnlyCollection<Branch> Branches => _branches.AsReadOnly();
 

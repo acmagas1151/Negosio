@@ -29,6 +29,25 @@ public interface IApplicationDbContext
 
     DbSet<StockMovement> StockMovements { get; }
 
+    // Phase 3: Retail POS
+    DbSet<Register> Registers { get; }
+
+    DbSet<RegisterSession> RegisterSessions { get; }
+
+    DbSet<Sale> Sales { get; }
+
+    DbSet<SaleItem> SaleItems { get; }
+
+    DbSet<Payment> Payments { get; }
+
+    DbSet<SaleReturn> SaleReturns { get; }
+
+    DbSet<SaleReturnItem> SaleReturnItems { get; }
+
+    DbSet<RefundPayment> RefundPayments { get; }
+
+    DbSet<DocumentNumberCounter> DocumentNumberCounters { get; }
+
     DatabaseFacade Database { get; }
 
     /// <summary>Access to change-tracking for one entity (used to set the original rowversion on adjust).</summary>

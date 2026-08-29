@@ -13,7 +13,10 @@ public sealed record DashboardResponse(
     int UserCount,
     int TotalProducts,
     int ActiveCategories,
-    int LowStockItems);
+    int LowStockItems,
+    decimal TodaysSales,
+    int TodaysTransactions,
+    decimal AverageTransactionValue);
 
 public interface IDashboardService
 {
@@ -53,12 +56,28 @@ public sealed class DashboardService : IDashboardService
         var lowStockItems = await _db.BranchInventories
             .CountAsync(i => i.TenantId == tenantId && i.QuantityOnHand <= i.ReorderLevel, cancellationToken);
 
+        // Today's sales: SQL aggregates only, no row materialisation.
+        var startOfDayUtc = DateTime.UtcNow.Date;
+        var todaysSalesQuery = _db.Sales.Where(s =>
+            s.TenantId == tenantId
+            && (s.Status == SaleStatus.Completed || s.Status == SaleStatus.PartiallyRefunded)
+            && s.CompletedAtUtc >= startOfDayUtc);
+
+        var todaysSales = await todaysSalesQuery.SumAsync(s => (decimal?)s.GrandTotal, cancellationToken) ?? 0m;
+        var todaysTransactions = await todaysSalesQuery.CountAsync(cancellationToken);
+        var averageTransactionValue = todaysTransactions == 0
+            ? 0m
+            : Math.Round(todaysSales / todaysTransactions, 2, MidpointRounding.AwayFromZero);
+
         return new DashboardResponse(
             new DashboardTenantDto(tenant.Id, tenant.Name, tenant.BusinessType),
             branchCount,
             userCount,
             totalProducts,
             activeCategories,
-            lowStockItems);
+            lowStockItems,
+            todaysSales,
+            todaysTransactions,
+            averageTransactionValue);
     }
 }

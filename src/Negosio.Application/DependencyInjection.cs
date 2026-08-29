@@ -2,8 +2,13 @@ using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Negosio.Application.Auth;
 using Negosio.Application.Catalog;
+using Negosio.Application.Common;
 using Negosio.Application.Dashboard;
 using Negosio.Application.Inventory;
+using Negosio.Application.Pos;
+using Negosio.Application.Registers;
+using Negosio.Application.Sales;
+using Negosio.Application.Settings;
 
 namespace Negosio.Application;
 
@@ -21,6 +26,19 @@ public static class DependencyInjection
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IProductVariantService, ProductVariantService>();
         services.AddScoped<IInventoryService, InventoryService>();
+        services.AddScoped<IInventoryPosting, InventoryPosting>();
+
+        // Phase 3: Retail POS
+        services.AddScoped<IDocumentNumberService, DocumentNumberService>();
+        services.AddScoped<IRegisterService, RegisterService>();
+        services.AddScoped<IRegisterSessionService, RegisterSessionService>();
+        services.AddScoped<IPosCatalogService, PosCatalogService>();
+        services.AddScoped<ICheckoutService, CheckoutService>();
+        services.AddScoped<SaleQueryService>();
+        services.AddScoped<ISaleQueryService>(sp => sp.GetRequiredService<SaleQueryService>());
+        services.AddScoped<IReceiptService, ReceiptService>();
+        services.AddScoped<IReturnService, ReturnService>();
+        services.AddScoped<ITenantSettingsService, TenantSettingsService>();
 
         return services;
     }

@@ -393,12 +393,110 @@ data are untouched.
 
 ---
 
+## Phase 3 — Retail POS (backend)
+
+Phase 3 adds a reliable retail sales workflow on top of the Phase 2 catalog and inventory: POS
+terminals, cash-drawer sessions, a cashier-only catalog, a strongly-consistent checkout, receipts,
+sales history and basic returns/refunds. No restaurant tables, kitchen, recipes, suppliers,
+transfers, payment gateways or e-commerce. Phase 1/2 architecture, auth and the inventory ledger are
+reused unchanged.
+
+### Registers & sessions
+
+`Register` = a physical/logical till at a branch (`Code` unique per branch). A cashier opens a
+`RegisterSession` with a starting cash count and rings sales against it; closing records the
+expected cash (`OpeningCash` + cash payments − cash refunds for the session) and the difference. A
+**filtered unique index** (`RegisterId WHERE Status = Open`) enforces at most one open session per
+register. `POST /api/register-sessions/open`, `POST /api/register-sessions/{id}/close`,
+`GET /api/register-sessions/current`.
+
+### Checkout — one transaction
+
+`POST /api/pos/checkout` completes a sale. Everything below commits together or rolls back entirely:
+`Sale` + `SaleItem`s + `Payment`s + inventory deductions + `StockMovement.Sale` rows. The backend
+**recalculates every amount** — the request carries no prices or totals, only variant ids,
+quantities and discounts; unit prices come from `ProductVariant.SellingPrice`. Duplicate variant
+lines are merged into one summed quantity.
+
+### Idempotency
+
+The client sends one `clientRequestId` (GUID) per checkout attempt and reuses it on retry.
+`Sale.ClientRequestId` is unique per tenant; a repeat returns the **existing** sale (HTTP 200,
+`wasExistingRequest: true`) — no second sale, payment or deduction. See
+[ADR 0004](docs/adr/0004-checkout-idempotency.md).
+
+### Inventory concurrency
+
+POS deduction is an **atomic conditional UPDATE** (`... WHERE QuantityOnHand >= @qty`) inside the
+checkout transaction — 0 rows affected ⇒ `409 INSUFFICIENT_INVENTORY` and rollback. Two checkouts
+for the last unit: exactly one succeeds, stock lands at 0, never negative, one ledger movement. No
+UI concurrency token (unlike the Phase 2 management adjustment). See
+[ADR 0006](docs/adr/0006-atomic-inventory-deduction.md).
+
+### Sale numbers
+
+Human-readable, contiguous per `(tenant, branch, document type)`, allocated with a
+`DocumentNumberCounters` row via `UPDATE ... OUTPUT INSERTED.LastNumber` in the checkout
+transaction — never `COUNT(*)+1`, never reused after a void/refund. Format `INV-MAIN-000001` /
+`RET-MAIN-000001`. See [ADR 0007](docs/adr/0007-sale-numbering-strategy.md).
+
+### Snapshots
+
+`SaleItem` stores transaction-time snapshots of name, SKU, barcode, unit price, computed amounts and
+cost. Receipts and reports read the snapshots, so a later rename or reprice never alters an old
+sale. Margin uses `CostPriceSnapshot`, never the current cost. See
+[ADR 0005](docs/adr/0005-sale-item-snapshots.md).
+
+### Payments
+
+`Payment` is a separate table (many per sale allowed — split tender is schema-supported even if the
+Phase 3 UI sends one). Cash payments carry `ReceivedAmount` and compute change; the payment total
+must cover the grand total (`PAYMENT_INSUFFICIENT` otherwise). No gateway integration.
+
+### Tax
+
+Minimal tenant-level setting on `Tenant`: `TaxRatePercent` (default 0) and `PricesIncludeTax`
+(default false → **tax-exclusive**), editable via `GET`/`PUT /api/settings/tax` (Owner/Admin). Tax
+is computed backend-side per line; the two modes are never mixed. Money is `decimal(18,2)`, rounded
+**half-up (away from zero) at 2 dp**, per line then summed.
+
+### Returns
+
+`POST /api/sales/{id}/returns` (Owner/Admin/Manager) creates a `SaleReturn` + `SaleReturnItem`s +
+`RefundPayment` in one transaction, bumps `SaleItem.ReturnedQuantity` (cannot exceed purchased −
+already-returned → `RETURN_QUANTITY_EXCEEDED`), restocks inventory-tracked lines
+(`StockMovement.Return`) and moves `Sale.Status` to `Refunded` / `PartiallyRefunded`. Void (reverse
+a whole sale) is a documented later extension.
+
+### Endpoints & authorization
+
+| Area | Endpoints | Roles |
+| --- | --- | --- |
+| Registers | `GET/POST/PUT/DELETE /api/registers` | read: any; write: Owner/Admin/Manager |
+| Sessions | `POST /api/register-sessions/open`, `.../{id}/close`, `GET .../current` | Owner/Admin/Manager/Cashier |
+| POS catalog | `GET /api/pos/catalog`, `GET /api/pos/catalog/barcode/{barcode}` | Owner/Admin/Manager/Cashier — **no cost fields** |
+| Checkout | `POST /api/pos/checkout` | Owner/Admin/Manager/Cashier |
+| Sales | `GET /api/sales`, `GET /api/sales/{id}`, `GET /api/sales/{id}/receipt` | Owner/Admin/Manager/Cashier — cost redacted below Manager |
+| Returns | `GET/POST /api/sales/{id}/returns` | read: sales roles; create: Owner/Admin/Manager |
+| Tax settings | `GET/PUT /api/settings/tax` | read: any; write: Owner/Admin |
+
+Dashboard gains `TodaysSales`, `TodaysTransactions`, `AverageTransactionValue` (SQL aggregates only).
+
+### Migration
+
+`Persistence/Migrations/*_Phase3RetailPos` — 9 new tables (`Registers`, `RegisterSessions`, `Sales`,
+`SaleItems`, `Payments`, `SaleReturns`, `SaleReturnItems`, `RefundPayments`,
+`DocumentNumberCounters`) plus two back-filled columns on `Tenants`. Phase 1/2 tables and data are
+untouched.
+
+---
+
 ## Future roadmap
 
 | Phase | Focus |
 | --- | --- |
 | **Phase 2** ✅ | Catalog + Inventory |
-| **Phase 3** | Retail POS |
+| **Phase 3** 🚧 | Retail POS (backend complete) |
 | **Phase 4** | Food & Beverage ordering + Kitchen |
 | **Phase 5** | Purchasing + Multi-branch |
 | **Phase 6** | Azure Service Bus, Functions, Redis, Blob Storage, Application Insights |
