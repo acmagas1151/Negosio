@@ -56,6 +56,11 @@ public sealed class NotFoundException : AppException
         : base(ErrorCodes.NotFound, message, StatusCodes.Status404NotFound)
     {
     }
+
+    public NotFoundException(string code, string message)
+        : base(code, message, StatusCodes.Status404NotFound)
+    {
+    }
 }
 
 /// <summary>401 - authentication failed or is missing.</summary>

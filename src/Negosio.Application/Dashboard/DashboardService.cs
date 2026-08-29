@@ -7,7 +7,13 @@ namespace Negosio.Application.Dashboard;
 
 public sealed record DashboardTenantDto(Guid Id, string Name, BusinessType BusinessType);
 
-public sealed record DashboardResponse(DashboardTenantDto Tenant, int BranchCount, int UserCount);
+public sealed record DashboardResponse(
+    DashboardTenantDto Tenant,
+    int BranchCount,
+    int UserCount,
+    int TotalProducts,
+    int ActiveCategories,
+    int LowStockItems);
 
 public interface IDashboardService
 {
@@ -42,10 +48,17 @@ public sealed class DashboardService : IDashboardService
 
         var branchCount = await _db.Branches.CountAsync(b => b.TenantId == tenantId, cancellationToken);
         var userCount = await _db.Users.CountAsync(u => u.TenantId == tenantId, cancellationToken);
+        var totalProducts = await _db.Products.CountAsync(p => p.TenantId == tenantId && p.IsActive, cancellationToken);
+        var activeCategories = await _db.Categories.CountAsync(c => c.TenantId == tenantId && c.IsActive, cancellationToken);
+        var lowStockItems = await _db.BranchInventories
+            .CountAsync(i => i.TenantId == tenantId && i.QuantityOnHand <= i.ReorderLevel, cancellationToken);
 
         return new DashboardResponse(
             new DashboardTenantDto(tenant.Id, tenant.Name, tenant.BusinessType),
             branchCount,
-            userCount);
+            userCount,
+            totalProducts,
+            activeCategories,
+            lowStockItems);
     }
 }

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -15,9 +14,6 @@ public class AuthorizationTests : IntegrationTest
     public AuthorizationTests(NegosioApiFactory factory) : base(factory)
     {
     }
-
-    private void Authorize(string token) =>
-        Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
     [Fact]
     public async Task Me_requires_authentication()

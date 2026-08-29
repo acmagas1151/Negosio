@@ -315,11 +315,89 @@ catalog/menu, sales metrics, Azure services, event bus, refresh tokens/cookie se
 
 ---
 
+## Phase 2 — Catalog + Inventory
+
+Phase 2 adds the shared commerce foundation that later backs both Retail POS and F&B ordering:
+**Categories, Products, sellable items** and **branch-aware Inventory** with an audit ledger. No POS
+checkout, payments, kitchen, recipes, purchasing or reporting yet. Phase 1 architecture, auth and
+tenant context are unchanged — this is additive (new entities, one migration, new services +
+controllers, new React screens).
+
+### Product vs sellable item
+
+`Product` is the catalog-level definition (`Category`, `Name`, `Description`, `TrackInventory`).
+Price, SKU and barcode live on **`ProductVariant`** — the *sellable item* — and every product owns
+at least one. A product with no user-defined variants has a single hidden `IsDefault` variant that
+the API hides and the product form edits inline; adding the first real variant promotes that row.
+This keeps SKU/barcode uniqueness on **one table** with two filtered unique indexes
+(`(TenantId, SKU) WHERE SKU IS NOT NULL`, and the same for barcode). Multi-variant products report
+`minSellingPrice` / `maxSellingPrice`; price sorting uses the minimum active selling price. See
+[ADR 0001](docs/adr/0001-single-sellable-item-model.md).
+
+### Branch-based inventory
+
+Quantity is never on `Product`. `BranchInventory` is keyed by `(TenantId, BranchId, ProductVariantId)`
+(unique index) and carries `QuantityOnHand` and `ReorderLevel` as **`decimal(18,3)`** — piece counts
+fit exactly and future weight/volume units need no schema change (conversion is out of scope). Money
+stays `decimal(18,2)`. Low stock is `QuantityOnHand <= ReorderLevel`, surfaced by
+`GET /api/inventory?lowStock=true`. See [ADR 0002](docs/adr/0002-inventory-separate-from-product.md).
+
+### Stock movements
+
+Every change to `QuantityOnHand` writes one append-only `StockMovement` (who / what / when / why /
+before / after) inside the same transaction as the inventory update. `StockMovementType` covers
+future workflows; Phase 2 produces only `OpeningStock`, `AdjustmentIncrease`, `AdjustmentDecrease`.
+All stock changes funnel through `InventoryService.AdjustAsync`.
+
+### Optimistic concurrency
+
+`BranchInventory.RowVersion` is a SQL Server `rowversion` EF concurrency token. Inventory reads
+return `concurrencyToken` (Base64). Adjusting an **existing** row requires the expected token — a
+stale token returns `409 INVENTORY_CONCURRENCY_CONFLICT` and the row is left untouched; a missing or
+malformed token returns `400`. Opening stock (row does not exist yet) needs no token. See
+[ADR 0003](docs/adr/0003-rowversion-for-stock-concurrency.md).
+
+### Tenant isolation & authorization
+
+Every catalog/inventory query filters by `ICurrentUser.TenantId`; request ids are never trusted.
+Writes are gated by role: `CatalogWrite` (Owner/Admin/Manager) for catalog mutations, `InventoryWrite`
+(+ InventoryStaff) for adjustments. Reads are open to any authenticated tenant user, but **cost price
+is redacted** for roles outside Owner/Admin/Manager/InventoryStaff.
+
+### Endpoints
+
+| Method & path | Auth | Purpose |
+| --- | --- | --- |
+| `GET/POST /api/categories`, `GET/PUT/DELETE /api/categories/{id}` | read: any; write: CatalogWrite | Categories (DELETE deactivates) |
+| `GET/POST /api/products`, `GET/PUT/DELETE /api/products/{id}` | read: any; write: CatalogWrite | Products; list supports `search, categoryId, isActive, trackInventory, page, pageSize, sortBy, sortDirection` |
+| `GET/POST /api/products/{id}/variants`, `PUT/DELETE .../{variantId}` | read: any; write: CatalogWrite | User-defined variants |
+| `GET /api/inventory`, `GET /api/inventory/{id}` | authenticated | Inventory rows (`branchId, productId, categoryId, search, lowStock, page, pageSize`) |
+| `POST /api/inventory/adjustments` | InventoryWrite | The single inventory mutation path |
+| `GET /api/inventory/movements` | authenticated | Ledger (`branchId, productId, productVariantId, type, fromUtc, toUtc, page, pageSize`) |
+
+All list endpoints return `{ items, page, pageSize, totalCount, totalPages }` with `pageSize`
+clamped to 100.
+
+### Key indexes
+
+`Categories (TenantId, NormalizedName)` unique · `Products (TenantId, {CategoryId|Name|IsActive})` ·
+`ProductVariants (TenantId, ProductId)` and filtered-unique `(TenantId, SKU)` / `(TenantId, Barcode)` ·
+`BranchInventories (TenantId, BranchId, ProductVariantId)` unique plus `(TenantId, BranchId)` and
+`(TenantId, ProductVariantId)` · `StockMovements (TenantId, BranchId, CreatedAtUtc)` and
+`(TenantId, ProductVariantId, CreatedAtUtc)`.
+
+### Migration
+
+`Persistence/Migrations/*_Phase2CatalogInventory` — creates the 5 tables only; Phase 1 tables and
+data are untouched.
+
+---
+
 ## Future roadmap
 
 | Phase | Focus |
 | --- | --- |
-| **Phase 2** | Catalog + Inventory |
+| **Phase 2** ✅ | Catalog + Inventory |
 | **Phase 3** | Retail POS |
 | **Phase 4** | Food & Beverage ordering + Kitchen |
 | **Phase 5** | Purchasing + Multi-branch |

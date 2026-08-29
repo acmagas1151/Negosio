@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Negosio.Domain.Entities;
 
@@ -16,7 +17,22 @@ public interface IApplicationDbContext
 
     DbSet<User> Users { get; }
 
+    // Phase 2: Catalog
+    DbSet<Category> Categories { get; }
+
+    DbSet<Product> Products { get; }
+
+    DbSet<ProductVariant> ProductVariants { get; }
+
+    // Phase 2: Inventory
+    DbSet<BranchInventory> BranchInventories { get; }
+
+    DbSet<StockMovement> StockMovements { get; }
+
     DatabaseFacade Database { get; }
+
+    /// <summary>Access to change-tracking for one entity (used to set the original rowversion on adjust).</summary>
+    EntityEntry<TEntity> Entry<TEntity>(TEntity entity) where TEntity : class;
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
