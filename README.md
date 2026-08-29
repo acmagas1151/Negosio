@@ -1,0 +1,327 @@
+# Negosio
+
+Negosio is a multi-tenant SaaS platform for retail and food & beverage businesses. A business owner
+signs up, picks their business type, describes their first branch, creates an owner account, and lands
+in a dashboard scoped strictly to their own tenant.
+
+This repository contains **Phase 1: the SaaS foundation** — registration, authentication, tenant
+isolation, and the supporting infrastructure. Vertical features (catalog, POS, ordering, …) are
+deliberately out of scope and land in later phases.
+
+---
+
+## Supported business types
+
+| Business type       | Status                        |
+| ------------------- | ----------------------------- |
+| Retail              | ✅ Available                   |
+| Food & Beverage     | ✅ Available                   |
+| Diagnostic Center   | 🕓 Coming soon (not selectable) |
+
+`DiagnosticCenter` exists in the domain model, but registration rejects it with a clear error
+(`BUSINESS_TYPE_NOT_AVAILABLE`). The web UI shows the option as a disabled "Coming Soon" card, and the
+**backend enforces the rule independently** — it does not rely on the frontend.
+
+---
+
+## Architecture
+
+A **modular monolith** with Clean Architecture influences, applied only where they pay for themselves.
+
+```
+Negosio.Api            ASP.NET Core Web API — controllers, auth wiring, middleware, HTTP concerns
+Negosio.Application    Use cases (AuthService, DashboardService), DTOs, validators, error types,
+                       abstractions (ICurrentUser, IApplicationDbContext, IPasswordHasher, IJwtTokenGenerator)
+Negosio.Infrastructure EF Core DbContext + configurations, migrations, password hashing, JWT generation
+Negosio.Domain         Entities (Tenant, Branch, User) and enums (BusinessType, UserRole) — no dependencies
+```
+
+Dependency direction: `Api → Infrastructure → Application → Domain` (Api also references Application/Domain directly).
+
+Deliberately **not** used in Phase 1: microservices, a generic repository, MediatR/CQRS, event buses,
+and any Azure service. See the roadmap for when those become relevant.
+
+### Multi-tenancy
+
+* Every tenant-owned entity carries a `TenantId`.
+* The authenticated user is the **only** source of the current `TenantId`. `ICurrentUser` reads it from
+  the validated JWT (`HttpCurrentUser` in the API). Tenant-owned endpoints never accept a client-supplied
+  `TenantId`.
+* The dashboard and `/auth/me` queries are filtered by `ICurrentUser.TenantId`.
+
+### Registration is atomic
+
+`POST /api/auth/register` creates the Tenant, its first Branch, and the Owner user inside **one
+database transaction**. If any step fails (for example the owner email is already taken), the whole
+transaction rolls back and no partial tenant is left behind. Uniqueness is enforced by database
+indexes rather than a read-then-write check, so there is no race window; a unique-violation is
+translated into a `409 DUPLICATE_EMAIL` / `409 DUPLICATE_BRANCH_CODE` response.
+
+### Email uniqueness (Phase 1 decision)
+
+For Phase 1, **email is globally unique** (`IX_Users_Email`). This keeps login simple: given an email
+and password we can find exactly one user. The trade-off is that the same person cannot use one email
+address across two different businesses.
+
+A later phase can relax this to *unique per tenant* by switching the index to `(TenantId, Email)` and
+adding a tenant selector to the login flow (e.g. choose-your-workspace, or a tenant slug in the URL).
+The domain already normalizes emails (`User.NormalizeEmail`) so the change is localized.
+
+### Post-registration flow
+
+Registration returns `201 Created` with the new ids and **no token**. The web app then redirects to
+`/login` with the email pre-filled. Rationale: a single code path issues tokens (login), the user
+immediately confirms their credentials work, and the registration endpoint stays free of session
+concerns. The cost is one extra form submit right after signup, which is acceptable for a
+once-per-business action.
+
+---
+
+## Tech stack
+
+* **Backend:** C#, .NET 9, ASP.NET Core Web API, EF Core 9, SQL Server, JWT bearer auth,
+  ASP.NET Core `PasswordHasher` (PBKDF2), FluentValidation, Serilog.
+* **Tests:** xUnit, FluentAssertions, `WebApplicationFactory`, Testcontainers (SQL Server) with a
+  LocalDB fallback.
+* **Frontend:** React 19, TypeScript, Vite, React Router, TanStack Query.
+* **Local infra:** Docker Compose (SQL Server).
+* **Future production target:** Azure — Azure SQL Database, App Service / Container Apps.
+
+---
+
+## Project structure
+
+```
+Negosio/
+├── src/
+│   ├── Negosio.Api/               # Web API host
+│   ├── Negosio.Application/       # use cases, DTOs, validation, abstractions
+│   ├── Negosio.Domain/            # entities + enums
+│   └── Negosio.Infrastructure/    # EF Core, migrations, security adapters
+├── tests/
+│   ├── Negosio.UnitTests/         # domain + validator tests
+│   └── Negosio.IntegrationTests/  # full HTTP + real SQL Server tests
+├── web/
+│   └── negosio-web/               # React + Vite SPA
+├── docker-compose.yml             # local SQL Server
+├── .env.example
+└── README.md
+```
+
+---
+
+## Prerequisites
+
+* .NET SDK 9
+* Node.js 20+ and npm
+* One of:
+  * Docker Desktop (for `docker-compose` SQL Server and Testcontainers), **or**
+  * SQL Server LocalDB (ships with Visual Studio / SQL Server Express) for a Docker-free setup on Windows.
+
+---
+
+## Environment variables
+
+Copy `.env.example` to `.env` and adjust. `.env` is git-ignored. Never commit real secrets.
+
+| Variable | Used by | Notes |
+| --- | --- | --- |
+| `MSSQL_SA_PASSWORD` | docker-compose | SA password for the SQL Server container |
+| `MSSQL_PORT` | docker-compose | Host port for SQL Server (default `1433`) |
+| `ConnectionStrings__Default` | API | EF Core connection string |
+| `Jwt__Issuer`, `Jwt__Audience` | API | Token issuer/audience |
+| `Jwt__SigningKey` | API | **Secret.** Symmetric signing key, ≥ 32 bytes |
+| `Jwt__AccessTokenMinutes` | API | Access-token lifetime (default `60`) |
+| `Database__MigrateOnStartup` | API | Apply EF migrations on boot (`true` for local/dev) |
+| `Cors__AllowedOrigins__0` | API | Allowed SPA origin (default `http://localhost:5173`) |
+| `VITE_API_BASE_URL` | web | API base URL (default `http://localhost:5170`) |
+
+`src/Negosio.Api/appsettings.Development.json` contains a **throwaway** signing key and a LocalDB
+connection string so the project runs with zero setup. These are not production secrets; production
+must supply real values via environment variables or a secret store.
+
+---
+
+## Local development
+
+### Option A — Docker Compose (SQL Server in a container)
+
+```bash
+cp .env.example .env            # then edit MSSQL_SA_PASSWORD etc.
+docker compose up -d            # starts SQL Server with a healthcheck + persistent volume
+```
+
+Point the API at it (in `.env` or user-secrets):
+
+```
+ConnectionStrings__Default=Server=localhost,1433;Database=Negosio;User Id=sa;Password=<your password>;TrustServerCertificate=true;MultipleActiveResultSets=true
+```
+
+### Option B — SQL Server LocalDB (no Docker, Windows)
+
+The default `appsettings.Development.json` already targets
+`Server=(localdb)\MSSQLLocalDB;Database=Negosio;...`. Just make sure LocalDB is running:
+
+```bash
+sqllocaldb start MSSQLLocalDB
+```
+
+---
+
+## EF Core migrations
+
+`dotnet-ef` is pinned as a local tool (`dotnet tool restore` first if needed).
+
+```bash
+# create a migration
+dotnet dotnet-ef migrations add <Name> \
+  --project src/Negosio.Infrastructure --startup-project src/Negosio.Api \
+  --output-dir Persistence/Migrations
+
+# apply migrations to the configured database
+dotnet dotnet-ef database update \
+  --project src/Negosio.Infrastructure --startup-project src/Negosio.Api
+```
+
+With `Database__MigrateOnStartup=true` the API also applies pending migrations on boot. The initial
+migration is `Persistence/Migrations/*_InitialCreate.cs`.
+
+---
+
+## Run the backend
+
+```bash
+dotnet restore
+dotnet build
+dotnet run --project src/Negosio.Api
+```
+
+* API: `http://localhost:5170`
+* Swagger UI (Development only): `http://localhost:5170/swagger`
+
+### Endpoints
+
+| Method & path | Auth | Purpose |
+| --- | --- | --- |
+| `POST /api/auth/register` | anonymous | Create tenant + first branch + owner (one transaction) |
+| `POST /api/auth/login` | anonymous | Exchange credentials for a JWT + user profile |
+| `GET  /api/auth/me` | authenticated | Current user, tenant, role, business type (for SPA reload) |
+| `GET  /api/dashboard` | authenticated | Tenant info + branch/user counts (own tenant only) |
+| `GET  /api/admin/owner-test` | Owner only | RBAC smoke test |
+
+### Error format
+
+Every failure returns a consistent envelope:
+
+```json
+{ "code": "DUPLICATE_EMAIL", "message": "An account with this email already exists.", "traceId": "..." }
+```
+
+Validation failures add an `errors` map (`field -> messages`). Status codes: `400` validation/business
+rule, `401` unauthenticated, `403` forbidden, `404` not found, `409` conflict, `500` unexpected
+(stack traces are never exposed outside Development).
+
+### Logging
+
+Structured logging via Serilog. Request logs include trace id, method, path, status, and duration.
+Passwords, password hashes, and tokens are never logged.
+
+---
+
+## Run the frontend
+
+```bash
+cd web/negosio-web
+npm install
+cp .env.example .env.local        # optional; defaults to http://localhost:5170
+npm run dev                       # http://localhost:5173
+```
+
+Routes: `/register` (5-step onboarding wizard), `/login`, `/dashboard` (protected). The API layer is
+centralized in `src/api/` (typed client + endpoints), server state is managed with TanStack Query, and
+auth state lives in a small `AuthProvider` (no Redux).
+
+### Authentication storage & security trade-offs
+
+Phase 1 stores the JWT in `localStorage`:
+
+* **Pro:** simple, survives refresh, no cookie/CSRF plumbing, works with a stateless API.
+* **Con:** readable by any JavaScript on the origin, so it is exposed to XSS. There is no refresh
+  token and no server-side revocation. `localStorage` is **not** a secure secret store.
+
+A hardened production design should move to: short-lived access tokens kept **in memory**, a refresh
+token in a `Secure; HttpOnly; SameSite` cookie, server-side session/refresh-token revocation, and a
+strict Content-Security-Policy. The `tokenStorage` module is the single seam to change.
+
+---
+
+## Run the tests
+
+```bash
+dotnet test
+```
+
+* **Unit tests** (`Negosio.UnitTests`): domain invariants and the registration validator. No database.
+* **Integration tests** (`Negosio.IntegrationTests`): boot the real API with `WebApplicationFactory`
+  and hit it over HTTP against a **real SQL Server**. Database selection order:
+  1. `NEGOSIO_TEST_SQL` environment variable (explicit connection string), else
+  2. a disposable SQL Server container via Testcontainers (needs Docker), else
+  3. a uniquely-named LocalDB database (Windows, Docker-free) that is dropped afterwards.
+
+  These tests exercise migrations, unique constraints, and the registration transaction — they do not
+  mock `DbContext`.
+
+Coverage includes: Retail/F&B registration succeeds; DiagnosticCenter rejected; tenant/branch/owner
+created; owner gets the Owner role; duplicate email → 409; weak password → 400; **registration
+rollback** leaves no partial data; valid/invalid/unknown-email login; JWT contains `tenant_id`;
+`/auth/me` and `/dashboard` require auth and are tenant-scoped; owner-only endpoint allows Owner and
+forbids non-Owner; malformed/tampered tokens are rejected.
+
+### Frontend checks
+
+```bash
+cd web/negosio-web
+npm run lint          # oxlint
+npx tsc -b            # type-check
+npm run build         # production build must succeed
+```
+
+---
+
+## Docker Compose
+
+`docker-compose.yml` runs a single official `mcr.microsoft.com/mssql/server` container with:
+
+* a published port (`${MSSQL_PORT:-1433}:1433`),
+* environment-driven configuration (`ACCEPT_EULA`, `MSSQL_SA_PASSWORD`, `MSSQL_PID=Developer`),
+* a persistent named volume (`negosio-sql-data`),
+* a `sqlcmd`-based healthcheck.
+
+The API's connection string always comes from configuration — the container is just a database.
+
+---
+
+## Phase 1 scope
+
+**In:** solution structure; domain entities + enums; EF Core configurations, indexes, and the initial
+migration; registration (atomic) with full validation and the DiagnosticCenter rule; login; JWT
+issuance from configuration; `ICurrentUser` HTTP implementation; RBAC (authenticated + Owner-only
+policy); `/auth/me`; `/dashboard`; centralized error handling; structured logging; Docker Compose for
+SQL Server; the React app (onboarding wizard, login, protected dashboard) wired to the API; unit and
+integration tests.
+
+**Out (later phases):** POS, restaurant ordering, kitchen display, purchasing, advanced inventory,
+catalog/menu, sales metrics, Azure services, event bus, refresh tokens/cookie sessions.
+
+---
+
+## Future roadmap
+
+| Phase | Focus |
+| --- | --- |
+| **Phase 2** | Catalog + Inventory |
+| **Phase 3** | Retail POS |
+| **Phase 4** | Food & Beverage ordering + Kitchen |
+| **Phase 5** | Purchasing + Multi-branch |
+| **Phase 6** | Azure Service Bus, Functions, Redis, Blob Storage, Application Insights |
+| **Phase 7** | Azure production deployment + CI/CD + Infrastructure as Code |

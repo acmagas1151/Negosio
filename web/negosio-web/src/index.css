@@ -1,0 +1,152 @@
+@import 'tailwindcss';
+
+/* ------------------------------------------------------------------ *
+ * Negosio design tokens
+ * Light, clean, professional cloud-SaaS. Blue is used intentionally:
+ * primary actions, active nav, selected states, links, small accents.
+ * Large areas stay white / very light slate.
+ * ------------------------------------------------------------------ */
+@theme {
+  /* Brand */
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-200: #bfdbfe;
+  --color-primary-300: #93c5fd;
+  --color-primary-400: #60a5fa;
+  --color-primary-500: #3b82f6;
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+
+  /* Surfaces / backgrounds */
+  --color-background: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f8fafc;
+
+  /* Typography */
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+
+  /* Borders */
+  --color-border: #e2e8f0;
+  --color-border-light: #f1f5f9;
+  --color-border-strong: #cbd5e1;
+
+  /* Semantic */
+  --color-success: #10b981;
+  --color-success-light: #ecfdf5;
+  --color-success-strong: #047857;
+
+  --color-warning: #f59e0b;
+  --color-warning-light: #fffbeb;
+  --color-warning-strong: #b45309;
+
+  --color-danger: #ef4444;
+  --color-danger-light: #fef2f2;
+  --color-danger-strong: #b91c1c;
+
+  --color-info: #3b82f6;
+  --color-info-light: #eff6ff;
+
+  --color-purple: #8b5cf6;
+  --color-purple-light: #f5f3ff;
+
+  --color-orange: #f97316;
+  --color-orange-light: #fff7ed;
+
+  /* Typography scale */
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* Soft, restrained elevation */
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+  --shadow-card-lg: 0 1px 3px rgba(15, 23, 42, 0.05), 0 18px 48px rgba(15, 23, 42, 0.09);
+  --shadow-popover: 0 4px 12px rgba(15, 23, 42, 0.08), 0 12px 32px rgba(15, 23, 42, 0.12);
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  /* Tailwind v4 defaults border-color to currentColor; anchor it to the token. */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-background);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--color-text-primary);
+    font-weight: 700;
+    line-height: 1.25;
+    margin: 0;
+  }
+
+  a {
+    color: var(--color-primary-600);
+    font-weight: 500;
+    text-decoration: none;
+  }
+  a:hover {
+    text-decoration: underline;
+  }
+
+  /* Visible, consistent keyboard focus everywhere. */
+  :focus-visible {
+    outline: 2px solid var(--color-primary-500);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+  }
+}
+
+@layer utilities {
+  .bg-auth-tint {
+    background-image: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
+  }
+  .bg-welcome-tint {
+    background-image: linear-gradient(135deg, #eff6ff 0%, #f8fafc 60%);
+  }
+
+  .drawer-in {
+    animation: drawer-in 180ms ease-out;
+  }
+  @keyframes drawer-in {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .drawer-in {
+      animation: none;
+    }
+  }
+}

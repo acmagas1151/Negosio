@@ -1,0 +1,6 @@
+@Negosio.Api_HostAddress = http://localhost:5170
+
+GET {{Negosio.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

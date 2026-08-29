@@ -1,0 +1,796 @@
+You are helping me build **Negosio**, a production-style multi-tenant SaaS platform for retail and food & beverage businesses.
+
+For the initial version, Negosio supports:
+
+* Retail
+* Food & Beverage
+* Diagnostic Center — visible as "Coming Soon" but not selectable
+
+Do not build POS, restaurant ordering, kitchen display, purchasing, or advanced inventory yet.
+
+This task is **Phase 1: SaaS Foundation** only.
+
+## Tech Stack
+
+Backend:
+
+* C#
+* ASP.NET Core Web API
+* Entity Framework Core
+* SQL Server
+* JWT authentication
+* xUnit
+* FluentAssertions
+* Testcontainers where practical
+
+Frontend:
+
+* React
+* TypeScript
+* Vite
+* React Router
+* TanStack Query
+
+Local infrastructure:
+
+* Docker Compose
+* SQL Server
+
+Future production target:
+
+* Microsoft Azure
+* Azure SQL Database
+* Azure App Service or Azure Container Apps
+
+## Architecture
+
+Use a **modular monolith**.
+
+Apply Clean Architecture principles where they provide clear value, but do not over-engineer.
+
+Do NOT:
+
+* create microservices
+* create a generic repository pattern
+* introduce MediatR/CQRS everywhere without a clear reason
+* create excessive interfaces
+* add Azure services yet
+* add event buses yet
+
+The goal is a clean foundation that can evolve later.
+
+Use this general solution structure:
+
+Negosio/
+├── src/
+│   ├── Negosio.Api/
+│   ├── Negosio.Application/
+│   ├── Negosio.Domain/
+│   └── Negosio.Infrastructure/
+│
+├── tests/
+│   ├── Negosio.UnitTests/
+│   └── Negosio.IntegrationTests/
+│
+├── web/
+│   └── negosio-web/
+│
+├── docker-compose.yml
+├── .env.example
+└── README.md
+
+## Phase 1 Goal
+
+By the end of this phase, this flow must work:
+
+Open Negosio
+→ Register
+→ Choose business type
+→ Enter business details
+→ Enter first branch details
+→ Enter owner account details
+→ Tenant created
+→ Branch created
+→ Owner created
+→ Login
+→ JWT issued
+→ User enters dashboard
+→ User can only access their own tenant
+
+## Business Types
+
+Create:
+
+```csharp
+public enum BusinessType
+{
+    Retail = 1,
+    FoodAndBeverage = 2,
+    DiagnosticCenter = 3
+}
+```
+
+DiagnosticCenter must exist in the domain but registration must currently reject it.
+
+The frontend should display:
+
+Retail
+
+Food & Beverage
+
+Diagnostic Center
+Coming Soon
+
+The Diagnostic Center option must be disabled.
+
+The backend must independently enforce this rule.
+
+Do not rely only on frontend validation.
+
+## Initial Roles
+
+Create:
+
+```csharp
+public enum UserRole
+{
+    Owner = 1,
+    Admin = 2,
+    Manager = 3,
+    Cashier = 4,
+    InventoryStaff = 5,
+    KitchenStaff = 6,
+    Viewer = 7
+}
+```
+
+During registration, the first user must automatically receive the Owner role.
+
+## Core Domain Entities
+
+Only create the following entities during Phase 1:
+
+### Tenant
+
+Properties:
+
+* Id : Guid
+* Name : string
+* BusinessType : BusinessType
+* IsActive : bool
+* CreatedAtUtc : DateTime
+* UpdatedAtUtc : DateTime
+
+### Branch
+
+Properties:
+
+* Id : Guid
+* TenantId : Guid
+* Name : string
+* Code : string
+* AddressLine1 : string
+* AddressLine2 : string?
+* City : string
+* Province : string
+* PostalCode : string?
+* IsActive : bool
+* CreatedAtUtc : DateTime
+* UpdatedAtUtc : DateTime
+
+Relationship:
+
+Tenant
+1 → many
+Branches
+
+Branch Code must be unique within a tenant.
+
+Use a composite unique index:
+
+TenantId + Code
+
+### User
+
+Properties:
+
+* Id : Guid
+* TenantId : Guid
+* Email : string
+* PasswordHash : string
+* FirstName : string
+* LastName : string
+* Role : UserRole
+* IsActive : bool
+* CreatedAtUtc : DateTime
+* UpdatedAtUtc : DateTime
+
+Do not store plaintext passwords.
+
+Normalize emails before saving and comparing.
+
+For now, email can be globally unique to keep authentication simple.
+
+Explain this decision in the README and note that it can evolve later if needed.
+
+## Multi-Tenancy
+
+Multi-tenancy is one of the most important architectural requirements.
+
+Every tenant-owned entity must contain TenantId.
+
+The authenticated user determines the TenantId.
+
+Never accept TenantId from normal tenant-owned client requests.
+
+The JWT should contain at least:
+
+* sub → UserId
+* tenant_id → TenantId
+* role → UserRole
+* email
+
+Create a current-user abstraction such as:
+
+```csharp
+public interface ICurrentUser
+{
+    Guid UserId { get; }
+    Guid TenantId { get; }
+    string Email { get; }
+    UserRole Role { get; }
+}
+```
+
+Create an HTTP implementation that reads claims from the authenticated request.
+
+Do not allow client-provided TenantId to override this context.
+
+## Registration
+
+Create:
+
+POST /api/auth/register
+
+Request:
+
+```json
+{
+  "businessName": "Bruno's Cafe",
+  "businessType": "FoodAndBeverage",
+  "branch": {
+    "name": "Main Branch",
+    "code": "MAIN",
+    "addressLine1": "Odiongan",
+    "addressLine2": null,
+    "city": "Odiongan",
+    "province": "Romblon",
+    "postalCode": "5505"
+  },
+  "owner": {
+    "firstName": "Ace",
+    "lastName": "Agas",
+    "email": "owner@example.com",
+    "password": "SecurePassword123!"
+  }
+}
+```
+
+Registration must happen within one database transaction.
+
+Create:
+
+1. Tenant
+2. Branch
+3. Owner User
+
+If any operation fails, rollback all changes.
+
+Never allow partially registered tenants.
+
+Validate:
+
+* business name required
+* valid supported business type
+* branch name required
+* branch code required
+* owner first name required
+* owner last name required
+* valid email
+* password complexity
+* duplicate email
+* DiagnosticCenter unavailable
+
+If DiagnosticCenter is submitted, return a clear domain/application error such as:
+
+```json
+{
+  "code": "BUSINESS_TYPE_NOT_AVAILABLE",
+  "message": "Diagnostic Center support is coming soon."
+}
+```
+
+## Login
+
+Create:
+
+POST /api/auth/login
+
+Request:
+
+```json
+{
+  "email": "owner@example.com",
+  "password": "SecurePassword123!"
+}
+```
+
+Response:
+
+```json
+{
+  "accessToken": "...",
+  "expiresAtUtc": "...",
+  "user": {
+    "id": "...",
+    "tenantId": "...",
+    "tenantName": "Bruno's Cafe",
+    "businessType": "FoodAndBeverage",
+    "firstName": "Ace",
+    "lastName": "Agas",
+    "email": "owner@example.com",
+    "role": "Owner"
+  }
+}
+```
+
+Use secure password hashing.
+
+Prefer ASP.NET Core's PasswordHasher or another reputable implementation.
+
+Do not implement custom cryptography.
+
+JWT configuration must come from environment/configuration.
+
+Do not hardcode secrets.
+
+## Authenticated User Endpoint
+
+Create:
+
+GET /api/auth/me
+
+Requires authentication.
+
+Return the currently logged-in user's basic information, tenant information, role, and business type.
+
+This endpoint will be useful when the React application reloads.
+
+## Dashboard Endpoint
+
+Create:
+
+GET /api/dashboard
+
+Requires authentication.
+
+For Phase 1 return only simple tenant information:
+
+```json
+{
+  "tenant": {
+    "id": "...",
+    "name": "Bruno's Cafe",
+    "businessType": "FoodAndBeverage"
+  },
+  "branchCount": 1,
+  "userCount": 1
+}
+```
+
+Do not build sales metrics yet.
+
+## Authorization
+
+Configure JWT authentication.
+
+Create reusable authorization policies where appropriate.
+
+At minimum:
+
+* authenticated users can access dashboard
+* Owner can access owner-only test endpoint
+
+Create an endpoint like:
+
+GET /api/admin/owner-test
+
+Only Owner should access it.
+
+Use this to verify RBAC behavior.
+
+## SQL Server
+
+Use Entity Framework Core with SQL Server.
+
+Create proper EF Core entity configurations instead of putting all mapping in DbContext.
+
+Example:
+
+Infrastructure/
+Persistence/
+Configurations/
+TenantConfiguration.cs
+BranchConfiguration.cs
+UserConfiguration.cs
+
+Configure:
+
+* keys
+* foreign keys
+* maximum lengths
+* required fields
+* enum storage
+* indexes
+* unique indexes
+* cascade behavior intentionally
+
+Use UTC timestamps.
+
+Use migrations.
+
+Create the initial migration.
+
+## Docker Compose
+
+Create a local SQL Server container.
+
+Use an official Microsoft SQL Server image.
+
+Include:
+
+* database port
+* environment variable configuration
+* persistent volume
+* health check
+
+The connection string must come from configuration.
+
+Provide `.env.example`.
+
+Do not commit passwords or JWT secrets.
+
+## API Error Format
+
+Implement centralized exception handling.
+
+Use consistent API errors:
+
+```json
+{
+  "code": "DUPLICATE_EMAIL",
+  "message": "An account with this email already exists.",
+  "traceId": "..."
+}
+```
+
+Use appropriate status codes:
+
+400 validation/business rule error
+401 unauthenticated
+403 forbidden
+404 not found
+409 conflicts
+500 unexpected server error
+
+Do not expose stack traces in production responses.
+
+## Logging
+
+Use structured logging.
+
+Log useful context such as:
+
+* TraceId
+* UserId
+* TenantId
+* Request path
+
+Never log:
+
+* passwords
+* JWT tokens
+* password hashes
+
+## React Application
+
+Create the initial frontend.
+
+Routes:
+
+* /register
+* /login
+* /dashboard
+
+Protected routes must require authentication.
+
+### Registration Page
+
+Use a multi-step onboarding experience.
+
+Step 1:
+Choose Business Type
+
+Cards:
+
+Retail
+Description:
+Retail stores, shops, mini-marts and similar businesses.
+
+Food & Beverage
+Description:
+Restaurants, cafés, food shops and similar businesses.
+
+Diagnostic Center
+Description:
+Laboratory and diagnostic operations.
+Badge:
+Coming Soon
+Disabled.
+
+Step 2:
+Business Information
+
+Fields:
+
+* Business Name
+
+Step 3:
+First Branch
+
+Fields:
+
+* Branch Name
+* Branch Code
+* Address Line 1
+* Address Line 2
+* City
+* Province
+* Postal Code
+
+Step 4:
+Owner Account
+
+Fields:
+
+* First Name
+* Last Name
+* Email
+* Password
+* Confirm Password
+
+Step 5:
+Review
+
+Show:
+Business
+Business Type
+Branch
+Owner
+
+Then:
+Create Business
+
+After successful registration:
+Automatically log in or redirect to login.
+
+Choose whichever approach is cleaner and explain why.
+
+### Login
+
+Fields:
+
+* Email
+* Password
+
+After success:
+Navigate to /dashboard.
+
+### Dashboard
+
+Show:
+
+Welcome, {FirstName}
+
+Business:
+{TenantName}
+
+Business Type:
+Retail or Food & Beverage
+
+Branches:
+1
+
+Users:
+1
+
+Also show a placeholder card:
+
+Next Setup Step
+
+For Retail:
+"Set up your product catalog"
+
+For Food & Beverage:
+"Set up your menu"
+
+Do not implement those modules yet.
+
+## Frontend API Layer
+
+Create a centralized API client.
+
+Use TanStack Query.
+
+Avoid scattering raw fetch calls throughout components.
+
+Use TypeScript request/response types.
+
+Handle:
+
+401
+403
+validation errors
+unexpected server errors
+
+Create authentication state cleanly.
+
+Do not unnecessarily introduce Redux.
+
+## Authentication Storage
+
+For Phase 1, choose a reasonable JWT storage approach.
+
+Explain the security trade-offs.
+
+Do not pretend localStorage is completely secure.
+
+If you choose localStorage for simplicity, explicitly document that a future hardened production design should move toward secure HttpOnly cookie-based refresh-token/session handling.
+
+## Tests
+
+Backend integration tests must cover at least:
+
+1. Retail registration succeeds.
+2. FoodAndBeverage registration succeeds.
+3. DiagnosticCenter registration fails.
+4. Registration creates Tenant.
+5. Registration creates first Branch.
+6. Registration creates Owner.
+7. Owner receives Owner role.
+8. Duplicate email fails.
+9. Invalid password fails.
+10. Registration rollback works if part of registration fails.
+11. Valid login succeeds.
+12. Invalid password login fails.
+13. Unknown email login fails.
+14. JWT contains TenantId.
+15. /api/auth/me requires authentication.
+16. /api/auth/me returns correct tenant.
+17. Dashboard requires authentication.
+18. Owner-only endpoint allows Owner.
+19. Invalid/expired token is rejected.
+
+Use a real SQL Server test database through Testcontainers when practical.
+
+Avoid tests that only mock DbContext and provide false confidence.
+
+## README
+
+Create a professional README containing:
+
+* What Negosio is
+* Current supported business types
+* Coming Soon: Diagnostic Center
+* Architecture
+* Tech stack
+* Project structure
+* Local development instructions
+* Docker instructions
+* EF Core migration instructions
+* How to run backend
+* How to run frontend
+* How to run tests
+* Environment variables
+* Current Phase 1 scope
+* Future roadmap
+
+Future roadmap:
+
+Phase 2:
+Catalog + Inventory
+
+Phase 3:
+Retail POS
+
+Phase 4:
+Food & Beverage Ordering + Kitchen
+
+Phase 5:
+Purchasing + Multi-Branch
+
+Phase 6:
+Azure Service Bus, Functions, Redis, Blob Storage, Application Insights
+
+Phase 7:
+Azure production deployment + CI/CD + Infrastructure as Code
+
+## Development Rules
+
+Work incrementally.
+
+Do NOT generate everything and claim it works without verification.
+
+Follow this order:
+
+1. Create repository/project structure
+2. Create backend solution
+3. Add dependencies
+4. Configure SQL Server Docker
+5. Create domain entities
+6. Configure EF Core
+7. Create initial migration
+8. Verify database startup
+9. Implement registration
+10. Implement login
+11. Implement JWT
+12. Implement current-user context
+13. Implement RBAC
+14. Implement /auth/me
+15. Implement dashboard
+16. Write integration tests
+17. Run all backend tests
+18. Create React application
+19. Create registration flow
+20. Create login
+21. Create protected routing
+22. Create dashboard
+23. Connect frontend to backend
+24. Verify complete registration/login/dashboard flow
+25. Update README
+
+After each meaningful milestone:
+
+* run `dotnet build`
+* run relevant tests
+* fix compilation/test failures before continuing
+
+For frontend:
+
+* run TypeScript compilation
+* run linting if configured
+* ensure production build succeeds
+
+Do not leave placeholder code that breaks the build.
+
+## Important Engineering Expectations
+
+Treat this as a Senior Software Engineer portfolio project.
+
+Prioritize:
+
+* correctness
+* maintainability
+* security
+* tenant isolation
+* transactions
+* database constraints
+* clear module boundaries
+* automated tests
+* explicit architectural decisions
+
+Avoid adding complexity purely to make the architecture look impressive.
+
+When there are multiple reasonable approaches, choose one and briefly explain the trade-off.
+
+Start with **Step 1: repository and solution structure**, then proceed incrementally.

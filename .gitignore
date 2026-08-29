@@ -1,0 +1,30 @@
+# .NET
+bin/
+obj/
+*.user
+[Bb]in/
+[Oo]bj/
+.vs/
+artifacts/
+TestResults/
+*.trx
+
+# Env / secrets
+.env
+*.env.local
+appsettings.*.local.json
+
+# Node / web
+node_modules/
+web/negosio-web/dist/
+web/negosio-web/.vite/
+*.local
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+Thumbs.db
