@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { PackageX } from 'lucide-react'
-import { productsApi } from '../api/catalog'
+import { productsApi, variantsApi } from '../api/catalog'
 import { ApiError } from '../api/client'
-import type { ProductDto } from '../api/types'
+import type { ProductDto, ProductVariantDto } from '../api/types'
 import { buildUpdateProductRequest } from '../lib/catalogRequests'
 import { useCan } from '../lib/useCan'
 import { formatMarginPct, formatMoney } from '../lib/format'
+import { VariantFormModal } from '../components/catalog/VariantFormModal'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
 import {
   Badge,
@@ -31,6 +32,11 @@ export default function ProductDetailPage() {
 
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [showInactive, setShowInactive] = useState(false)
+  const [variantModal, setVariantModal] = useState<{
+    open: boolean
+    variant: ProductVariantDto | null
+  }>({ open: false, variant: null })
+  const [variantToDeactivate, setVariantToDeactivate] = useState<ProductVariantDto | null>(null)
 
   const detail = useQuery({
     queryKey: ['product', id],
@@ -62,6 +68,16 @@ export default function ProductDetailPage() {
     onSuccess: () => {
       invalidateAll()
       toast('success', 'Product reactivated')
+    },
+    onError: onMutationError,
+  })
+
+  const deactivateVariantMutation = useMutation({
+    mutationFn: (v: ProductVariantDto) => variantsApi.deactivate(id!, v.id),
+    onSuccess: (_data, v) => {
+      invalidateAll()
+      toast('success', `${v.name} deactivated`)
+      setVariantToDeactivate(null)
     },
     onError: onMutationError,
   })
@@ -186,15 +202,25 @@ export default function ProductDetailPage() {
                 <h2 className="text-sm font-semibold text-text-primary">
                   Variants <span className="text-text-muted">({variants.length})</span>
                 </h2>
-                <label className="flex items-center gap-2 text-[13px] text-text-secondary">
-                  <input
-                    type="checkbox"
-                    checked={showInactive}
-                    onChange={(e) => setShowInactive(e.target.checked)}
-                    className="size-4 rounded border-border-strong text-primary-600"
-                  />
-                  Show inactive
-                </label>
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-2 text-[13px] text-text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={showInactive}
+                      onChange={(e) => setShowInactive(e.target.checked)}
+                      className="size-4 rounded border-border-strong text-primary-600"
+                    />
+                    Show inactive
+                  </label>
+                  {canWrite && (
+                    <Button
+                      size="sm"
+                      onClick={() => setVariantModal({ open: true, variant: null })}
+                    >
+                      Add variant
+                    </Button>
+                  )}
+                </div>
               </div>
               <div className="mt-3">
                 {rows.length === 0 ? (
@@ -209,6 +235,7 @@ export default function ProductDetailPage() {
                       {canViewCost && <Table.HeaderCell align="right">Cost</Table.HeaderCell>}
                       {canViewCost && <Table.HeaderCell align="right">Margin</Table.HeaderCell>}
                       <Table.HeaderCell>Status</Table.HeaderCell>
+                      {canWrite && <Table.HeaderCell align="right">Actions</Table.HeaderCell>}
                     </Table.Head>
                     <Table.Body>
                       {rows.map((v) => (
@@ -237,6 +264,28 @@ export default function ProductDetailPage() {
                               {v.isActive ? 'Active' : 'Inactive'}
                             </Badge>
                           </Table.Cell>
+                          {canWrite && (
+                            <Table.Cell align="right">
+                              <span className="flex justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setVariantModal({ open: true, variant: v })}
+                                >
+                                  Edit
+                                </Button>
+                                {v.isActive && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setVariantToDeactivate(v)}
+                                  >
+                                    Deactivate
+                                  </Button>
+                                )}
+                              </span>
+                            </Table.Cell>
+                          )}
                         </Table.Row>
                       ))}
                     </Table.Body>
@@ -265,22 +314,53 @@ export default function ProductDetailPage() {
                 This product is sold as a single item. Add a variant to sell multiple versions
                 (sizes, flavours, colours…).
               </p>
+              {canWrite && (
+                <div className="mt-4">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setVariantModal({ open: true, variant: null })}
+                  >
+                    Add variant
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </Card>
       </div>
 
       {canWrite && (
-        <ConfirmDialog
-          open={confirmOpen}
-          onClose={() => setConfirmOpen(false)}
-          onConfirm={() => deactivateMutation.mutate()}
-          title="Deactivate product"
-          message="This product will be hidden from the POS and product pickers. You can reactivate it later."
-          confirmLabel="Deactivate"
-          tone="danger"
-          loading={deactivateMutation.isPending}
-        />
+        <>
+          <ConfirmDialog
+            open={confirmOpen}
+            onClose={() => setConfirmOpen(false)}
+            onConfirm={() => deactivateMutation.mutate()}
+            title="Deactivate product"
+            message="This product will be hidden from the POS and product pickers. You can reactivate it later."
+            confirmLabel="Deactivate"
+            tone="danger"
+            loading={deactivateMutation.isPending}
+          />
+          <ConfirmDialog
+            open={variantToDeactivate !== null}
+            onClose={() => setVariantToDeactivate(null)}
+            onConfirm={() =>
+              variantToDeactivate && deactivateVariantMutation.mutate(variantToDeactivate)
+            }
+            title="Deactivate variant"
+            message={`"${variantToDeactivate?.name ?? ''}" will be hidden from the POS and product pickers. You can add it again later.`}
+            confirmLabel="Deactivate"
+            tone="danger"
+            loading={deactivateVariantMutation.isPending}
+          />
+          <VariantFormModal
+            open={variantModal.open}
+            onClose={() => setVariantModal({ open: false, variant: null })}
+            productId={id!}
+            variant={variantModal.variant}
+          />
+        </>
       )}
     </DashboardLayout>
   )
