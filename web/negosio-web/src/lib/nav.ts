@@ -1,12 +1,13 @@
 import {
   BarChart3,
+  ClipboardList,
   LayoutDashboard,
   Package,
   Settings,
   ShoppingCart,
+  Tag,
   Users,
   Warehouse,
-  ClipboardList,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -18,18 +19,31 @@ export interface NavItem {
   enabled: boolean
 }
 
-/**
- * Full target navigation. Only "Dashboard" is wired to a route in Phase 1;
- * the rest render as disabled "Soon" items so the shell matches the product
- * shape without pretending features exist.
- */
-export const NAV_ITEMS: NavItem[] = [
-  { label: 'Dashboard', icon: LayoutDashboard, to: '/dashboard', enabled: true },
-  { label: 'POS', icon: ShoppingCart, enabled: false },
-  { label: 'Products', icon: Package, enabled: false },
-  { label: 'Inventory', icon: Warehouse, enabled: false },
-  { label: 'Orders', icon: ClipboardList, enabled: false },
-  { label: 'Reports', icon: BarChart3, enabled: false },
-  { label: 'Staff', icon: Users, enabled: false },
-  { label: 'Settings', icon: Settings, enabled: false },
+export interface NavGroup {
+  /** Optional uppercase section label rendered above the group. */
+  label?: string
+  items: NavItem[]
+}
+
+export const NAV_GROUPS: NavGroup[] = [
+  {
+    items: [{ label: 'Dashboard', icon: LayoutDashboard, to: '/dashboard', enabled: true }],
+  },
+  {
+    label: 'Catalog',
+    items: [
+      { label: 'Products', icon: Package, to: '/products', enabled: true },
+      { label: 'Categories', icon: Tag, to: '/categories', enabled: true },
+    ],
+  },
+  {
+    items: [
+      { label: 'Inventory', icon: Warehouse, enabled: false },
+      { label: 'POS', icon: ShoppingCart, enabled: false },
+      { label: 'Sales', icon: ClipboardList, enabled: false },
+      { label: 'Reports', icon: BarChart3, enabled: false },
+      { label: 'Staff', icon: Users, enabled: false },
+      { label: 'Settings', icon: Settings, enabled: false },
+    ],
+  },
 ]

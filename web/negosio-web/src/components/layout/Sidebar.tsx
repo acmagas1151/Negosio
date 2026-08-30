@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { cn } from '../../lib/cn'
-import { NAV_ITEMS } from '../../lib/nav'
+import { NAV_GROUPS } from '../../lib/nav'
 import { Badge } from '../ui'
 import { Brand } from './Brand'
 
@@ -16,63 +16,70 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         <Brand size="sm" />
       </div>
 
-      <nav className="flex-1" aria-label="Main">
-        <ul className="space-y-1">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon
-
-            if (!item.enabled || !item.to) {
-              return (
-                <li key={item.label}>
-                  <span
-                    aria-disabled="true"
-                    className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-text-muted"
-                  >
-                    <Icon className="size-[18px]" aria-hidden="true" />
-                    <span className="flex-1">{item.label}</span>
-                    <Badge tone="neutral">Soon</Badge>
-                  </span>
-                </li>
-              )
-            }
-
-            return (
-              <li key={item.label}>
-                <NavLink
-                  to={item.to}
-                  onClick={onNavigate}
-                  className={({ isActive }) =>
-                    cn(
-                      'relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                      isActive
-                        ? 'bg-primary-50 text-primary-700'
-                        : 'text-text-secondary hover:bg-surface-subtle hover:text-text-primary',
-                    )
-                  }
-                >
-                  {({ isActive }) => (
-                    <>
-                      {isActive && (
-                        <span
-                          className="absolute inset-y-1 left-0 w-1 rounded-r bg-primary-600"
-                          aria-hidden="true"
-                        />
+      <nav className="flex-1 space-y-5" aria-label="Main">
+        {NAV_GROUPS.map((group, i) => (
+          <div key={group.label ?? `group-${i}`}>
+            {group.label && (
+              <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                {group.label}
+              </p>
+            )}
+            <ul className="space-y-1">
+              {group.items.map((item) => {
+                const Icon = item.icon
+                if (!item.enabled || !item.to) {
+                  return (
+                    <li key={item.label}>
+                      <span
+                        aria-disabled="true"
+                        className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-text-muted"
+                      >
+                        <Icon className="size-[18px]" aria-hidden="true" />
+                        <span className="flex-1">{item.label}</span>
+                        <Badge tone="neutral">Soon</Badge>
+                      </span>
+                    </li>
+                  )
+                }
+                return (
+                  <li key={item.label}>
+                    <NavLink
+                      to={item.to}
+                      onClick={onNavigate}
+                      className={({ isActive }) =>
+                        cn(
+                          'relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                          isActive
+                            ? 'bg-primary-50 text-primary-700'
+                            : 'text-text-secondary hover:bg-surface-subtle hover:text-text-primary',
+                        )
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          {isActive && (
+                            <span
+                              className="absolute inset-y-1 left-0 w-1 rounded-r bg-primary-600"
+                              aria-hidden="true"
+                            />
+                          )}
+                          <Icon
+                            className={cn('size-[18px]', isActive ? 'text-primary-600' : 'text-text-muted')}
+                            aria-hidden="true"
+                          />
+                          {item.label}
+                        </>
                       )}
-                      <Icon
-                        className={cn('size-[18px]', isActive ? 'text-primary-600' : 'text-text-muted')}
-                        aria-hidden="true"
-                      />
-                      {item.label}
-                    </>
-                  )}
-                </NavLink>
-              </li>
-            )
-          })}
-        </ul>
+                    </NavLink>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        ))}
       </nav>
 
-      <p className="px-3 text-xs text-text-muted">Phase 1 · SaaS foundation</p>
+      <p className="px-3 text-xs text-text-muted">Negosio</p>
     </div>
   )
 }
