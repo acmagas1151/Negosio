@@ -111,6 +111,18 @@ Backend behaviour worth noting for the UI:
 - `UpdateProductRequest` only edits the product + (for simple products) its
   default variant. Variant products manage pricing per-variant.
 
+**Verified — `UpdateProductRequest` on a variant product**
+([`ProductService.UpdateAsync`](../../../src/Negosio.Application/Catalog/ProductService.cs) L138–170):
+the `sku` / `barcode` / `costPrice` / `sellingPrice` fields are used **only**
+inside `if (!product.HasVariants) { … UpdateDefaultVariant(…) }`. For a
+`hasVariants` product that whole block is skipped — those four fields **cannot
+mutate any data**. `UpdateProductRequestValidator` only requires
+`costPrice >= 0` and `sellingPrice >= 0` (both accept `0`) and `sku`/`barcode`
+≤ 64 chars or null. So for a variant product it is safe (and validated) to send
+`costPrice: 0, sellingPrice: 0, sku: null, barcode: null`. This is a
+**confirmed** fact, not an assumption — it is not a plan-time gate. Re-confirm
+with one line of reading if `ProductService` changes before the build.
+
 ### Product variants — `/api/products/{productId}/variants`
 
 | Method | Path | Body | Response | Notes |
@@ -141,6 +153,13 @@ PagedResult<T> { items: T[], page, pageSize, totalCount, totalPages }
 - `costs:view` → **Owner, Admin, Manager, InventoryStaff**
 - All other roles (Cashier, KitchenStaff, Viewer): read-only catalog, selling
   price only.
+
+**The backend is authoritative for cost redaction.** `useCan('costs:view')` is
+a UX affordance only — it decides whether to *render a Cost column/field at
+all*. Independently, **every** read of `minCostPrice` / `maxCostPrice` /
+`variant.costPrice` must be null-checked before display, because the API nulls
+those fields for redacted roles regardless of what the client believes. Never
+compute or back-fill a cost from the selling price.
 
 ---
 
@@ -298,10 +317,18 @@ message (see §5).
 Query keys:
 - `['categories', params]`
 - `['categories', 'all-active']` — the unpaginated active-category list used to
-  populate the product category `<Select>` (uses `list({ isActive: true,
-  pageSize: 100 })`; acceptable for Phase 3 tenant sizes; revisit if needed).
+  populate the product category `<Select>`. Fetched with
+  `list({ isActive: true, pageSize: ACTIVE_CATEGORY_FETCH_LIMIT })` where
+  `ACTIVE_CATEGORY_FETCH_LIMIT = 100` is a **named constant** in
+  `src/api/catalog.ts` with a comment explaining it is a stopgap until a
+  typeahead/lookup endpoint exists. Acceptable for Phase 3 tenant sizes.
 - `['products', params]`
 - `['product', id]`
+
+**All mutation-triggering controls** (buttons, menu items, confirm buttons) are
+`disabled` while their `useMutation` is `isPending`, and the confirm/submit
+button shows a spinner. This applies to every create / edit / deactivate /
+reactivate across categories, products and variants.
 
 ### 4.1 Categories — `CategoriesPage` (`/categories`)
 
@@ -351,8 +378,9 @@ Query keys:
   - *Tracking* — `Warehouse` icon + "Tracked" pill when `trackInventory`, else
     muted em dash
   - *Status* — `Badge` Active/Inactive
-- Row click → navigate to detail. (No per-row action menu in the list; edit /
-  deactivate live on the detail page.)
+- **Only the product name is a link** (`<Link to="/products/:id">`). The table
+  row itself is **not** clickable — no row-level `onClick`/navigation. (No
+  per-row action menu either; edit / deactivate live on the detail page.)
 - **`Pagination`** below. Page size 20.
 - Default sort `name asc`. Clicking a sortable header cycles
   asc → desc → (back to default).
@@ -364,8 +392,11 @@ Loads `productsApi.get(id)` → `ProductDetailDto`.
 - **Header:** back link to `/products`; product name; `Badge` Active/Inactive.
   Buttons (only if `catalog:write`):
   - `Edit` → `/products/:id/edit`
-  - `Deactivate` (active) via `ConfirmDialog`, or `Reactivate` (inactive) via
-    direct `update` with `isActive:true` built from current values.
+  - `Deactivate` (active) via `ConfirmDialog`, or `Reactivate` (inactive) —
+    both go through `productsApi.update` with a request built by the **single
+    shared helper** `buildUpdateProductRequest(product, patch)` (see §5), so a
+    variant product has exactly one request-construction path whether it is
+    edited or reactivated.
 - **Attributes `Card`:** Category, Description (or em dash), Track inventory
   (Yes / No), Created, Last updated.
 - **Pricing / Variants `Card`:**
@@ -441,11 +472,10 @@ Form = `UpdateProductRequest` fields:
 - **Active** toggle
 - **Simple products only:** SKU, Barcode, Cost price, Selling price
 - **Variant products:** those four fields are *not* rendered; a note reads
-  *"Pricing and codes are managed per variant on the product page."* The
-  request still needs `costPrice`/`sellingPrice` — send the product's current
-  `minSellingPrice` / `minCostPrice ?? 0` (backend ignores them for variant
-  products) **or**, cleaner, send `0`/`null`; pick `0`/`null` and document it.
-- Submit → `productsApi.update` → `navigate('/products/' + id)` + toast.
+  *"Pricing and codes are managed per variant on the product page."*
+- Submit → `buildUpdateProductRequest(product, { categoryId, name, description,
+  trackInventory, isActive })` → `productsApi.update` →
+  `navigate('/products/' + id)` + toast.
 
 ---
 
@@ -454,12 +484,39 @@ Form = `UpdateProductRequest` fields:
 ### Money / number formatting — `src/lib/format.ts`
 
 - `formatMoney(n: number): string` — `₱` + `Intl.NumberFormat('en-PH', {
-  minimumFractionDigits: 2 })`. (Peso is consistent with the Phase 1/2/3
-  backend seed data — Odiongan, Romblon.) One helper, used everywhere.
+  minimumFractionDigits: 2 })`. **Currency is hard-coded to PHP for this phase
+  and is not yet tenant-configurable** — documented here and in a code comment;
+  a future settings slice may add a tenant currency, at which point this helper
+  takes a currency argument. One helper, used everywhere.
 - `formatRange(min, max, fmt)` — `fmt(min)` when equal, else `fmt(min) + ' – ' +
   fmt(max)`.
 - `formatMarginPct(cost, selling)` — `null` when `cost == null` or
   `selling <= 0`; else `Math.round((selling - cost) / selling * 100) + '%'`.
+
+### Safe product-update request builder — `src/lib/catalogRequests.ts`
+
+```ts
+// The ONE place an UpdateProductRequest is constructed. Used by ProductEditPage
+// AND product reactivate/deactivate on ProductDetailPage.
+buildUpdateProductRequest(
+  product: ProductDto,
+  patch: Partial<Pick<UpdateProductRequest,
+    'categoryId' | 'name' | 'description' | 'trackInventory' | 'isActive'
+    | 'sku' | 'barcode' | 'costPrice' | 'sellingPrice'>>,
+): UpdateProductRequest
+```
+
+- Starts from the product's current `categoryId` / `name` / `description` /
+  `trackInventory` / `isActive`, applies `patch`.
+- **Simple product** (`!product.hasVariants`): `sku` / `barcode` / `costPrice`
+  / `sellingPrice` come from `patch` (the edit form supplies them) or fall back
+  to the product's current values.
+- **Variant product** (`product.hasVariants`): forces `sku: null,
+  barcode: null, costPrice: 0, sellingPrice: 0` and **ignores any of those
+  keys in `patch`**. This is provably a no-op server-side (see §2 "Verified");
+  the caller never passes them for a variant product anyway.
+- A short comment in the file links to `ProductService.UpdateAsync` and states
+  why the variant-product values are inert.
 
 ### Form error mapping — `src/lib/formErrors.ts`
 
@@ -496,8 +553,12 @@ the global 401 handler; 404 is not 401).
 
 ### Accessibility
 
-- `Modal` / `ConfirmDialog`: focus trap, `Esc`, focus restore, `aria-modal`,
-  labelled by title.
+- `Modal` / `ConfirmDialog`: focus trap (Tab **and** Shift+Tab wrap within the
+  dialog), `Esc` closes, backdrop click closes, focus moves to the dialog on
+  open and is **restored to the opener** on close, `aria-modal`, labelled by
+  title, background scroll locked while open. Keep the implementation small but
+  **manually verify every one of these** during the build (see §7) — do not
+  assume a hand-rolled trap is correct.
 - `Table` sort headers are `<button>`s inside `<th>` with `aria-sort`.
 - All icon-only buttons have `aria-label`.
 - Toggles are real checkboxes or `role="switch"` buttons with `aria-checked`.
@@ -519,6 +580,7 @@ web/negosio-web/src/
     useCan.ts                  NEW
     format.ts                  NEW  formatMoney / formatRange / formatMarginPct
     formErrors.ts              NEW  fieldErrorsFrom / mapCodeToField
+    catalogRequests.ts         NEW  buildUpdateProductRequest (single UpdateProductRequest path)
     nav.ts                     EDIT grouped nav model; enable Products + Categories
   components/ui/
     Table.tsx                  NEW
@@ -532,8 +594,9 @@ web/negosio-web/src/
   components/catalog/
     CategoryFormModal.tsx      NEW
     VariantFormModal.tsx       NEW
-    ProductForm.tsx            NEW  shared by create + edit (mode prop)
+    ProductForm.tsx            NEW  shared create + edit — see note below
     VariantRowsField.tsx      NEW  the repeatable variant rows for the create form
+    ProductFields.tsx         NEW  shared field groups (Details section), if ProductForm splits
   pages/
     CategoriesPage.tsx         NEW
     ProductsPage.tsx           NEW
@@ -544,6 +607,15 @@ web/negosio-web/src/
 ```
 
 No changes outside `web/negosio-web/`.
+
+**`ProductForm` sharing rule:** start with one `ProductForm` taking a
+`mode: 'create' | 'edit'` prop *only while the branching stays light* (a couple
+of conditionals). The moment create-vs-edit divergence gets heavy — create has
+the single-item/has-variants toggle + repeatable variant rows; edit has the
+Active toggle and hides pricing for variant products — **split into
+`ProductCreateForm` + `ProductEditForm`** and share the smaller pieces
+(`ProductFields` for the Details section, `VariantRowsField`,
+`useProductFormState`). Do not force one component to carry both shapes.
 
 ---
 
@@ -570,7 +642,18 @@ Verification is therefore:
    - 404: visit `/products/<bad-guid>` → not-found state.
    - Screenshots of: categories list, products list, product detail (simple),
      product detail (variants), create form (both modes).
-4. Confirm no regression to Dashboard / Login / Register.
+4. **`Modal` behaviour — manual, explicit:** open a modal and verify Tab cycles
+   only within it, **Shift+Tab** wraps backwards within it, `Esc` closes,
+   backdrop click closes, focus lands in the dialog on open, focus returns to
+   the triggering button on close, and the page behind does not scroll while
+   open.
+5. **`usePagedQuery` / browser history — manual, explicit:** set a search term +
+   a filter + a sort + go to page 2; then (a) **refresh** → all of it is
+   restored from the URL; (b) navigate into a product and press **Back** → the
+   list returns with the same params; (c) confirm the URL query string reflects
+   every param; (d) change the search / a filter / the sort → **page resets to
+   1** each time.
+6. Confirm no regression to Dashboard / Login / Register.
 
 A follow-up sub-project may introduce Vitest + React Testing Library; if so,
 these flows become the first specs to encode.
@@ -579,18 +662,24 @@ these flows become the first specs to encode.
 
 ## 8. Open questions / risks
 
-- **`all-active` categories via `pageSize: 100`** — fine for Phase 3 tenant
-  sizes; if a tenant exceeds 100 categories the product form's category picker
-  truncates. Acceptable now; a typeahead endpoint is the real fix later.
+- **`all-active` categories via `pageSize: 100`** — kept as a stopgap behind
+  the named constant `ACTIVE_CATEGORY_FETCH_LIMIT` (§4). Fine for Phase 3
+  tenant sizes; if a tenant exceeds 100 categories the product form's category
+  picker truncates. A typeahead/lookup endpoint is the real fix later.
 - **Variant deactivation rules** — the backend owns the "can't remove the last
   active / default variant" logic; the UI surfaces whatever error it returns
   rather than duplicating the rule. Confirm the exact messages during the
   build and make them read well in a toast.
-- **`UpdateProductRequest` price fields for variant products** — decision:
-  send `costPrice: 0`, `sellingPrice: 0`, `sku: null`, `barcode: null`;
-  verify the backend genuinely ignores them for `hasVariants` products during
-  the build (a quick integration check / manual test). If it does **not**,
-  stop and report — this would be a real contract gap.
+- **`UpdateProductRequest` price fields for variant products** — **RESOLVED,
+  verified against the code** (see §2 "Verified"): the four fields are inside
+  `if (!product.HasVariants)` in `ProductService.UpdateAsync` and cannot mutate
+  a variant product; the validator accepts `0`/null. `buildUpdateProductRequest`
+  is the single guarded construction site. Re-read that method if
+  `ProductService` changes before the build; if the guard is ever removed, stop
+  and report.
+- **Currency** — `formatMoney` is hard-coded to PHP this phase; not tenant
+  configurable yet (documented in `format.ts`).
 - **App version in the footer** — needs a Vite `define` for
   `__APP_VERSION__` from `package.json`; if that's more friction than it's
-  worth, just drop the footer line.
+  worth, just drop the footer line. Either way, no phase/roadmap text in the
+  product UI.
