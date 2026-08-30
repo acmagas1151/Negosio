@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { variantsApi } from '../../api/catalog'
 import { ApiError } from '../../api/client'
-import type { ProductVariantDto, VariantInput } from '../../api/types'
+import type { ProductDto, ProductVariantDto, VariantInput } from '../../api/types'
 import { fieldErrorsFrom, mapCodeToField } from '../../lib/formErrors'
 import { Button, Modal, TextField, useToast } from '../ui'
 
@@ -11,9 +11,15 @@ interface Props {
   onClose: () => void
   productId: string
   variant: ProductVariantDto | null
+  /**
+   * Set ONLY when adding the first variant to a simple product. The backend's PromoteFromDefault
+   * overwrites the hidden default variant with whatever this modal sends, so we seed the fields
+   * from the product to avoid silently wiping its SKU / barcode / prices.
+   */
+  promoteFrom?: ProductDto
 }
 
-export function VariantFormModal({ open, onClose, productId, variant }: Props) {
+export function VariantFormModal({ open, onClose, productId, variant, promoteFrom }: Props) {
   const qc = useQueryClient()
   const { toast } = useToast()
   const [name, setName] = useState('')
@@ -25,19 +31,34 @@ export function VariantFormModal({ open, onClose, productId, variant }: Props) {
   const [skuError, setSkuError] = useState('')
   const [barcodeError, setBarcodeError] = useState('')
 
-  // Re-seed the form whenever it opens for a different variant (or for create).
+  const promoteSeed = !variant && promoteFrom ? promoteFrom : null
+
+  // Re-seed the form whenever it opens for a different variant (or for create). When promoting a
+  // simple product, seed from the product so its SKU / barcode / pricing carry over.
   useEffect(() => {
     if (!open) return
     // oxlint-disable-next-line set-state-in-effect
-    setName(variant?.name ?? '')
-    setSku(variant?.sku ?? '')
-    setBarcode(variant?.barcode ?? '')
-    setCost(variant?.costPrice != null ? String(variant.costPrice) : '0')
-    setSelling(variant?.sellingPrice != null ? String(variant.sellingPrice) : '0')
+    setName(variant?.name ?? promoteSeed?.name ?? '')
+    setSku(variant?.sku ?? promoteSeed?.sku ?? '')
+    setBarcode(variant?.barcode ?? promoteSeed?.barcode ?? '')
+    setCost(
+      variant?.costPrice != null
+        ? String(variant.costPrice)
+        : promoteSeed
+          ? String(promoteSeed.minCostPrice ?? 0)
+          : '0',
+    )
+    setSelling(
+      variant?.sellingPrice != null
+        ? String(variant.sellingPrice)
+        : promoteSeed
+          ? String(promoteSeed.minSellingPrice)
+          : '0',
+    )
     setNameError('')
     setSkuError('')
     setBarcodeError('')
-  }, [open, variant])
+  }, [open, variant, promoteSeed])
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -71,8 +92,8 @@ export function VariantFormModal({ open, onClose, productId, variant }: Props) {
   })
 
   const submit = (e: React.FormEvent) => {
-    if (mutation.isPending) return
     e.preventDefault()
+    if (mutation.isPending) return
     setNameError('')
     setSkuError('')
     setBarcodeError('')
@@ -108,6 +129,12 @@ export function VariantFormModal({ open, onClose, productId, variant }: Props) {
       }
     >
       <form onSubmit={submit} className="space-y-1">
+        {promoteSeed && (
+          <p className="mb-2 rounded-lg bg-surface-subtle px-3 py-2 text-[13px] text-text-muted">
+            This becomes the product&rsquo;s first variant — it takes over the single-item SKU and
+            pricing. You can edit the values.
+          </p>
+        )}
         <TextField
           label="Name"
           name="name"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useDebouncedValue } from './useDebouncedValue'
 
@@ -41,6 +41,10 @@ export function usePagedQuery<F extends Record<string, string | undefined>>(opts
   const [searchInput, setSearchInput] = useState(params.get('q') ?? '')
   const search = useDebouncedValue(searchInput, debounceMs)
 
+  // The last `q` value this hook itself pushed into the URL — so the resync effect below can tell
+  // an external URL change (browser Back/Forward, a shared link) apart from its own write.
+  const lastPushedRef = useRef(params.get('q') ?? '')
+
   // Mutate the URL immutably; always drop `page` on any filter/search/sort change.
   const patch = useCallback(
     (mutate: (next: URLSearchParams) => void) => {
@@ -60,6 +64,7 @@ export function usePagedQuery<F extends Record<string, string | undefined>>(opts
   useEffect(() => {
     const current = params.get('q') ?? ''
     if (current === search) return
+    lastPushedRef.current = search
     patch((next) => {
       if (search) next.set('q', search)
       else next.delete('q')
@@ -67,6 +72,17 @@ export function usePagedQuery<F extends Record<string, string | undefined>>(opts
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
+
+  // Resync FROM the URL when `q` changes to a value this hook did not push (browser Back/Forward,
+  // an externally-set link). Without this the input keeps showing — and querying — the stale term.
+  useEffect(() => {
+    const urlQ = params.get('q') ?? ''
+    if (urlQ !== lastPushedRef.current && urlQ !== searchInput) {
+      lastPushedRef.current = urlQ
+      // oxlint-disable-next-line set-state-in-effect
+      setSearchInput(urlQ)
+    }
+  }, [params, searchInput])
 
   const setFilter = useCallback(
     (key: keyof F, value: string | undefined) => {

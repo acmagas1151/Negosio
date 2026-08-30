@@ -50,8 +50,8 @@ export function CategoryFormModal({ open, onClose, category }: Props) {
   })
 
   const submit = (e: React.FormEvent) => {
-    if (mutation.isPending) return
     e.preventDefault()
+    if (mutation.isPending) return
     setNameError('')
     if (!name.trim()) {
       setNameError('Name is required.')

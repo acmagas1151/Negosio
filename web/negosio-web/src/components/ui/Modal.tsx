@@ -34,6 +34,13 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }: M
       const first = items[0]
       const last = items[items.length - 1]
       const active = document.activeElement
+      // Focus sitting on a non-focusable node (clicked the title/body) lands on <body>; pull it
+      // back into the panel before the browser's default Tab escapes behind the portal.
+      if (!panelRef.current.contains(active)) {
+        e.preventDefault()
+        first.focus()
+        return
+      }
       if (e.shiftKey && active === first) {
         e.preventDefault()
         last.focus()
@@ -73,6 +80,7 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }: M
       <button
         type="button"
         aria-label="Close"
+        aria-hidden="true"
         tabIndex={-1}
         onClick={onClose}
         className="absolute inset-0 bg-text-primary/40"

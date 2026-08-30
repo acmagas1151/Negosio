@@ -41,6 +41,10 @@ export function buildUpdateProductRequest(product: ProductDto, patch: ProductPat
     ...base,
     sku: patch.sku !== undefined ? patch.sku : product.sku,
     barcode: patch.barcode !== undefined ? patch.barcode : product.barcode,
+    // INVARIANT: `catalog:write` roles ⊆ `costs:view` roles (see CatalogAccess.cs / src/lib/useCan.ts).
+    // Anyone who can reach this code can see the real cost, so `product.minCostPrice` is never a
+    // redacted null for them. If the backend role sets ever diverge, this `?? 0` fallback would
+    // silently write 0 over a redacted cost — revisit before loosening those sets.
     costPrice: patch.costPrice ?? product.minCostPrice ?? 0,
     sellingPrice: patch.sellingPrice ?? product.minSellingPrice,
   }

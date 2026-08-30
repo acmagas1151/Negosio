@@ -35,7 +35,8 @@ export default function ProductDetailPage() {
   const [variantModal, setVariantModal] = useState<{
     open: boolean
     variant: ProductVariantDto | null
-  }>({ open: false, variant: null })
+    promote: boolean
+  }>({ open: false, variant: null, promote: false })
   const [variantToDeactivate, setVariantToDeactivate] = useState<ProductVariantDto | null>(null)
 
   const detail = useQuery({
@@ -215,7 +216,7 @@ export default function ProductDetailPage() {
                   {canWrite && (
                     <Button
                       size="sm"
-                      onClick={() => setVariantModal({ open: true, variant: null })}
+                      onClick={() => setVariantModal({ open: true, variant: null, promote: false })}
                     >
                       Add variant
                     </Button>
@@ -270,7 +271,9 @@ export default function ProductDetailPage() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => setVariantModal({ open: true, variant: v })}
+                                  onClick={() =>
+                                    setVariantModal({ open: true, variant: v, promote: false })
+                                  }
                                 >
                                   Edit
                                 </Button>
@@ -319,7 +322,7 @@ export default function ProductDetailPage() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => setVariantModal({ open: true, variant: null })}
+                    onClick={() => setVariantModal({ open: true, variant: null, promote: true })}
                   >
                     Add variant
                   </Button>
@@ -356,9 +359,10 @@ export default function ProductDetailPage() {
           />
           <VariantFormModal
             open={variantModal.open}
-            onClose={() => setVariantModal({ open: false, variant: null })}
+            onClose={() => setVariantModal({ open: false, variant: null, promote: false })}
             productId={id!}
             variant={variantModal.variant}
+            promoteFrom={variantModal.promote ? product : undefined}
           />
         </>
       )}

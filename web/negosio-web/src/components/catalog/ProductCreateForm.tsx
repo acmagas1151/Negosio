@@ -35,6 +35,10 @@ const CONFLICT_MESSAGES: Record<string, string> = {
   name: 'A product with this name already exists.',
 }
 
+// Field keys this form surfaces inline. A server field error outside this set (e.g. `description`,
+// `variants[0].name`) would otherwise be invisible, so we also toast the message.
+const INLINE_FIELDS = ['categoryid', 'name', 'sku', 'barcode', 'costprice', 'sellingprice', 'variants']
+
 export function ProductCreateForm({ categories }: { categories: CategoryDto[] }): React.ReactNode {
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -112,7 +116,8 @@ export function ProductCreateForm({ categories }: { categories: CategoryDto[] })
         fields[codeField] = CONFLICT_MESSAGES[codeField] ?? 'This value is already in use.'
       }
       setErrors(fields)
-      if (Object.keys(fields).length === 0) {
+      const keys = Object.keys(fields)
+      if (keys.length === 0 || keys.some((k) => !INLINE_FIELDS.includes(k))) {
         toast('error', error instanceof Error ? error.message : 'Something went wrong.')
       }
     },

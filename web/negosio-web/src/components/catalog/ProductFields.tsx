@@ -56,7 +56,9 @@ export function ProductFields({ value, onChange, categories, errors }: Props): R
           maxLength={500}
           className="w-full rounded-lg border border-border-strong bg-white px-3 py-2 text-sm text-text-primary focus:border-primary-500 focus:outline-none focus:ring-[3px] focus:ring-primary-500/15"
         />
-        <p className="min-h-[1rem] text-[13px] leading-4 text-text-muted"> </p>
+        <p className="min-h-[1rem] text-[13px] leading-4 text-text-muted" aria-hidden="true">
+          {' '}
+        </p>
       </div>
 
       <div className="flex items-start justify-between gap-4 pt-1">
