@@ -100,6 +100,14 @@ export function ProductCreateForm({ categories }: { categories: CategoryDto[] })
     onError: (error) => {
       const fields = fieldErrorsFrom(error)
       const codeField = error instanceof ApiError ? mapCodeToField(error.code) : null
+      // In variants mode there is no inline sku/barcode field — surface the conflict on the
+      // variants Callout (and a toast) so it isn't a silent dead-end.
+      if (mode === 'variants' && (codeField === 'sku' || codeField === 'barcode')) {
+        const message = error instanceof Error ? error.message : 'That value is already in use.'
+        setErrors({ variants: message })
+        toast('error', message)
+        return
+      }
       if (codeField && !fields[codeField]) {
         fields[codeField] = CONFLICT_MESSAGES[codeField] ?? 'This value is already in use.'
       }
