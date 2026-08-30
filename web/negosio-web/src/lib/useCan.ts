@@ -1,9 +1,12 @@
 import { useAuth } from '../auth/AuthContext'
 import type { UserRole } from '../api/types'
 
-type Capability = 'catalog:write' | 'costs:view'
+type Capability = 'catalog:write' | 'inventory:write' | 'costs:view'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
+// 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
+// 'inventory:write' -> InventoryWriterRoles     (InventoryController "adjustments" policy)
+// 'costs:view'      -> CostReaderRoles          (service-level cost-price redaction)
 //
 // INVARIANT: `catalog:write` roles ⊆ `costs:view` roles. src/lib/catalogRequests.ts relies on this:
 // its `costPrice ?? product.minCostPrice ?? 0` fallbacks assume a writer always sees the real
@@ -11,6 +14,7 @@ type Capability = 'catalog:write' | 'costs:view'
 // redacted (null) cost — revisit them before loosening these sets.
 const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   'catalog:write': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
+  'inventory:write': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'InventoryStaff']),
   'costs:view': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'InventoryStaff']),
 }
 

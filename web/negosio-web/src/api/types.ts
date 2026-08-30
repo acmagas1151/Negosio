@@ -198,3 +198,95 @@ export interface ProductListParams {
   sortBy?: ProductSortBy
   sortDirection?: 'asc' | 'desc'
 }
+
+// ---- Branches (read-only selector feed) ----
+
+export interface BranchDto {
+  id: string
+  name: string
+  code: string
+  isActive: boolean
+}
+
+// ---- Inventory ----
+
+export type InventoryStatus = 'OutOfStock' | 'LowStock' | 'InStock'
+
+export interface InventoryRowDto {
+  id: string
+  branchId: string
+  branchName: string
+  productId: string
+  productName: string
+  productVariantId: string
+  variantName: string
+  isDefaultVariant: boolean
+  sku: string | null
+  quantityOnHand: number
+  reorderLevel: number
+  status: InventoryStatus
+  costPrice: number | null
+  sellingPrice: number
+  concurrencyToken: string
+  updatedAtUtc: string
+}
+
+export type StockMovementType =
+  | 'OpeningStock'
+  | 'AdjustmentIncrease'
+  | 'AdjustmentDecrease'
+  | 'Sale'
+  | 'Return'
+  | 'TransferIn'
+  | 'TransferOut'
+  | 'Purchase'
+  | 'Waste'
+
+export interface StockMovementDto {
+  id: string
+  branchId: string
+  branchName: string
+  productId: string
+  productName: string
+  productVariantId: string
+  variantName: string
+  type: StockMovementType
+  quantity: number
+  quantityBefore: number
+  quantityAfter: number
+  reason: string | null
+  createdByUserId: string
+  createdByName: string
+  createdAtUtc: string
+}
+
+export interface AdjustInventoryRequest {
+  branchId: string
+  productId: string
+  productVariantId: string | null
+  adjustment: number
+  reason: string
+  reorderLevel: number | null
+  expectedConcurrencyToken: string | null
+}
+
+export interface InventoryListParams {
+  branchId?: string
+  productId?: string
+  categoryId?: string
+  search?: string
+  lowStock?: boolean
+  page?: number
+  pageSize?: number
+}
+
+export interface MovementListParams {
+  branchId?: string
+  productId?: string
+  productVariantId?: string
+  type?: StockMovementType
+  fromUtc?: string
+  toUtc?: string
+  page?: number
+  pageSize?: number
+}
