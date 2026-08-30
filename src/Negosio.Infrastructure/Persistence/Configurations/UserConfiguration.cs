@@ -15,7 +15,6 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
 
         builder.Property(u => u.TenantId).IsRequired();
         builder.Property(u => u.Email).IsRequired().HasMaxLength(256);
-        builder.Property(u => u.PasswordHash).IsRequired().HasMaxLength(500);
         builder.Property(u => u.FirstName).IsRequired().HasMaxLength(100);
         builder.Property(u => u.LastName).IsRequired().HasMaxLength(100);
 
@@ -27,11 +26,9 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.CreatedAtUtc).IsRequired();
         builder.Property(u => u.UpdatedAtUtc).IsRequired();
 
-        // Phase 1: email is globally unique to keep authentication simple (see README).
+        // Unique within this tenant database. Global email uniqueness now lives on PlatformUserLogin.
         builder.HasIndex(u => u.Email)
             .IsUnique()
             .HasDatabaseName("IX_Users_Email");
-
-        builder.HasIndex(u => u.TenantId).HasDatabaseName("IX_Users_TenantId");
     }
 }

@@ -3,17 +3,20 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Negosio.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace Negosio.Infrastructure.Persistence.Migrations
+namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
 {
-    [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [DbContext(typeof(TenantDbContext))]
+    [Migration("20260829122000_TenantBaseline")]
+    partial class TenantBaseline
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -873,7 +876,7 @@ namespace Negosio.Infrastructure.Persistence.Migrations
                     b.ToTable("StockMovements", (string)null);
                 });
 
-            modelBuilder.Entity("Negosio.Domain.Entities.Tenant", b =>
+            modelBuilder.Entity("Negosio.Domain.Entities.TenantProfile", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uniqueidentifier");
@@ -884,31 +887,24 @@ namespace Negosio.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("bit");
-
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
                     b.Property<bool>("PricesIncludeTax")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
+                        .HasColumnType("bit");
 
                     b.Property<decimal>("TaxRatePercent")
-                        .ValueGeneratedOnAdd()
                         .HasPrecision(5, 2)
-                        .HasColumnType("decimal(5,2)")
-                        .HasDefaultValue(0m);
+                        .HasColumnType("decimal(5,2)");
 
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("datetime2");
 
                     b.HasKey("Id");
 
-                    b.ToTable("Tenants", (string)null);
+                    b.ToTable("TenantProfile", (string)null);
                 });
 
             modelBuilder.Entity("Negosio.Domain.Entities.User", b =>
@@ -937,11 +933,6 @@ namespace Negosio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<string>("PasswordHash")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
                     b.Property<int>("Role")
                         .HasColumnType("int");
 
@@ -957,19 +948,7 @@ namespace Negosio.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_Users_Email");
 
-                    b.HasIndex("TenantId")
-                        .HasDatabaseName("IX_Users_TenantId");
-
                     b.ToTable("Users", (string)null);
-                });
-
-            modelBuilder.Entity("Negosio.Domain.Entities.Branch", b =>
-                {
-                    b.HasOne("Negosio.Domain.Entities.Tenant", null)
-                        .WithMany("Branches")
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("Negosio.Domain.Entities.BranchInventory", b =>
@@ -1116,17 +1095,6 @@ namespace Negosio.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("Negosio.Domain.Entities.User", b =>
-                {
-                    b.HasOne("Negosio.Domain.Entities.Tenant", "Tenant")
-                        .WithMany("Users")
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Tenant");
-                });
-
             modelBuilder.Entity("Negosio.Domain.Entities.Product", b =>
                 {
                     b.Navigation("Variants");
@@ -1144,13 +1112,6 @@ namespace Negosio.Infrastructure.Persistence.Migrations
                     b.Navigation("Items");
 
                     b.Navigation("Refunds");
-                });
-
-            modelBuilder.Entity("Negosio.Domain.Entities.Tenant", b =>
-                {
-                    b.Navigation("Branches");
-
-                    b.Navigation("Users");
                 });
 #pragma warning restore 612, 618
         }

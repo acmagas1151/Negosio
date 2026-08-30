@@ -8,11 +8,11 @@ namespace Negosio.Application.Catalog;
 
 public sealed class ProductVariantService : IProductVariantService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<VariantInput> _validator;
 
-    public ProductVariantService(IApplicationDbContext db, ICurrentUser currentUser, IValidator<VariantInput> validator)
+    public ProductVariantService(ITenantDbContext db, ICurrentUser currentUser, IValidator<VariantInput> validator)
     {
         _db = db;
         _currentUser = currentUser;

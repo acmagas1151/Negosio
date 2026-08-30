@@ -42,7 +42,7 @@ public class RegistrationTests : IntegrationTest
         error!.Code.Should().Be("BUSINESS_TYPE_NOT_AVAILABLE");
         error.Message.Should().Contain("coming soon");
 
-        var tenantCount = await InScopeAsync(db => db.Tenants.CountAsync());
+        var tenantCount = await InPlatformScopeAsync(db => db.Tenants.CountAsync());
         tenantCount.Should().Be(0);
     }
 
@@ -53,25 +53,38 @@ public class RegistrationTests : IntegrationTest
 
         var response = await Client.PostAsJsonAsync("/api/auth/register", request);
         response.EnsureSuccessStatusCode();
+        var body = (await response.Content.ReadFromJsonAsync<RegisterResponseBody>())!;
 
-        await InScopeAsync(async db =>
+        var tenantId = await InPlatformScopeAsync(async db =>
         {
             var tenant = await db.Tenants.SingleAsync();
+            tenant.Id.Should().Be(body.TenantId);
             tenant.Name.Should().Be("Bruno's Cafe");
             tenant.BusinessType.Should().Be(BusinessType.Retail);
             tenant.IsActive.Should().BeTrue();
+            tenant.ProvisioningStatus.Should().Be(TenantProvisioningStatus.Active);
 
+            // The password hash lives only in the platform login directory, never in the tenant DB.
+            var login = await db.PlatformUserLogins.SingleAsync();
+            login.TenantId.Should().Be(tenant.Id);
+            login.EmailNormalized.Should().Be("owner@example.com");
+            login.Role.Should().Be(UserRole.Owner);
+            login.PasswordHash.Should().NotBeNullOrWhiteSpace();
+            login.PasswordHash.Should().NotContain("SecurePassword123!");
+            return tenant.Id;
+        });
+
+        await InTenantScopeAsync(tenantId, async db =>
+        {
             var branch = await db.Branches.SingleAsync();
-            branch.TenantId.Should().Be(tenant.Id);
+            branch.TenantId.Should().Be(tenantId);
             branch.Code.Should().Be("MAIN");
             branch.City.Should().Be("Odiongan");
 
             var owner = await db.Users.SingleAsync();
-            owner.TenantId.Should().Be(tenant.Id);
+            owner.TenantId.Should().Be(tenantId);
             owner.Email.Should().Be("owner@example.com");
             owner.Role.Should().Be(UserRole.Owner);
-            owner.PasswordHash.Should().NotBeNullOrWhiteSpace();
-            owner.PasswordHash.Should().NotContain("SecurePassword123!");
             return true;
         });
     }
@@ -108,18 +121,18 @@ public class RegistrationTests : IntegrationTest
         // Arrange: an account already owns this email.
         await Client.PostAsJsonAsync("/api/auth/register", NewRegisterRequest(businessType: "Retail"));
 
-        // Act: a second registration reuses the email. Tenant + branch are built first, then the
-        // owner insert violates the unique email index and the whole transaction must roll back.
+        // Act: a second registration reuses the email. The unique email index on the platform login
+        // directory rejects it before any tenant database is created, so no partial state remains.
         var conflicting = NewRegisterRequest(businessName: "Should Roll Back", businessType: "Retail", branchCode: "RB");
         var response = await Client.PostAsJsonAsync("/api/auth/register", conflicting);
 
         // Assert: nothing from the failed attempt was persisted.
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
-        await InScopeAsync(async db =>
+        await InPlatformScopeAsync(async db =>
         {
             (await db.Tenants.CountAsync()).Should().Be(1);
-            (await db.Branches.CountAsync()).Should().Be(1);
-            (await db.Users.CountAsync()).Should().Be(1);
+            (await db.PlatformUserLogins.CountAsync()).Should().Be(1);
+            (await db.TenantDatabases.CountAsync()).Should().Be(1);
             (await db.Tenants.AnyAsync(t => t.Name == "Should Roll Back")).Should().BeFalse();
             return true;
         });

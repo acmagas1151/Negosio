@@ -21,9 +21,9 @@ public interface IDocumentNumberService
 
 public sealed class DocumentNumberService : IDocumentNumberService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
 
-    public DocumentNumberService(IApplicationDbContext db)
+    public DocumentNumberService(ITenantDbContext db)
     {
         _db = db;
     }

@@ -9,6 +9,12 @@ public static class ErrorCodes
     public const string Forbidden = "FORBIDDEN";
     public const string InternalError = "INTERNAL_ERROR";
 
+    // ---- Phase 2.5: database-per-tenant ----
+    public const string TenantNotFound = "TENANT_NOT_FOUND";
+    public const string TenantUnavailable = "TENANT_UNAVAILABLE";
+    public const string TenantSuspended = "TENANT_SUSPENDED";
+    public const string TenantProvisioningFailed = "TENANT_PROVISIONING_FAILED";
+
     public const string DuplicateEmail = "DUPLICATE_EMAIL";
     public const string BusinessTypeNotAvailable = "BUSINESS_TYPE_NOT_AVAILABLE";
     public const string InvalidCredentials = "INVALID_CREDENTIALS";

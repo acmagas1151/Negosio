@@ -11,7 +11,7 @@ namespace Negosio.Application.Pos;
 
 public sealed class CheckoutService : ICheckoutService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<CheckoutRequest> _validator;
     private readonly IDocumentNumberService _documentNumbers;
@@ -19,7 +19,7 @@ public sealed class CheckoutService : ICheckoutService
     private readonly ILogger<CheckoutService> _logger;
 
     public CheckoutService(
-        IApplicationDbContext db,
+        ITenantDbContext db,
         ICurrentUser currentUser,
         IValidator<CheckoutRequest> validator,
         IDocumentNumberService documentNumbers,
@@ -71,7 +71,7 @@ public sealed class CheckoutService : ICheckoutService
             throw new BusinessRuleException(ErrorCodes.RegisterSessionNotOpen, "The register session is not open.");
         }
 
-        var tenant = await _db.Tenants.SingleAsync(t => t.Id == tenantId, cancellationToken);
+        var tenant = await _db.TenantProfiles.SingleAsync(p => p.Id == tenantId, cancellationToken);
 
         // 3. Merge duplicate variant lines (first non-None discount wins for the merged line).
         var merged = request.Items

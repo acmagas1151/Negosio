@@ -29,12 +29,18 @@ deliberately out of scope and land in later phases.
 A **modular monolith** with Clean Architecture influences, applied only where they pay for themselves.
 
 ```
-Negosio.Api            ASP.NET Core Web API — controllers, auth wiring, middleware, HTTP concerns
-Negosio.Application    Use cases (AuthService, DashboardService), DTOs, validators, error types,
-                       abstractions (ICurrentUser, IApplicationDbContext, IPasswordHasher, IJwtTokenGenerator)
-Negosio.Infrastructure EF Core DbContext + configurations, migrations, password hashing, JWT generation
-Negosio.Domain         Entities (Tenant, Branch, User) and enums (BusinessType, UserRole) — no dependencies
+Negosio.Api            ASP.NET Core Web API — controllers, auth wiring, middleware (incl. tenant resolution), HTTP concerns
+Negosio.Application    Use cases (AuthService, DashboardService, TenantProvisioningService), DTOs, validators, error types,
+                       abstractions (ICurrentUser, IPlatformDbContext, ITenantDbContext, ITenantConnectionResolver,
+                       ITenantDbContextFactory, IPasswordHasher, IJwtTokenGenerator)
+Negosio.Infrastructure Platform + tenant EF Core DbContexts + configurations, split migrations, tenant routing,
+                       SQL database provisioning, password hashing, JWT generation
+Negosio.Domain         Entities (Tenant, TenantDatabase, PlatformUserLogin, TenantProfile, Branch, User, …) and enums — no dependencies
 ```
+
+As of **Phase 2.5** the persistence layer is **database-per-tenant**: a small platform (control-plane)
+database plus one operational database per tenant. See the Phase 2.5 section below and
+[ADR 0008–0012](docs/adr/).
 
 Dependency direction: `Api → Infrastructure → Application → Domain` (Api also references Application/Domain directly).
 
@@ -128,7 +134,9 @@ Copy `.env.example` to `.env` and adjust. `.env` is git-ignored. Never commit re
 | --- | --- | --- |
 | `MSSQL_SA_PASSWORD` | docker-compose | SA password for the SQL Server container |
 | `MSSQL_PORT` | docker-compose | Host port for SQL Server (default `1433`) |
-| `ConnectionStrings__Default` | API | EF Core connection string |
+| `ConnectionStrings__Platform` | API | EF Core connection string for the platform (control-plane) database |
+| `TenantDatabases__DefaultServerKey` | API | Server key new tenant databases are provisioned onto (default `default`) |
+| `TenantDatabases__Servers__default` | API | Connection-string **template** (server + auth, no `Database=`) for that server key |
 | `Jwt__Issuer`, `Jwt__Audience` | API | Token issuer/audience |
 | `Jwt__SigningKey` | API | **Secret.** Symmetric signing key, ≥ 32 bytes |
 | `Jwt__AccessTokenMinutes` | API | Access-token lifetime (default `60`) |
@@ -151,16 +159,20 @@ cp .env.example .env            # then edit MSSQL_SA_PASSWORD etc.
 docker compose up -d            # starts SQL Server with a healthcheck + persistent volume
 ```
 
-Point the API at it (in `.env` or user-secrets):
+Point the API at it (in `.env` or user-secrets) — the platform database plus a server template that
+tenant databases are provisioned onto:
 
 ```
-ConnectionStrings__Default=Server=localhost,1433;Database=Negosio;User Id=sa;Password=<your password>;TrustServerCertificate=true;MultipleActiveResultSets=true
+ConnectionStrings__Platform=Server=localhost,1433;Database=Negosio_Platform;User Id=sa;Password=<your password>;TrustServerCertificate=true;MultipleActiveResultSets=true
+TenantDatabases__DefaultServerKey=default
+TenantDatabases__Servers__default=Server=localhost,1433;User Id=sa;Password=<your password>;TrustServerCertificate=true;MultipleActiveResultSets=true
 ```
 
 ### Option B — SQL Server LocalDB (no Docker, Windows)
 
 The default `appsettings.Development.json` already targets
-`Server=(localdb)\MSSQLLocalDB;Database=Negosio;...`. Just make sure LocalDB is running:
+`Server=(localdb)\MSSQLLocalDB;Database=Negosio_Platform;...` for the platform database and the same
+LocalDB instance as the tenant server template. Just make sure LocalDB is running:
 
 ```bash
 sqllocaldb start MSSQLLocalDB
@@ -170,21 +182,30 @@ sqllocaldb start MSSQLLocalDB
 
 ## EF Core migrations
 
-`dotnet-ef` is pinned as a local tool (`dotnet tool restore` first if needed).
+`dotnet-ef` is pinned as a local tool (`dotnet tool restore` first if needed). There are **two
+contexts with separate histories** ([ADR 0012](docs/adr/0012-split-migration-histories.md)) — always
+pass `--context`.
 
 ```bash
-# create a migration
-dotnet dotnet-ef migrations add <Name> \
+# platform (control-plane) database — history table __PlatformMigrationsHistory
+dotnet dotnet-ef migrations add <Name> --context PlatformDbContext \
   --project src/Negosio.Infrastructure --startup-project src/Negosio.Api \
-  --output-dir Persistence/Migrations
+  --output-dir Persistence/Migrations/Platform --namespace Negosio.Infrastructure.Persistence.Migrations.PlatformDb
 
-# apply migrations to the configured database
-dotnet dotnet-ef database update \
-  --project src/Negosio.Infrastructure --startup-project src/Negosio.Api
+# tenant (operational) database — one schema applied to every tenant DB
+dotnet dotnet-ef migrations add <Name> --context TenantDbContext \
+  --project src/Negosio.Infrastructure --startup-project src/Negosio.Api \
+  --output-dir Persistence/Migrations/Tenant --namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
+
+dotnet dotnet-ef migrations list --context PlatformDbContext --project src/Negosio.Infrastructure --startup-project src/Negosio.Api
 ```
 
-With `Database__MigrateOnStartup=true` the API also applies pending migrations on boot. The initial
-migration is `Persistence/Migrations/*_InitialCreate.cs`.
+Baselines: `Persistence/Migrations/Platform/*_PlatformBaseline.cs` and
+`Persistence/Migrations/Tenant/*_TenantBaseline.cs`.
+
+With `Database__MigrateOnStartup=true` the API, on boot, migrates the platform database and then
+iterates every `TenantDatabases` row and migrates each tenant database. New tenants are migrated by
+the provisioning workflow right after `CREATE DATABASE`.
 
 ---
 
@@ -455,8 +476,9 @@ must cover the grand total (`PAYMENT_INSUFFICIENT` otherwise). No gateway integr
 
 ### Tax
 
-Minimal tenant-level setting on `Tenant`: `TaxRatePercent` (default 0) and `PricesIncludeTax`
-(default false → **tax-exclusive**), editable via `GET`/`PUT /api/settings/tax` (Owner/Admin). Tax
+Minimal tenant-level setting on `TenantProfile` (was `Tenant` before Phase 2.5): `TaxRatePercent`
+(default 0) and `PricesIncludeTax` (default false → **tax-exclusive**), editable via
+`GET`/`PUT /api/settings/tax` (Owner/Admin). Tax
 is computed backend-side per line; the two modes are never mixed. Money is `decimal(18,2)`, rounded
 **half-up (away from zero) at 2 dp**, per line then summed.
 
@@ -484,10 +506,98 @@ Dashboard gains `TodaysSales`, `TodaysTransactions`, `AverageTransactionValue` (
 
 ### Migration
 
-`Persistence/Migrations/*_Phase3RetailPos` — 9 new tables (`Registers`, `RegisterSessions`, `Sales`,
-`SaleItems`, `Payments`, `SaleReturns`, `SaleReturnItems`, `RefundPayments`,
-`DocumentNumberCounters`) plus two back-filled columns on `Tenants`. Phase 1/2 tables and data are
-untouched.
+Phase 3 shipped as `*_Phase3RetailPos` (9 new tables plus two columns on `Tenants`). Phase 2.5 later
+squashed all Phase 1–3 tenant migrations into a single `TenantBaseline` and moved the tax columns to
+`TenantProfile` — see below.
+
+---
+
+## Phase 2.5 — Database-per-Tenant Architecture
+
+A persistence-only refactor: move the physical tenancy boundary from *row-level* isolation in one
+shared database to **one operational database per tenant**, plus a small **platform (control-plane)
+database**. No business-logic rewrite, no microservices, no new infrastructure. All Phase 1–3
+behaviour and every API contract are unchanged, so the React app needed no functional edits.
+
+Full rationale and trade-offs: **[ADR 0008](docs/adr/0008-database-per-tenant.md)** (tenancy model) ·
+**[0009](docs/adr/0009-platform-control-plane-database.md)** (platform database) ·
+**[0010](docs/adr/0010-tenant-connection-resolution.md)** (connection resolution) ·
+**[0011](docs/adr/0011-tenant-provisioning-lifecycle.md)** (provisioning lifecycle) ·
+**[0012](docs/adr/0012-split-migration-histories.md)** (split migration histories).
+
+### Two databases, two contexts
+
+| | Platform database (`Negosio_Platform`, fixed) | Tenant database (`Negosio.<Slug>_<BranchCode>_<TenantIdPrefix8>`, one per tenant) |
+| --- | --- | --- |
+| Context | `PlatformDbContext` / `IPlatformDbContext` | `TenantDbContext` / `ITenantDbContext` |
+| Connection | `ConnectionStrings:Platform` | resolved per request from the `tenant_id` claim |
+| Tables | `Tenants`, `TenantDatabases`, `PlatformUserLogins` | `TenantProfile` + all Phase 1–3 operational tables (branches, users, catalog, inventory, registers, sales, returns, counters) |
+| Migration history | `__PlatformMigrationsHistory` | `__EFMigrationsHistory` |
+
+`Tenant` is now a control-plane record only (`Name`, `BusinessType`, `IsActive`,
+`ProvisioningStatus`). Its branches, users and tax settings live in the tenant database
+(`TenantProfile` holds name / business type / tax). `User` **no longer carries a password hash** — the
+hash lives solely in `PlatformUserLogin`, which also holds the globally-unique email directory.
+
+### Request pipeline
+
+`UseAuthentication` → **`TenantResolutionMiddleware`** → `UseAuthorization` → controllers. The
+middleware reads the `tenant_id` claim (`ITenantContext`), calls `ITenantConnectionResolver`
+(platform-DB lookup joining `Tenants` + `TenantDatabases`, cached in `IMemoryCache` for 60 s) and
+stashes the composed connection string in a scoped `TenantConnectionAccessor` that
+`AddDbContext<TenantDbContext>` reads. Anonymous requests (register, login, swagger) pass straight
+through. Connection strings are **composed server-side** from a configured per-server template
+(`TenantDatabases:Servers:<key>`) + the stored `DatabaseName`; no client input ever reaches them.
+
+Not-usable tenants fail before any handler runs: `404 TENANT_NOT_FOUND` (unknown),
+`403 TENANT_SUSPENDED` (suspended / soft-disabled), `403 TENANT_UNAVAILABLE` (still provisioning or
+failed).
+
+### Registration → provisioning
+
+`POST /api/auth/register` is unchanged on the wire but now runs `ITenantProvisioningService`, an
+**idempotent, re-entrant** cross-database workflow: platform rows (`Tenant` `Pending` +
+`PlatformUserLogin` + `TenantDatabase` `Pending`) in one platform transaction → `CREATE DATABASE`
+(name `Negosio.<Slug>_<BranchCode>_<TenantIdPrefix8>` — business name + initial branch code sanitized
+to `[A-Za-z0-9]`, an 8-hex tenant-id suffix for uniqueness; composed server-side, regex-validated,
+bracket-quoted) → `MigrateAsync` → seed `TenantProfile` +
+first branch + owner `User` → mark both `Active`. A failure marks the tenant `Failed` and returns
+`500 TENANT_PROVISIONING_FAILED`; **re-POSTing the same email resumes** a `Pending`/`Provisioning`/
+`Failed` tenant, while a finished (`Active`/`Suspended`) account returns `409 DUPLICATE_EMAIL`.
+[ADR 0011](docs/adr/0011-tenant-provisioning-lifecycle.md).
+
+### Login
+
+`PlatformUserLogins` lookup by normalized email → timing-equalised hash verify → check
+`Tenant.IsOperational` + `login.IsActive` → mint the JWT (claims identical to Phase 1) → a short-lived
+`TenantDbContext` fills the user's name / business type into the response. Login never depends on a
+tenant database being reachable.
+
+### Tests
+
+`NegosioApiFactory` boots the real API against one SQL Server: it creates a per-run platform database
+and lets the **real provisioning workflow** create a real database per registered tenant, dropping
+every `Negosio.%` and the platform DB on dispose. `IntegrationTest` gains
+`InPlatformScopeAsync` / `InTenantScopeAsync(tenantId, …)` and a raw `SqlConnection` per tenant.
+New suites under `tests/Negosio.IntegrationTests/Platform/`:
+
+- **`ProvisioningTests`** — control-plane rows + a dedicated physical DB with the baseline applied;
+  each tenant in its own DB; failed-tenant retry resumes idempotently; finished account rejects a
+  duplicate email.
+- **`TenantRoutingTests`** — writes land only in the caller's DB (verified by raw connection); unknown
+  tenant → 404; suspended tenant → 403 with no tenant connection opened.
+- **`PhysicalIsolationTests`** — connect straight to each tenant DB and prove the other tenant's
+  catalog / profile rows are entirely absent.
+- **`TenantMigrationTests`** — a freshly provisioned DB has no pending migrations; re-running the
+  migrator is a no-op.
+
+All Phase 1–3 tests were kept (business assertions preserved, re-pointed at the split contexts).
+
+### Local migration note
+
+Dev data was disposable, so Phase 2.5 dropped the old shared `Negosio` database and squashed the three
+Phase 1–3 tenant migrations into one `TenantBaseline`. On next run the API creates `Negosio_Platform`
+and each `POST /api/auth/register` creates that tenant's database.
 
 ---
 
@@ -496,6 +606,7 @@ untouched.
 | Phase | Focus |
 | --- | --- |
 | **Phase 2** ✅ | Catalog + Inventory |
+| **Phase 2.5** ✅ | Database-per-tenant architecture (platform control-plane DB + one operational DB per tenant) |
 | **Phase 3** 🚧 | Retail POS (backend complete) |
 | **Phase 4** | Food & Beverage ordering + Kitchen |
 | **Phase 5** | Purchasing + Multi-branch |

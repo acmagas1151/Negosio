@@ -8,13 +8,13 @@ namespace Negosio.Application.Catalog;
 
 public sealed class ProductService : IProductService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<CreateProductRequest> _createValidator;
     private readonly IValidator<UpdateProductRequest> _updateValidator;
 
     public ProductService(
-        IApplicationDbContext db,
+        ITenantDbContext db,
         ICurrentUser currentUser,
         IValidator<CreateProductRequest> createValidator,
         IValidator<UpdateProductRequest> updateValidator)

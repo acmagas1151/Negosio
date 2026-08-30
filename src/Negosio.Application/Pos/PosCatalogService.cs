@@ -6,10 +6,10 @@ namespace Negosio.Application.Pos;
 
 public sealed class PosCatalogService : IPosCatalogService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
 
-    public PosCatalogService(IApplicationDbContext db, ICurrentUser currentUser)
+    public PosCatalogService(ITenantDbContext db, ICurrentUser currentUser)
     {
         _db = db;
         _currentUser = currentUser;

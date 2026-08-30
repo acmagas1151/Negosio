@@ -25,10 +25,10 @@ public interface IDashboardService
 
 public sealed class DashboardService : IDashboardService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
 
-    public DashboardService(IApplicationDbContext db, ICurrentUser currentUser)
+    public DashboardService(ITenantDbContext db, ICurrentUser currentUser)
     {
         _db = db;
         _currentUser = currentUser;
@@ -44,9 +44,9 @@ public sealed class DashboardService : IDashboardService
         // TenantId always comes from the authenticated principal, never from the request.
         var tenantId = _currentUser.TenantId;
 
-        var tenant = await _db.Tenants
+        var profile = await _db.TenantProfiles
             .AsNoTracking()
-            .SingleOrDefaultAsync(t => t.Id == tenantId, cancellationToken)
+            .SingleOrDefaultAsync(p => p.Id == tenantId, cancellationToken)
             ?? throw new NotFoundException("Tenant not found.");
 
         var branchCount = await _db.Branches.CountAsync(b => b.TenantId == tenantId, cancellationToken);
@@ -70,7 +70,7 @@ public sealed class DashboardService : IDashboardService
             : Math.Round(todaysSales / todaysTransactions, 2, MidpointRounding.AwayFromZero);
 
         return new DashboardResponse(
-            new DashboardTenantDto(tenant.Id, tenant.Name, tenant.BusinessType),
+            new DashboardTenantDto(profile.Id, profile.Name, profile.BusinessType),
             branchCount,
             userCount,
             totalProducts,

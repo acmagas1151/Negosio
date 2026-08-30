@@ -7,10 +7,10 @@ namespace Negosio.Application.Sales;
 
 public sealed class SaleQueryService : ISaleQueryService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
 
-    public SaleQueryService(IApplicationDbContext db, ICurrentUser currentUser)
+    public SaleQueryService(ITenantDbContext db, ICurrentUser currentUser)
     {
         _db = db;
         _currentUser = currentUser;

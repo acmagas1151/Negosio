@@ -8,6 +8,7 @@ using Negosio.Application;
 using Negosio.Application.Abstractions;
 using Negosio.Infrastructure;
 using Negosio.Infrastructure.Persistence;
+using Negosio.Infrastructure.Tenancy;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -33,6 +34,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+builder.Services.AddScoped<ITenantContext, HttpTenantContext>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -61,6 +63,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors();
 app.UseAuthentication();
+app.UseMiddleware<TenantResolutionMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();
@@ -77,8 +80,19 @@ static async Task ApplyMigrationsAsync(WebApplication app)
     }
 
     using var scope = app.Services.CreateScope();
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await dbContext.Database.MigrateAsync();
+    var platform = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
+    await platform.Database.MigrateAsync();
+
+    // Bring every already-provisioned tenant database up to the latest tenant schema.
+    var provisioner = scope.ServiceProvider.GetRequiredService<ITenantDatabaseProvisioner>();
+    var factory = scope.ServiceProvider.GetRequiredService<ITenantDbContextFactory>();
+    var mappings = await platform.TenantDatabases.AsNoTracking().ToListAsync();
+    foreach (var mapping in mappings)
+    {
+        var connectionString = provisioner.BuildConnectionString(mapping.ServerKey, mapping.DatabaseName);
+        await using var tenantDb = factory.CreateForConnection(connectionString);
+        await tenantDb.Database.MigrateAsync();
+    }
 }
 
 // Exposed for WebApplicationFactory in integration tests.

@@ -8,13 +8,13 @@ namespace Negosio.Application.Registers;
 
 public sealed class RegisterService : IRegisterService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<CreateRegisterRequest> _createValidator;
     private readonly IValidator<UpdateRegisterRequest> _updateValidator;
 
     public RegisterService(
-        IApplicationDbContext db,
+        ITenantDbContext db,
         ICurrentUser currentUser,
         IValidator<CreateRegisterRequest> createValidator,
         IValidator<UpdateRegisterRequest> updateValidator)

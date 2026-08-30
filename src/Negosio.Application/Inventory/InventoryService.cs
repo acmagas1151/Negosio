@@ -10,12 +10,12 @@ namespace Negosio.Application.Inventory;
 
 public sealed class InventoryService : IInventoryService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<AdjustInventoryRequest> _adjustValidator;
 
     public InventoryService(
-        IApplicationDbContext db,
+        ITenantDbContext db,
         ICurrentUser currentUser,
         IValidator<AdjustInventoryRequest> adjustValidator)
     {

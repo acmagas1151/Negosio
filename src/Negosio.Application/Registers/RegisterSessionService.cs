@@ -9,13 +9,13 @@ namespace Negosio.Application.Registers;
 
 public sealed class RegisterSessionService : IRegisterSessionService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<OpenRegisterSessionRequest> _openValidator;
     private readonly IValidator<CloseRegisterSessionRequest> _closeValidator;
 
     public RegisterSessionService(
-        IApplicationDbContext db,
+        ITenantDbContext db,
         ICurrentUser currentUser,
         IValidator<OpenRegisterSessionRequest> openValidator,
         IValidator<CloseRegisterSessionRequest> closeValidator)

@@ -7,14 +7,31 @@ namespace Negosio.UnitTests.Domain;
 public class EntityTests
 {
     [Fact]
-    public void Tenant_Create_trims_name_and_activates()
+    public void Tenant_Create_trims_name_and_starts_pending()
     {
         var tenant = Tenant.Create("  Bruno's Cafe  ", BusinessType.FoodAndBeverage);
 
         tenant.Name.Should().Be("Bruno's Cafe");
         tenant.BusinessType.Should().Be(BusinessType.FoodAndBeverage);
         tenant.IsActive.Should().BeTrue();
+        tenant.ProvisioningStatus.Should().Be(TenantProvisioningStatus.Pending);
+        tenant.IsOperational.Should().BeFalse();
         tenant.Id.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void Tenant_becomes_operational_only_when_active_and_provisioned()
+    {
+        var tenant = Tenant.Create("Shop", BusinessType.Retail);
+
+        tenant.MarkProvisioning();
+        tenant.IsOperational.Should().BeFalse();
+
+        tenant.MarkActive();
+        tenant.IsOperational.Should().BeTrue();
+
+        tenant.Suspend();
+        tenant.IsOperational.Should().BeFalse();
     }
 
     [Theory]
@@ -28,17 +45,18 @@ public class EntityTests
     }
 
     [Fact]
-    public void Tenant_AddBranch_and_AddUser_populate_collections()
+    public void PlatformUserLogin_and_TenantProfile_carry_the_tenant_identity()
     {
-        var tenant = Tenant.Create("Shop", BusinessType.Retail);
+        var tenantId = Guid.NewGuid();
+        var login = PlatformUserLogin.Create(Guid.NewGuid(), tenantId, "  OWNER@Example.COM ", "hash", UserRole.Owner);
+        var profile = TenantProfile.Create(tenantId, "  Shop ", BusinessType.Retail);
 
-        var branch = tenant.AddBranch("Main", "main", "L1", null, "City", "Province", null);
-        var user = tenant.AddUser("owner@example.com", "hash", "Ace", "Agas", UserRole.Owner);
-
-        tenant.Branches.Should().ContainSingle().Which.Should().Be(branch);
-        tenant.Users.Should().ContainSingle().Which.Should().Be(user);
-        branch.TenantId.Should().Be(tenant.Id);
-        user.TenantId.Should().Be(tenant.Id);
+        login.EmailNormalized.Should().Be("owner@example.com");
+        login.TenantId.Should().Be(tenantId);
+        profile.Id.Should().Be(tenantId);
+        profile.Name.Should().Be("Shop");
+        profile.TaxRatePercent.Should().Be(0m);
+        profile.PricesIncludeTax.Should().BeFalse();
     }
 
     [Fact]
@@ -56,7 +74,7 @@ public class EntityTests
     [Fact]
     public void User_Create_normalizes_email()
     {
-        var user = User.Create(Guid.NewGuid(), "  OWNER@Example.COM ", "hash", "Ace", "Agas", UserRole.Owner);
+        var user = User.Create(Guid.NewGuid(), Guid.NewGuid(), "  OWNER@Example.COM ", "Ace", "Agas", UserRole.Owner);
 
         user.Email.Should().Be("owner@example.com");
         user.Role.Should().Be(UserRole.Owner);

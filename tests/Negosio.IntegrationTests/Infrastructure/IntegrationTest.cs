@@ -1,7 +1,10 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Negosio.Application.Abstractions;
 using Negosio.Application.Auth;
 using Negosio.Application.Catalog;
 using Negosio.Application.Inventory;
@@ -24,29 +27,62 @@ public abstract class IntegrationTest : IAsyncLifetime
 
     protected HttpClient Client { get; }
 
+    /// <summary>Tenant id of the token currently on <see cref="Client"/> (set by <see cref="Authorize"/>).</summary>
+    protected Guid CurrentTenantId { get; private set; }
+
     public async Task InitializeAsync() => await ResetDatabaseAsync();
 
     public Task DisposeAsync() => Task.CompletedTask;
 
+    /// <summary>Clears the platform database and drops every tenant database provisioned by earlier tests.</summary>
     protected async Task ResetDatabaseAsync()
     {
-        using var scope = Factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using (var connection = new SqlConnection(Factory.MasterConnectionString))
+        {
+            await connection.OpenAsync();
 
-        // Order respects FKs; cascade would also work but explicit is clearer for a test helper.
-        await db.Database.ExecuteSqlRawAsync(
-            "DELETE FROM RefundPayments; DELETE FROM SaleReturnItems; DELETE FROM SaleReturns; " +
-            "DELETE FROM Payments; DELETE FROM SaleItems; DELETE FROM Sales; " +
-            "DELETE FROM RegisterSessions; DELETE FROM Registers; DELETE FROM DocumentNumberCounters; " +
-            "DELETE FROM StockMovements; DELETE FROM BranchInventories; DELETE FROM ProductVariants; " +
-            "DELETE FROM Products; DELETE FROM Categories; " +
-            "DELETE FROM Users; DELETE FROM Branches; DELETE FROM Tenants;");
+            var names = new List<string>();
+            await using (var query = connection.CreateCommand())
+            {
+                // Tenant DBs are 'Negosio.<...>'; the dot is a literal in LIKE, so this excludes the platform DBs.
+                query.CommandText = "SELECT name FROM sys.databases WHERE name LIKE 'Negosio.%';";
+                await using var reader = await query.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    names.Add(reader.GetString(0));
+                }
+            }
+
+            foreach (var name in names)
+            {
+                await using var drop = connection.CreateCommand();
+                drop.CommandText = $"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{name}];";
+                await drop.ExecuteNonQueryAsync();
+            }
+        }
+
+        using var scope = Factory.Services.CreateScope();
+        var platform = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
+        await platform.Database.ExecuteSqlRawAsync(
+            "DELETE FROM PlatformUserLogins; DELETE FROM TenantDatabases; DELETE FROM Tenants;");
     }
 
-    protected async Task<T> InScopeAsync<T>(Func<AppDbContext, Task<T>> action)
+    /// <summary>Run against the current tenant's operational database.</summary>
+    protected Task<T> InScopeAsync<T>(Func<TenantDbContext, Task<T>> action) =>
+        InTenantScopeAsync(CurrentTenantId, action);
+
+    protected async Task<T> InTenantScopeAsync<T>(Guid tenantId, Func<TenantDbContext, Task<T>> action)
     {
         using var scope = Factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var factory = scope.ServiceProvider.GetRequiredService<ITenantDbContextFactory>();
+        await using var db = (TenantDbContext)await factory.CreateAsync(tenantId);
+        return await action(db);
+    }
+
+    protected async Task<T> InPlatformScopeAsync<T>(Func<PlatformDbContext, Task<T>> action)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
         return await action(db);
     }
 
@@ -76,17 +112,40 @@ public abstract class IntegrationTest : IAsyncLifetime
         return (await loginResponse.Content.ReadFromJsonAsync<LoginResponse>(TestJson.Options))!;
     }
 
-    // ---- Phase 2 helpers ----
-
-    protected void Authorize(string token) =>
+    protected void Authorize(string token)
+    {
         Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-    /// <summary>Register a fresh tenant, log its owner in, and set the bearer header on <see cref="Client"/>.</summary>
+        // Best-effort: negative-path tests deliberately pass malformed/tampered tokens.
+        var handler = new JwtSecurityTokenHandler();
+        if (handler.CanReadToken(token)
+            && handler.ReadJwtToken(token).Claims.FirstOrDefault(c => c.Type == "tenant_id") is { } claim
+            && Guid.TryParse(claim.Value, out var tenantId))
+        {
+            CurrentTenantId = tenantId;
+        }
+    }
+
     protected async Task<LoginResponse> RegisterLoginAndAuthorizeAsync(RegisterRequest? request = null)
     {
         var login = await RegisterAndLoginAsync(request);
         Authorize(login.AccessToken);
         return login;
+    }
+
+    /// <summary>Mint a token for an extra user created directly in the current tenant's database.</summary>
+    protected async Task<string> AddTenantUserTokenAsync(string email, Negosio.Domain.Enums.UserRole role)
+    {
+        var user = await InScopeAsync(async db =>
+        {
+            var u = Negosio.Domain.Entities.User.Create(Guid.NewGuid(), CurrentTenantId, email, "Test", "User", role);
+            db.Users.Add(u);
+            await db.SaveChangesAsync();
+            return u;
+        });
+
+        var generator = Factory.Services.GetRequiredService<IJwtTokenGenerator>();
+        return generator.Generate(new TokenSubject(user.Id, user.TenantId, user.Role, user.Email)).Value;
     }
 
     protected async Task<CategoryDto> CreateCategoryAsync(string name = "Beverages", string? description = null)
@@ -123,12 +182,7 @@ public abstract class IntegrationTest : IAsyncLifetime
     }
 
     protected Task<Guid> GetMainBranchIdAsync(LoginResponse login) =>
-        InScopeAsync(db => db.Branches
-            .Where(b => b.TenantId == login.User.TenantId)
-            .Select(b => b.Id)
-            .FirstAsync());
-
-    // ---- Phase 3 helpers ----
+        InTenantScopeAsync(login.User.TenantId, db => db.Branches.Select(b => b.Id).FirstAsync());
 
     protected async Task<RegisterDto> CreateRegisterAsync(Guid branchId, string name = "Main Counter", string code = "R1")
     {

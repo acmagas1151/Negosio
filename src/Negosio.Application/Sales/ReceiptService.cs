@@ -6,10 +6,10 @@ namespace Negosio.Application.Sales;
 
 public sealed class ReceiptService : IReceiptService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
 
-    public ReceiptService(IApplicationDbContext db, ICurrentUser currentUser)
+    public ReceiptService(ITenantDbContext db, ICurrentUser currentUser)
     {
         _db = db;
         _currentUser = currentUser;
@@ -25,7 +25,7 @@ public sealed class ReceiptService : IReceiptService
             .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == saleId, cancellationToken)
             ?? throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
 
-        var storeName = await _db.Tenants.Where(t => t.Id == tenantId).Select(t => t.Name).SingleAsync(cancellationToken);
+        var storeName = await _db.TenantProfiles.Where(p => p.Id == tenantId).Select(p => p.Name).SingleAsync(cancellationToken);
         var branchName = await _db.Branches.Where(b => b.Id == sale.BranchId).Select(b => b.Name).FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
         var registerName = await _db.RegisterSessions.Where(rs => rs.Id == sale.RegisterSessionId)
             .Join(_db.Registers, rs => rs.RegisterId, r => r.Id, (_, r) => r.Name)

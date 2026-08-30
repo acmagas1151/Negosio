@@ -172,20 +172,14 @@ public class ProductTests : IntegrationTest
     [Fact]
     public async Task Cost_price_is_hidden_from_non_management_roles()
     {
-        var login = await RegisterLoginAndAuthorizeAsync();
+        await RegisterLoginAndAuthorizeAsync();
         var category = await CreateCategoryAsync();
         await CreateSimpleProductAsync(category.Id, "Priced", sku: "PRICED-1", costPrice: 30m, sellingPrice: 60m);
 
         var ownerView = await Client.GetFromJsonAsync<PagedResult<ProductDto>>("/api/products", TestJson.Options);
         ownerView!.Items.Single().MinCostPrice.Should().Be(30m);
 
-        var cashierToken = await InScopeAsync(async db =>
-        {
-            var tenant = await db.Tenants.SingleAsync(t => t.Id == login.User.TenantId);
-            var cashier = tenant.AddUser("cashier@example.com", "x", "Cash", "Ier", UserRole.Cashier);
-            await db.SaveChangesAsync();
-            return Factory.Services.GetRequiredService<IJwtTokenGenerator>().Generate(cashier).Value;
-        });
+        var cashierToken = await AddTenantUserTokenAsync("cashier@example.com", UserRole.Cashier);
 
         Authorize(cashierToken);
         var cashierView = await Client.GetFromJsonAsync<PagedResult<ProductDto>>("/api/products", TestJson.Options);
@@ -196,15 +190,9 @@ public class ProductTests : IntegrationTest
     [Fact]
     public async Task Non_writer_role_cannot_create_products()
     {
-        var login = await RegisterLoginAndAuthorizeAsync();
+        await RegisterLoginAndAuthorizeAsync();
 
-        var viewerToken = await InScopeAsync(async db =>
-        {
-            var tenant = await db.Tenants.SingleAsync(t => t.Id == login.User.TenantId);
-            var viewer = tenant.AddUser("viewer@example.com", "x", "View", "Er", UserRole.Viewer);
-            await db.SaveChangesAsync();
-            return Factory.Services.GetRequiredService<IJwtTokenGenerator>().Generate(viewer).Value;
-        });
+        var viewerToken = await AddTenantUserTokenAsync("viewer@example.com", UserRole.Viewer);
         var category = await CreateCategoryAsync();
 
         Authorize(viewerToken);

@@ -5,6 +5,7 @@ using Negosio.Application.Catalog;
 using Negosio.Application.Common;
 using Negosio.Application.Dashboard;
 using Negosio.Application.Inventory;
+using Negosio.Application.Platform;
 using Negosio.Application.Pos;
 using Negosio.Application.Registers;
 using Negosio.Application.Sales;
@@ -20,6 +21,9 @@ public static class DependencyInjection
 
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IDashboardService, DashboardService>();
+
+        // Phase 2.5: platform / tenant provisioning
+        services.AddScoped<ITenantProvisioningService, TenantProvisioningService>();
 
         // Phase 2: Catalog + Inventory
         services.AddScoped<ICategoryService, CategoryService>();

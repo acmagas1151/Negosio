@@ -4,13 +4,12 @@ using Negosio.Domain.Enums;
 namespace Negosio.Domain.Entities;
 
 /// <summary>
-/// The top-level isolation boundary. Every tenant-owned entity references a <see cref="Tenant"/>.
+/// Platform-level (control-plane) record of a business. Lives in the platform database and carries
+/// only identity and provisioning state — its branches, users, catalog, inventory and sales live in
+/// that tenant's own operational database (see <c>TenantProfile</c> / <c>TenantDatabase</c>).
 /// </summary>
 public class Tenant : Entity
 {
-    private readonly List<Branch> _branches = new();
-    private readonly List<User> _users = new();
-
     private Tenant()
     {
         Name = string.Empty;
@@ -21,40 +20,20 @@ public class Tenant : Entity
         Name = name;
         BusinessType = businessType;
         IsActive = true;
-        TaxRatePercent = 0m;
-        PricesIncludeTax = false;
+        ProvisioningStatus = TenantProvisioningStatus.Pending;
     }
 
     public string Name { get; private set; }
 
     public BusinessType BusinessType { get; private set; }
 
+    /// <summary>Soft-disable independent of provisioning (e.g. account closed).</summary>
     public bool IsActive { get; private set; }
 
-    /// <summary>Sales tax rate applied at checkout, as a percentage (e.g. 12.00). 0 = no tax.</summary>
-    public decimal TaxRatePercent { get; private set; }
+    public TenantProvisioningStatus ProvisioningStatus { get; private set; }
 
-    /// <summary>
-    /// When true, catalog selling prices already include tax (tax-inclusive). When false (default),
-    /// tax is added on top at checkout (tax-exclusive). The two modes are never mixed.
-    /// </summary>
-    public bool PricesIncludeTax { get; private set; }
-
-    public void ConfigureTax(decimal taxRatePercent, bool pricesIncludeTax)
-    {
-        if (taxRatePercent < 0m || taxRatePercent > 100m)
-        {
-            throw new ArgumentOutOfRangeException(nameof(taxRatePercent), "Tax rate must be between 0 and 100.");
-        }
-
-        TaxRatePercent = taxRatePercent;
-        PricesIncludeTax = pricesIncludeTax;
-        Touch();
-    }
-
-    public IReadOnlyCollection<Branch> Branches => _branches.AsReadOnly();
-
-    public IReadOnlyCollection<User> Users => _users.AsReadOnly();
+    /// <summary>The tenant may run normal operations only when Active and not soft-disabled.</summary>
+    public bool IsOperational => IsActive && ProvisioningStatus == TenantProvisioningStatus.Active;
 
     public static Tenant Create(string name, BusinessType businessType)
     {
@@ -66,31 +45,34 @@ public class Tenant : Entity
         return new Tenant(name.Trim(), businessType);
     }
 
-    public Branch AddBranch(
-        string name,
-        string code,
-        string addressLine1,
-        string? addressLine2,
-        string city,
-        string province,
-        string? postalCode)
+    public void MarkProvisioning()
     {
-        var branch = Branch.Create(Id, name, code, addressLine1, addressLine2, city, province, postalCode);
-        _branches.Add(branch);
+        ProvisioningStatus = TenantProvisioningStatus.Provisioning;
         Touch();
-        return branch;
     }
 
-    public User AddUser(
-        string normalizedEmail,
-        string passwordHash,
-        string firstName,
-        string lastName,
-        UserRole role)
+    public void MarkActive()
     {
-        var user = User.Create(Id, normalizedEmail, passwordHash, firstName, lastName, role);
-        _users.Add(user);
+        ProvisioningStatus = TenantProvisioningStatus.Active;
         Touch();
-        return user;
+    }
+
+    public void MarkFailed()
+    {
+        ProvisioningStatus = TenantProvisioningStatus.Failed;
+        Touch();
+    }
+
+    public void Suspend()
+    {
+        ProvisioningStatus = TenantProvisioningStatus.Suspended;
+        Touch();
+    }
+
+    public void Reactivate()
+    {
+        ProvisioningStatus = TenantProvisioningStatus.Active;
+        IsActive = true;
+        Touch();
     }
 }

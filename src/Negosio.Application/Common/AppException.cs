@@ -72,6 +72,24 @@ public sealed class UnauthorizedAppException : AppException
     }
 }
 
+/// <summary>403 - the tenant is not in a state that permits operations (suspended, provisioning, failed).</summary>
+public sealed class TenantUnavailableException : AppException
+{
+    public TenantUnavailableException(string code, string message)
+        : base(code, message, StatusCodes.Status403Forbidden)
+    {
+    }
+}
+
+/// <summary>500 - provisioning a new tenant's database did not complete.</summary>
+public sealed class TenantProvisioningException : AppException
+{
+    public TenantProvisioningException(string message)
+        : base(ErrorCodes.TenantProvisioningFailed, message, StatusCodes.Status500InternalServerError)
+    {
+    }
+}
+
 /// <summary>
 /// Local mirror of the ASP.NET Core status code constants so the Application layer stays free of
 /// a framework dependency while still expressing intent.
@@ -80,6 +98,8 @@ internal static class StatusCodes
 {
     public const int Status400BadRequest = 400;
     public const int Status401Unauthorized = 401;
+    public const int Status403Forbidden = 403;
     public const int Status404NotFound = 404;
     public const int Status409Conflict = 409;
+    public const int Status500InternalServerError = 500;
 }

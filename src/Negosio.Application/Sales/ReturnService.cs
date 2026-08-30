@@ -10,7 +10,7 @@ namespace Negosio.Application.Sales;
 
 public sealed class ReturnService : IReturnService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<CreateReturnRequest> _validator;
     private readonly IDocumentNumberService _documentNumbers;
@@ -18,7 +18,7 @@ public sealed class ReturnService : IReturnService
     private readonly SaleQueryService _saleQuery;
 
     public ReturnService(
-        IApplicationDbContext db,
+        ITenantDbContext db,
         ICurrentUser currentUser,
         IValidator<CreateReturnRequest> validator,
         IDocumentNumberService documentNumbers,
@@ -49,7 +49,7 @@ public sealed class ReturnService : IReturnService
         }
 
         var branch = await _db.Branches.SingleAsync(b => b.Id == sale.BranchId, cancellationToken);
-        var tenant = await _db.Tenants.SingleAsync(t => t.Id == tenantId, cancellationToken);
+        var tenant = await _db.TenantProfiles.SingleAsync(p => p.Id == tenantId, cancellationToken);
 
         // Which returned variants belong to inventory-tracked products?
         var lineVariantIds = sale.Items.Select(i => i.ProductVariantId).ToList();

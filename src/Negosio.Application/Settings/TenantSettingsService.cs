@@ -27,11 +27,11 @@ public interface ITenantSettingsService
 
 public sealed class TenantSettingsService : ITenantSettingsService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<UpdateTaxSettingsRequest> _validator;
 
-    public TenantSettingsService(IApplicationDbContext db, ICurrentUser currentUser, IValidator<UpdateTaxSettingsRequest> validator)
+    public TenantSettingsService(ITenantDbContext db, ICurrentUser currentUser, IValidator<UpdateTaxSettingsRequest> validator)
     {
         _db = db;
         _currentUser = currentUser;
@@ -41,8 +41,8 @@ public sealed class TenantSettingsService : ITenantSettingsService
     public async Task<TaxSettingsDto> GetTaxAsync(CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
-        var tenant = await _db.Tenants.AsNoTracking().SingleAsync(t => t.Id == tenantId, cancellationToken);
-        return new TaxSettingsDto(tenant.TaxRatePercent, tenant.PricesIncludeTax);
+        var profile = await _db.TenantProfiles.AsNoTracking().SingleAsync(p => p.Id == tenantId, cancellationToken);
+        return new TaxSettingsDto(profile.TaxRatePercent, profile.PricesIncludeTax);
     }
 
     public async Task<TaxSettingsDto> UpdateTaxAsync(UpdateTaxSettingsRequest request, CancellationToken cancellationToken = default)
@@ -50,11 +50,11 @@ public sealed class TenantSettingsService : ITenantSettingsService
         var tenantId = RequireTenant();
         await _validator.ValidateAndThrowAppAsync(request, cancellationToken);
 
-        var tenant = await _db.Tenants.SingleAsync(t => t.Id == tenantId, cancellationToken);
-        tenant.ConfigureTax(request.TaxRatePercent, request.PricesIncludeTax);
+        var profile = await _db.TenantProfiles.SingleAsync(p => p.Id == tenantId, cancellationToken);
+        profile.ConfigureTax(request.TaxRatePercent, request.PricesIncludeTax);
         await _db.SaveChangesAsync(cancellationToken);
 
-        return new TaxSettingsDto(tenant.TaxRatePercent, tenant.PricesIncludeTax);
+        return new TaxSettingsDto(profile.TaxRatePercent, profile.PricesIncludeTax);
     }
 
     private Guid RequireTenant()

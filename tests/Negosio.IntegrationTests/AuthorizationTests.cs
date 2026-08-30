@@ -77,18 +77,10 @@ public class AuthorizationTests : IntegrationTest
     [Fact]
     public async Task Owner_only_endpoint_forbids_non_owner()
     {
-        var login = await RegisterAndLoginAsync();
+        await RegisterLoginAndAuthorizeAsync();
 
         // Add a Viewer to the same tenant and mint a token for them.
-        var viewerToken = await InScopeAsync(async db =>
-        {
-            var tenant = await db.Tenants.SingleAsync(t => t.Id == login.User.TenantId);
-            var viewer = tenant.AddUser("viewer@example.com", "x", "View", "Er", UserRole.Viewer);
-            await db.SaveChangesAsync();
-
-            var generator = Factory.Services.GetRequiredService<IJwtTokenGenerator>();
-            return generator.Generate(viewer).Value;
-        });
+        var viewerToken = await AddTenantUserTokenAsync("viewer@example.com", UserRole.Viewer);
 
         Authorize(viewerToken);
         var response = await Client.GetAsync("/api/admin/owner-test");

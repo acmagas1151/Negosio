@@ -6,30 +6,31 @@ using Negosio.Domain.Entities;
 namespace Negosio.Application.Abstractions;
 
 /// <summary>
-/// Persistence seam for the Application layer. Intentionally exposes concrete <see cref="DbSet{T}"/>s
-/// (rather than a generic repository) plus the transaction/save primitives the use cases need.
+/// Persistence seam for operational (business) data. Backed by the current request's tenant database
+/// — resolved from the authenticated <c>tenant_id</c> claim, never from client input. Exposes concrete
+/// <see cref="DbSet{T}"/>s plus the transaction / save / change-tracking primitives the use cases need.
 /// </summary>
-public interface IApplicationDbContext
+public interface ITenantDbContext : IAsyncDisposable
 {
-    DbSet<Tenant> Tenants { get; }
+    DbSet<TenantProfile> TenantProfiles { get; }
 
     DbSet<Branch> Branches { get; }
 
     DbSet<User> Users { get; }
 
-    // Phase 2: Catalog
+    // Catalog
     DbSet<Category> Categories { get; }
 
     DbSet<Product> Products { get; }
 
     DbSet<ProductVariant> ProductVariants { get; }
 
-    // Phase 2: Inventory
+    // Inventory
     DbSet<BranchInventory> BranchInventories { get; }
 
     DbSet<StockMovement> StockMovements { get; }
 
-    // Phase 3: Retail POS
+    // Retail POS
     DbSet<Register> Registers { get; }
 
     DbSet<RegisterSession> RegisterSessions { get; }
@@ -50,7 +51,6 @@ public interface IApplicationDbContext
 
     DatabaseFacade Database { get; }
 
-    /// <summary>Access to change-tracking for one entity (used to set the original rowversion on adjust).</summary>
     EntityEntry<TEntity> Entry<TEntity>(TEntity entity) where TEntity : class;
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

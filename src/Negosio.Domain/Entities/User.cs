@@ -4,30 +4,23 @@ using Negosio.Domain.Enums;
 namespace Negosio.Domain.Entities;
 
 /// <summary>
-/// An account that belongs to exactly one tenant. Passwords are never stored in plaintext;
-/// <see cref="PasswordHash"/> holds an output of a reputable password hasher.
+/// A user profile inside a tenant database. Carries name and role; the authoritative credentials
+/// live in the platform <c>PlatformUserLogin</c> record (same <see cref="Entity.Id"/>).
 /// </summary>
 public class User : Entity
 {
     private User()
     {
         Email = string.Empty;
-        PasswordHash = string.Empty;
         FirstName = string.Empty;
         LastName = string.Empty;
     }
 
-    private User(
-        Guid tenantId,
-        string email,
-        string passwordHash,
-        string firstName,
-        string lastName,
-        UserRole role)
+    private User(Guid id, Guid tenantId, string email, string firstName, string lastName, UserRole role)
     {
+        Id = id;
         TenantId = tenantId;
         Email = email;
-        PasswordHash = passwordHash;
         FirstName = firstName;
         LastName = lastName;
         Role = role;
@@ -36,12 +29,8 @@ public class User : Entity
 
     public Guid TenantId { get; private set; }
 
-    public Tenant Tenant { get; private set; } = null!;
-
     /// <summary>Normalized (trimmed, lower-cased) email. Use <see cref="NormalizeEmail"/> before comparing.</summary>
     public string Email { get; private set; }
-
-    public string PasswordHash { get; private set; }
 
     public string FirstName { get; private set; }
 
@@ -52,9 +41,9 @@ public class User : Entity
     public bool IsActive { get; private set; }
 
     public static User Create(
+        Guid id,
         Guid tenantId,
         string normalizedEmail,
-        string passwordHash,
         string firstName,
         string lastName,
         UserRole role)
@@ -62,11 +51,6 @@ public class User : Entity
         if (string.IsNullOrWhiteSpace(normalizedEmail))
         {
             throw new ArgumentException("Email is required.", nameof(normalizedEmail));
-        }
-
-        if (string.IsNullOrWhiteSpace(passwordHash))
-        {
-            throw new ArgumentException("Password hash is required.", nameof(passwordHash));
         }
 
         if (string.IsNullOrWhiteSpace(firstName))
@@ -79,18 +63,7 @@ public class User : Entity
             throw new ArgumentException("Last name is required.", nameof(lastName));
         }
 
-        return new User(tenantId, NormalizeEmail(normalizedEmail), passwordHash, firstName.Trim(), lastName.Trim(), role);
-    }
-
-    public void SetPasswordHash(string passwordHash)
-    {
-        if (string.IsNullOrWhiteSpace(passwordHash))
-        {
-            throw new ArgumentException("Password hash is required.", nameof(passwordHash));
-        }
-
-        PasswordHash = passwordHash;
-        Touch();
+        return new User(id, tenantId, NormalizeEmail(normalizedEmail), firstName.Trim(), lastName.Trim(), role);
     }
 
     /// <summary>Single source of truth for email normalization used when saving and when comparing.</summary>

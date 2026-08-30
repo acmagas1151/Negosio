@@ -8,13 +8,13 @@ namespace Negosio.Application.Catalog;
 
 public sealed class CategoryService : ICategoryService
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<CreateCategoryRequest> _createValidator;
     private readonly IValidator<UpdateCategoryRequest> _updateValidator;
 
     public CategoryService(
-        IApplicationDbContext db,
+        ITenantDbContext db,
         ICurrentUser currentUser,
         IValidator<CreateCategoryRequest> createValidator,
         IValidator<UpdateCategoryRequest> updateValidator)

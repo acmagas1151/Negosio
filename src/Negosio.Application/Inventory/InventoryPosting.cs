@@ -31,9 +31,9 @@ public interface IInventoryPosting
 
 public sealed class InventoryPosting : IInventoryPosting
 {
-    private readonly IApplicationDbContext _db;
+    private readonly ITenantDbContext _db;
 
-    public InventoryPosting(IApplicationDbContext db)
+    public InventoryPosting(ITenantDbContext db)
     {
         _db = db;
     }
