@@ -81,6 +81,15 @@ public sealed class TenantUnavailableException : AppException
     }
 }
 
+/// <summary>403 - the caller is authenticated but a business rule forbids this specific action.</summary>
+public sealed class ForbiddenAppException : AppException
+{
+    public ForbiddenAppException(string code, string message)
+        : base(code, message, StatusCodes.Status403Forbidden)
+    {
+    }
+}
+
 /// <summary>500 - provisioning a new tenant's database did not complete.</summary>
 public sealed class TenantProvisioningException : AppException
 {

@@ -64,9 +64,32 @@ public class PlatformUserLogin : Entity
         Touch();
     }
 
+    /// <summary>Change the authoritative role. The Owner role is never assignable through this path.</summary>
+    public void ChangeRole(UserRole role)
+    {
+        if (role == UserRole.Owner)
+        {
+            throw new InvalidOperationException("The Owner role cannot be assigned.");
+        }
+
+        if (Role == UserRole.Owner)
+        {
+            throw new InvalidOperationException("An Owner's role cannot be changed.");
+        }
+
+        Role = role;
+        Touch();
+    }
+
     public void Deactivate()
     {
         IsActive = false;
+        Touch();
+    }
+
+    public void Reactivate()
+    {
+        IsActive = true;
         Touch();
     }
 
