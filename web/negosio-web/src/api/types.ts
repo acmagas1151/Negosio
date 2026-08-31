@@ -477,6 +477,7 @@ export interface SaleReturnDto {
   id: string
   returnNumber: string
   saleId: string
+  originalSaleNumber: string
   reason: string
   totalRefund: number
   createdByUserId: string

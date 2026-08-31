@@ -134,12 +134,19 @@ public sealed class SaleQueryService : ISaleQueryService
             .OrderByDescending(r => r.CreatedAtUtc)
             .ToListAsync(cancellationToken);
 
+        // Every return here belongs to the one `saleId`, so the originating sale number is a single
+        // lookup, not one per return.
+        var originalSaleNumber = await _db.Sales.AsNoTracking()
+            .Where(s => s.TenantId == tenantId && s.Id == saleId)
+            .Select(s => s.SaleNumber)
+            .FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
+
         var userNames = await _db.Users.AsNoTracking()
             .Where(u => u.TenantId == tenantId)
             .ToDictionaryAsync(u => u.Id, u => u.FirstName + " " + u.LastName, cancellationToken);
 
         return returns.Select(r => new SaleReturnDto(
-            r.Id, r.ReturnNumber, r.SaleId, r.Reason, r.TotalRefund, r.CreatedByUserId,
+            r.Id, r.ReturnNumber, r.SaleId, originalSaleNumber, r.Reason, r.TotalRefund, r.CreatedByUserId,
             userNames.GetValueOrDefault(r.CreatedByUserId, string.Empty), r.CreatedAtUtc,
             r.Items.Select(i => new SaleReturnItemDto(
                 i.Id, i.SaleItemId, i.ProductVariantId, i.ProductNameSnapshot, i.Quantity, i.RefundAmount, i.Restocked)).ToList(),
