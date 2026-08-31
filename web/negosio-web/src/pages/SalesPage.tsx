@@ -38,8 +38,9 @@ export default function SalesPage() {
         pageSize: q.pageSize,
         search: q.search || undefined,
         status: (q.filters.status as SaleStatus) || undefined,
-        fromUtc: q.filters.from ? new Date(`${q.filters.from}T00:00:00`).toISOString() : undefined,
-        toUtc: q.filters.to ? new Date(`${q.filters.to}T23:59:59`).toISOString() : undefined,
+        // Whole-day bounds in the browser's local zone (no tenant-timezone model yet — accepted).
+        fromUtc: q.filters.from ? new Date(`${q.filters.from}T00:00:00.000`).toISOString() : undefined,
+        toUtc: q.filters.to ? new Date(`${q.filters.to}T23:59:59.999`).toISOString() : undefined,
       }),
   })
 
