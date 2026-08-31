@@ -32,6 +32,11 @@ public static class AuthorizationPolicies
     /// <summary>Change tenant-wide settings (e.g. tax).</summary>
     public const string TenantSettingsWrite = "TenantSettingsWrite";
 
+    // ---- Phase 4: Staff & access management ----
+
+    /// <summary>Invite staff, assign roles, deactivate/reactivate staff.</summary>
+    public const string StaffManage = "StaffManage";
+
     private static readonly UserRole[] OwnerAdmin = [UserRole.Owner, UserRole.Admin];
     private static readonly UserRole[] ManagementRoles = [UserRole.Owner, UserRole.Admin, UserRole.Manager];
     private static readonly UserRole[] PosRoles = [UserRole.Owner, UserRole.Admin, UserRole.Manager, UserRole.Cashier];
@@ -72,6 +77,10 @@ public static class AuthorizationPolicies
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
 
         options.AddPolicy(TenantSettingsWrite, policy =>
+            policy.RequireAuthenticatedUser()
+                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(OwnerAdmin)));
+
+        options.AddPolicy(StaffManage, policy =>
             policy.RequireAuthenticatedUser()
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(OwnerAdmin)));
 

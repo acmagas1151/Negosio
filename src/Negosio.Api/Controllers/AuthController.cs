@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Negosio.Application.Auth;
+using Negosio.Application.Staff;
 
 namespace Negosio.Api.Controllers;
 
@@ -9,10 +10,12 @@ namespace Negosio.Api.Controllers;
 public sealed class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
+    private readonly IStaffInvitationService _invitations;
 
-    public AuthController(IAuthService authService)
+    public AuthController(IAuthService authService, IStaffInvitationService invitations)
     {
         _authService = authService;
+        _invitations = invitations;
     }
 
     /// <summary>Registers a new business: creates the tenant, its first branch and the owner account.</summary>
@@ -48,4 +51,21 @@ public sealed class AuthController : ControllerBase
         var result = await _authService.GetCurrentUserAsync(cancellationToken);
         return Ok(result);
     }
+
+    /// <summary>Preview a staff invitation before accepting it (no account required).</summary>
+    [AllowAnonymous]
+    [HttpGet("invitations/{token}")]
+    [ProducesResponseType(typeof(InvitationPreviewDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<InvitationPreviewDto>> PreviewInvitation(string token, CancellationToken cancellationToken)
+        => Ok(await _invitations.PreviewAsync(token, cancellationToken));
+
+    /// <summary>Accept a staff invitation: set name + password, which creates the login and profile.</summary>
+    [AllowAnonymous]
+    [HttpPost("invitations/{token}/accept")]
+    [ProducesResponseType(typeof(AcceptInvitationResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<AcceptInvitationResultDto>> AcceptInvitation(
+        string token,
+        [FromBody] AcceptInvitationRequest request,
+        CancellationToken cancellationToken)
+        => Ok(await _invitations.AcceptAsync(token, request, cancellationToken));
 }
