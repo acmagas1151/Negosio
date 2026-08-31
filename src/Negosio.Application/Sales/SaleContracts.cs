@@ -121,6 +121,7 @@ public sealed record SaleReturnDto(
     Guid Id,
     string ReturnNumber,
     Guid SaleId,
+    string OriginalSaleNumber,
     string Reason,
     decimal TotalRefund,
     Guid CreatedByUserId,

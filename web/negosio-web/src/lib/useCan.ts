@@ -1,7 +1,14 @@
 import { useAuth } from '../auth/AuthContext'
 import type { UserRole } from '../api/types'
 
-type Capability = 'catalog:write' | 'inventory:write' | 'costs:view'
+type Capability =
+  | 'catalog:write'
+  | 'inventory:write'
+  | 'costs:view'
+  | 'register:manage'
+  | 'pos:operate'
+  | 'sales:view'
+  | 'refund:manage'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
 // 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
@@ -16,6 +23,12 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   'catalog:write': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
   'inventory:write': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'InventoryStaff']),
   'costs:view': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'InventoryStaff']),
+  // Mirrors src/Negosio.Api/Authorization/AuthorizationPolicies.cs (RegisterManage / PosOperate /
+  // SalesView / RefundManage). Keep in sync if the backend role sets change.
+  'register:manage': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
+  'pos:operate': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
+  'sales:view': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
+  'refund:manage': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
 }
 
 /**

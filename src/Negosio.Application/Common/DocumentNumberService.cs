@@ -7,9 +7,11 @@ namespace Negosio.Application.Common;
 public interface IDocumentNumberService
 {
     /// <summary>
-    /// Atomically allocates the next number for (tenant, branch, type) and formats it, e.g.
-    /// <c>INV-MAIN-000001</c> / <c>RET-MAIN-000001</c>. MUST be called inside the caller's
-    /// database transaction so the allocation commits or rolls back with the document.
+    /// Atomically allocates the next number for (tenant, branch, type) and formats it.
+    /// Sales and returns share one <b>branch transaction sequence</b> (both pass
+    /// <see cref="DocumentNumberType.Sale"/>) formatted as a bare zero-padded 8-digit string,
+    /// e.g. <c>00000001</c>; reserved future types keep a prefixed format. MUST be called inside
+    /// the caller's database transaction so the allocation commits or rolls back with the document.
     /// </summary>
     Task<string> NextAsync(
         Guid tenantId,
@@ -36,16 +38,16 @@ public sealed class DocumentNumberService : IDocumentNumberService
         CancellationToken cancellationToken = default)
     {
         var value = await AllocateAsync(tenantId, branchId, type, cancellationToken);
-        var prefix = type switch
-        {
-            DocumentNumberType.Sale => "INV",
-            DocumentNumberType.Return => "RET",
-            DocumentNumberType.PurchaseOrder => "PO",
-            DocumentNumberType.StockTransfer => "TRN",
-            _ => "DOC"
-        };
 
-        return $"{prefix}-{branchCode}-{value:D6}";
+        // Sales and returns share the branch transaction sequence: a bare 8-digit running number.
+        // Reserved future document types keep a prefixed, branch-scoped format.
+        return type switch
+        {
+            DocumentNumberType.Sale or DocumentNumberType.Return => $"{value:D8}",
+            DocumentNumberType.PurchaseOrder => $"PO-{branchCode}-{value:D6}",
+            DocumentNumberType.StockTransfer => $"TRN-{branchCode}-{value:D6}",
+            _ => $"DOC-{branchCode}-{value:D6}"
+        };
     }
 
     private async Task<long> AllocateAsync(Guid tenantId, Guid branchId, DocumentNumberType type, CancellationToken cancellationToken)

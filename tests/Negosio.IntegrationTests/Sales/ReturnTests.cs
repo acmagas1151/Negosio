@@ -50,7 +50,9 @@ public class ReturnTests : IntegrationTest
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var body = (await response.Content.ReadFromJsonAsync<SaleReturnDto>(TestJson.Options))!;
-        body.ReturnNumber.Should().StartWith("RET-");
+        body.ReturnNumber.Should().MatchRegex(@"^\d{8}$");
+        body.OriginalSaleNumber.Should().MatchRegex(@"^\d{8}$");
+        int.Parse(body.ReturnNumber).Should().BeGreaterThan(int.Parse(body.OriginalSaleNumber));
         body.TotalRefund.Should().Be(150m);
 
         await InScopeAsync(async db =>
@@ -99,6 +101,52 @@ public class ReturnTests : IntegrationTest
             inv.QuantityOnHand.Should().Be(9m); // 10 - 3 + 2 restored
             return true;
         });
+    }
+
+    [Fact]
+    public async Task Sales_and_returns_share_one_atomic_branch_transaction_sequence()
+    {
+        var login = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(login);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 50m, openingStock: 20m);
+
+        async Task<(Guid SaleId, string Number, Guid ItemId)> SellOneAsync()
+        {
+            var sale = await CheckoutOkAsync(new CheckoutRequest(
+                branchId, session.Id, Guid.NewGuid(),
+                new[] { new CheckoutItemInput(variantId, 1m, null) },
+                new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 100m) }));
+            var detail = await Client.GetFromJsonAsync<SaleDetailDto>($"/api/sales/{sale.SaleId}", TestJson.Options);
+            return (sale.SaleId, sale.SaleNumber, detail!.Items.Single().Id);
+        }
+
+        async Task<string> ReturnOneAsync(Guid saleId, Guid saleItemId, string expectedOriginalSaleNumber)
+        {
+            var response = await Client.PostAsJsonAsync(
+                $"/api/sales/{saleId}/returns",
+                new CreateReturnRequest(
+                    new[] { new ReturnLineInput(saleItemId, 1m, Restock: true) },
+                    "interleave check", PaymentMethod.Cash, null));
+            response.StatusCode.Should().Be(HttpStatusCode.Created);
+            var body = (await response.Content.ReadFromJsonAsync<SaleReturnDto>(TestJson.Options))!;
+            body.OriginalSaleNumber.Should().Be(expectedOriginalSaleNumber);
+            return body.ReturnNumber;
+        }
+
+        var a = await SellOneAsync();
+        var b = await SellOneAsync();
+        var r1 = await ReturnOneAsync(a.SaleId, a.ItemId, a.Number);
+        var c = await SellOneAsync();
+        var r2 = await ReturnOneAsync(b.SaleId, b.ItemId, b.Number);
+
+        a.Number.Should().Be("00000001");
+        b.Number.Should().Be("00000002");
+        r1.Should().Be("00000003");
+        c.Number.Should().Be("00000004");
+        r2.Should().Be("00000005");
     }
 
     [Fact]

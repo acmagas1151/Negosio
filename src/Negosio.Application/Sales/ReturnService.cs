@@ -60,7 +60,9 @@ public sealed class ReturnService : IReturnService
 
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
 
-        var returnNumber = await _documentNumbers.NextAsync(tenantId, sale.BranchId, DocumentNumberType.Return, branch.Code, cancellationToken);
+        // Returns draw from the same branch transaction sequence as sales (DocumentNumberType.Sale),
+        // so a return gets the next running number after the last sale or return in the branch.
+        var returnNumber = await _documentNumbers.NextAsync(tenantId, sale.BranchId, DocumentNumberType.Sale, branch.Code, cancellationToken);
         var saleReturn = SaleReturn.Begin(tenantId, sale.Id, sale.BranchId, returnNumber, _currentUser.UserId, request.Reason);
 
         foreach (var lineInput in request.Items)
