@@ -1,11 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
-import { taxSettingsApi } from '../api/pos'
+import { settingsApi } from '../api/settings'
 
-/** Read-only feed of the tenant's tax config, used only for the POS cart's preview totals. */
+/** Shared tenant tax config. Read by the POS cart preview and the Settings page; both share this key. */
+export const TAX_SETTINGS_QUERY_KEY = ['settings', 'tax'] as const
+
 export function useTaxSettings() {
   return useQuery({
-    queryKey: ['settings', 'tax'],
-    queryFn: taxSettingsApi.get,
+    queryKey: TAX_SETTINGS_QUERY_KEY,
+    queryFn: settingsApi.getTax,
     staleTime: 5 * 60_000,
   })
 }

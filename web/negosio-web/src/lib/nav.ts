@@ -63,7 +63,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'Reports', icon: BarChart3, enabled: false },
       { label: 'Staff', icon: Users, enabled: false },
-      { label: 'Settings', icon: Settings, enabled: false },
+      { label: 'Settings', icon: Settings, to: '/settings', enabled: true },
     ],
   },
 ]

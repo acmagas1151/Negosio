@@ -17,6 +17,7 @@ import RegisterPage from './pages/RegisterPage'
 import RegistersPage from './pages/RegistersPage'
 import SaleDetailPage from './pages/SaleDetailPage'
 import SalesPage from './pages/SalesPage'
+import SettingsPage from './pages/SettingsPage'
 
 const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
   { path: '/dashboard', element: <DashboardPage /> },
@@ -31,6 +32,7 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
   { path: '/sales', element: <SalesPage /> },
   { path: '/sales/:id', element: <SaleDetailPage /> },
   { path: '/sales/:id/receipt', element: <ReceiptPage /> },
+  { path: '/settings', element: <SettingsPage /> },
 ]
 
 export default function App() {

@@ -555,9 +555,17 @@ export interface CreateReturnRequest {
   refundReference: string | null
 }
 
-// ---- Tax settings (read-only feed for the cart preview; NOT the settings page) ----
+// ---- Tenant settings — tax ----
+// Backend contract: GET /api/settings/tax -> TaxSettingsDto ; PUT /api/settings/tax (TenantSettingsWrite).
+// `taxRatePercent` is percentage points (e.g. 12 = 12%), 0–100. The POS cart preview and the
+// server-side SaleLineCalculator both treat it as `taxable * taxRatePercent / 100`.
 
 export interface TaxSettingsDto {
+  taxRatePercent: number
+  pricesIncludeTax: boolean
+}
+
+export interface UpdateTaxSettingsRequest {
   taxRatePercent: number
   pricesIncludeTax: boolean
 }
