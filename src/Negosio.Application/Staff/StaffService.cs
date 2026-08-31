@@ -12,12 +12,6 @@ public sealed class StaffService : IStaffService
 {
     private const int InvitationLifetimeDays = 7;
 
-    private static readonly UserRole[] AllAssignableRoles =
-    {
-        UserRole.Admin, UserRole.Manager, UserRole.Cashier,
-        UserRole.InventoryStaff, UserRole.KitchenStaff, UserRole.Viewer
-    };
-
     private readonly IPlatformDbContext _platform;
     private readonly ITenantDbContext _tenant;
     private readonly ICurrentUser _currentUser;
@@ -318,20 +312,13 @@ public sealed class StaffService : IStaffService
             throw new ForbiddenAppException(ErrorCodes.OwnerRoleForbidden, "The Owner role cannot be assigned.");
         }
 
-        if (!AssignableRolesFor(_currentUser.Role).Contains(role))
+        if (!StaffRoles.CanAssign(_currentUser.Role, role))
         {
             throw new ForbiddenAppException(ErrorCodes.RoleNotAssignable, $"You are not allowed to assign the {role} role.");
         }
 
         return role;
     }
-
-    private static IReadOnlyCollection<UserRole> AssignableRolesFor(UserRole actor) => actor switch
-    {
-        UserRole.Owner => AllAssignableRoles,
-        UserRole.Admin => AllAssignableRoles.Where(r => r != UserRole.Admin).ToArray(),
-        _ => Array.Empty<UserRole>()
-    };
 
     private async Task SavePlatformOrConflictAsync(CancellationToken cancellationToken)
     {
@@ -355,7 +342,7 @@ public sealed class StaffService : IStaffService
 
         return new StaffInvitationResultDto(
             invitation.Id, invitation.EmailNormalized, invitation.Role, invitation.ExpiresAtUtc,
-            AcceptPath: _environment.IsDevelopment ? acceptPath : null);
+            AcceptPath: _environment.IsProduction ? null : acceptPath);
     }
 
     private static StaffMemberDto ToDto(User user, PlatformUserLogin login) => new(

@@ -12,5 +12,5 @@ public sealed class HostAppEnvironment : IAppEnvironment
         _environment = environment;
     }
 
-    public bool IsDevelopment => _environment.IsDevelopment();
+    public bool IsProduction => _environment.IsProduction();
 }

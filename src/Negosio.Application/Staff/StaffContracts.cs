@@ -40,8 +40,9 @@ public sealed record InviteStaffRequest(string Email, string Role);
 public sealed record ChangeStaffRoleRequest(string Role);
 
 /// <summary>
-/// Returned after creating / resending an invitation. <see cref="AcceptPath"/> is populated only
-/// in the Development environment (no outbound email yet) — it is always <c>null</c> otherwise.
+/// Returned after creating / resending an invitation. <see cref="AcceptPath"/> is populated in
+/// every non-production environment (no outbound email provider yet) — it is always <c>null</c>
+/// in Production, where the invitee must receive the link by email instead.
 /// </summary>
 public sealed record StaffInvitationResultDto(
     Guid InvitationId,
