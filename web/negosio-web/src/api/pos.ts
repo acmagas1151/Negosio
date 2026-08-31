@@ -18,7 +18,6 @@ import type {
   SaleResultDto,
   SaleReturnDto,
   SaleSummaryDto,
-  TaxSettingsDto,
   UpdateRegisterRequest,
 } from './types'
 
@@ -64,8 +63,4 @@ export const salesApi = {
   listReturns: (id: string) => apiRequest<SaleReturnDto[]>(`/api/sales/${id}/returns`),
   createReturn: (id: string, body: CreateReturnRequest) =>
     apiRequest<SaleReturnDto>(`/api/sales/${id}/returns`, { method: 'POST', body }),
-}
-
-export const taxSettingsApi = {
-  get: () => apiRequest<TaxSettingsDto>('/api/settings/tax'),
 }

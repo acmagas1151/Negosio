@@ -9,6 +9,7 @@ type Capability =
   | 'pos:operate'
   | 'sales:view'
   | 'refund:manage'
+  | 'settings:write'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
 // 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
@@ -24,11 +25,12 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   'inventory:write': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'InventoryStaff']),
   'costs:view': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'InventoryStaff']),
   // Mirrors src/Negosio.Api/Authorization/AuthorizationPolicies.cs (RegisterManage / PosOperate /
-  // SalesView / RefundManage). Keep in sync if the backend role sets change.
+  // SalesView / RefundManage / TenantSettingsWrite). Keep in sync if the backend role sets change.
   'register:manage': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
   'pos:operate': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
   'sales:view': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
   'refund:manage': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
+  'settings:write': new Set<UserRole>(['Owner', 'Admin']),
 }
 
 /**
