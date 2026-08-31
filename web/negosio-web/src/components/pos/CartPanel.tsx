@@ -45,6 +45,24 @@ function CartLineRow({
   onSetDiscount: (variantId: string, d: { type: DiscountType; value: number }) => void
 }) {
   const [discountOpen, setDiscountOpen] = useState(false)
+  // While the qty field is being edited it holds a raw string; `null` means "show the committed
+  // quantity". This lets the cashier clear the field and retype without the line vanishing.
+  const [qtyDraft, setQtyDraft] = useState<string | null>(null)
+
+  const commitQty = () => {
+    if (qtyDraft === null) return
+    const trimmed = qtyDraft.trim()
+    const n = Number(trimmed)
+    if (trimmed !== '' && Number.isFinite(n)) {
+      onSetQty(line.variantId, n)
+    }
+    setQtyDraft(null)
+  }
+
+  const stepQty = (next: number) => {
+    setQtyDraft(null)
+    onSetQty(line.variantId, next)
+  }
 
   const amounts = tax
     ? calcLine({
@@ -82,7 +100,7 @@ function CartLineRow({
           <button
             type="button"
             aria-label="Decrease quantity"
-            onClick={() => onSetQty(line.variantId, line.quantity - 1)}
+            onClick={() => stepQty(line.quantity - 1)}
             className="grid size-8 place-items-center text-text-secondary hover:bg-surface-subtle"
           >
             <Minus className="size-3.5" aria-hidden="true" />
@@ -91,15 +109,23 @@ function CartLineRow({
             type="number"
             min={0}
             step="0.001"
-            value={line.quantity}
-            onChange={(e) => onSetQty(line.variantId, Number(e.target.value))}
+            value={qtyDraft ?? String(line.quantity)}
+            onChange={(e) => setQtyDraft(e.target.value)}
+            onBlur={commitQty}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commitQty()
+                e.currentTarget.blur()
+              }
+            }}
             aria-label={`Quantity for ${line.name}`}
             className="h-8 w-14 border-x border-border-strong text-center text-sm text-text-primary focus:outline-none"
           />
           <button
             type="button"
             aria-label="Increase quantity"
-            onClick={() => onSetQty(line.variantId, line.quantity + 1)}
+            onClick={() => stepQty(line.quantity + 1)}
             className="grid size-8 place-items-center text-text-secondary hover:bg-surface-subtle"
           >
             <Plus className="size-3.5" aria-hidden="true" />
