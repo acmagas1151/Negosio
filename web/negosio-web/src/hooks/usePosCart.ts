@@ -80,7 +80,9 @@ export function usePosCart(ctx: TerminalCtx | null): PosCart {
   }, [ctx])
 
   useEffect(() => {
-    if (ctx) posStorage.writeCart(ctx, lines)
+    if (!ctx) return
+    if (lines.length === 0) posStorage.clearCart(ctx)
+    else posStorage.writeCart(ctx, lines)
   }, [ctx, lines])
 
   const addItem = useCallback((item: PosCatalogItemDto) => dispatch({ kind: 'add', item }), [])

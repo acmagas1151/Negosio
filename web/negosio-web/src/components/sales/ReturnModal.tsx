@@ -8,7 +8,7 @@ import { returnableQty } from '../../lib/returns'
 import { roundMoney } from '../../lib/saleMath'
 import { formatMoney, formatQty } from '../../lib/format'
 import { useTaxSettings } from '../../hooks/useTaxSettings'
-import { Button, Callout, Modal, Select, Table, TextField, useToast } from '../ui'
+import { Button, Callout, Modal, Select, TextField, useToast } from '../ui'
 
 interface Props {
   open: boolean
@@ -140,26 +140,20 @@ export function ReturnModal({ open, onClose, sale }: Props) {
       {formError && <Callout tone="error">{formError}</Callout>}
 
       <form onSubmit={submit} className="space-y-4">
-        <Table>
-          <Table.Head>
-            <Table.HeaderCell>Item</Table.HeaderCell>
-            <Table.HeaderCell align="right">Purchased</Table.HeaderCell>
-            <Table.HeaderCell align="right">Returned</Table.HeaderCell>
-            <Table.HeaderCell align="right">Returnable</Table.HeaderCell>
-            <Table.HeaderCell align="right">Return qty</Table.HeaderCell>
-            <Table.HeaderCell align="right">Restock</Table.HeaderCell>
-          </Table.Head>
-          <Table.Body>
-            {eligible.map((i) => (
-              <Table.Row key={i.id}>
-                <Table.Cell>
-                  <span className="font-medium text-text-primary">{i.productName}</span>
-                  {i.variantName && <span className="text-text-muted"> · {i.variantName}</span>}
-                </Table.Cell>
-                <Table.Cell align="right">{formatQty(i.quantity)}</Table.Cell>
-                <Table.Cell align="right">{formatQty(i.returnedQuantity)}</Table.Cell>
-                <Table.Cell align="right">{formatQty(returnableQty(i))}</Table.Cell>
-                <Table.Cell align="right">
+        <div className="space-y-2">
+          {eligible.map((i) => (
+            <div key={i.id} className="rounded-lg border border-border bg-surface-subtle p-3">
+              <p className="text-sm font-medium text-text-primary">
+                {i.productName}
+                {i.variantName && <span className="text-text-muted"> · {i.variantName}</span>}
+              </p>
+              <p className="mt-0.5 text-[12px] text-text-muted">
+                Purchased {formatQty(i.quantity)} · already returned {formatQty(i.returnedQuantity)} ·
+                returnable {formatQty(returnableQty(i))}
+              </p>
+              <div className="mt-2 flex items-center gap-4">
+                <label className="flex items-center gap-2 text-[13px] text-text-secondary">
+                  Return qty
                   <input
                     type="number"
                     min={0}
@@ -170,20 +164,20 @@ export function ReturnModal({ open, onClose, sale }: Props) {
                     aria-label={`Return quantity for ${i.productName}`}
                     className="h-9 w-20 rounded-lg border border-border-strong bg-white px-2 text-right text-sm focus:border-primary-500 focus:outline-none focus:ring-[3px] focus:ring-primary-500/15"
                   />
-                </Table.Cell>
-                <Table.Cell align="right">
+                </label>
+                <label className="flex items-center gap-2 text-[13px] text-text-secondary">
                   <input
                     type="checkbox"
                     checked={restock[i.id] ?? true}
                     onChange={(e) => setRestock((p) => ({ ...p, [i.id]: e.target.checked }))}
-                    aria-label={`Restock ${i.productName}`}
                     className="size-4 rounded border-border-strong text-primary-600"
                   />
-                </Table.Cell>
-              </Table.Row>
-            ))}
-          </Table.Body>
-        </Table>
+                  Restock
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
 
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-semibold text-text-secondary" htmlFor="return-reason">
