@@ -1,9 +1,13 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { salesApi } from '../api/pos'
 import { PAYMENT_METHOD_LABELS } from '../lib/pos'
 import { formatMoney } from '../lib/format'
+import { hasReturnableQty } from '../lib/returns'
+import { useCan } from '../lib/useCan'
+import { ReturnModal } from '../components/sales/ReturnModal'
 import { SaleItemsTable } from '../components/sales/SaleItemsTable'
 import { SaleReturnsList } from '../components/sales/SaleReturnsList'
 import { StatusBadge } from '../components/sales/StatusBadge'
@@ -12,6 +16,8 @@ import { Button, ErrorState, LoadingState } from '../components/ui'
 
 export default function SaleDetailPage() {
   const { id = '' } = useParams()
+  const canRefund = useCan('refund:manage')
+  const [returnOpen, setReturnOpen] = useState(false)
 
   const query = useQuery({
     queryKey: ['sales', id],
@@ -37,6 +43,10 @@ export default function SaleDetailPage() {
         ) : (
           (() => {
             const d = query.data
+            const canStartReturn =
+              canRefund &&
+              (d.sale.status === 'Completed' || d.sale.status === 'PartiallyRefunded') &&
+              hasReturnableQty(d.items)
             return (
               <>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -50,11 +60,18 @@ export default function SaleDetailPage() {
                       {d.sale.branchName}
                     </p>
                   </div>
-                  <Link to={`/sales/${d.sale.id}/receipt`}>
-                    <Button variant="secondary" size="sm">
-                      Print receipt
-                    </Button>
-                  </Link>
+                  <div className="flex gap-2">
+                    {canStartReturn && (
+                      <Button variant="secondary" size="sm" onClick={() => setReturnOpen(true)}>
+                        Start return
+                      </Button>
+                    )}
+                    <Link to={`/sales/${d.sale.id}/receipt`}>
+                      <Button variant="secondary" size="sm">
+                        Print receipt
+                      </Button>
+                    </Link>
+                  </div>
                 </div>
 
                 <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
@@ -119,6 +136,8 @@ export default function SaleDetailPage() {
                     <SaleReturnsList returns={d.returns} />
                   </div>
                 )}
+
+                <ReturnModal open={returnOpen} onClose={() => setReturnOpen(false)} sale={d} />
               </>
             )
           })()
