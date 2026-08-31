@@ -123,7 +123,7 @@ export default function InviteAcceptPage() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           error={errors.password}
-          hint="At least 8 characters with an uppercase letter, a lowercase letter, a digit and a symbol."
+          hint="8+ chars with upper & lowercase, a number and a symbol."
         />
         <TextField
           label="Confirm password"
