@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { branchesApi } from '../api/inventory'
 import { ApiError } from '../api/client'
 import { registersApi, sessionsApi } from '../api/pos'
@@ -38,6 +38,7 @@ function PosDenied() {
 
 export default function PosPage() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const canOperate = useCan('pos:operate')
 
   const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: branchesApi.list })
@@ -155,7 +156,10 @@ export default function PosPage() {
         <PosTerminal
           ctx={ctx}
           branchId={branch.id}
-          onCheckoutRequested={(p) => console.warn('checkout requested', p)}
+          onCheckoutSuccess={(result) =>
+            navigate(`/pos/complete/${result.saleId}`, { state: { result } })
+          }
+          onSessionLost={() => sessionQuery.refetch()}
         />
       </PosShell>
 
