@@ -290,3 +290,273 @@ export interface MovementListParams {
   page?: number
   pageSize?: number
 }
+
+// ---- POS: registers & sessions ----
+
+export type RegisterSessionStatus = 'Open' | 'Closed'
+
+export interface RegisterDto {
+  id: string
+  branchId: string
+  branchName: string
+  name: string
+  code: string
+  isActive: boolean
+  createdAtUtc: string
+  updatedAtUtc: string
+}
+
+export interface CreateRegisterRequest {
+  branchId: string
+  name: string
+  code: string
+}
+
+export interface UpdateRegisterRequest {
+  name: string
+  code: string
+  isActive: boolean
+}
+
+export interface RegisterListParams {
+  branchId?: string
+  isActive?: boolean
+  page?: number
+  pageSize?: number
+}
+
+export interface RegisterSessionDto {
+  id: string
+  branchId: string
+  registerId: string
+  registerName: string
+  status: RegisterSessionStatus
+  openedByUserId: string
+  openedByName: string
+  openedAtUtc: string
+  closedAtUtc: string | null
+  openingCash: number
+  closingCash: number | null
+  expectedCash: number | null
+  cashDifference: number | null
+}
+
+export interface OpenRegisterSessionRequest {
+  registerId: string
+  openingCash: number
+}
+
+export interface CloseRegisterSessionRequest {
+  closingCash: number
+}
+
+// ---- POS: catalog & checkout ----
+
+export type PaymentMethod = 'Cash' | 'Card' | 'GCash' | 'Maya' | 'BankTransfer' | 'Other'
+export type DiscountType = 'None' | 'FixedAmount' | 'Percentage'
+
+export interface PosCatalogItemDto {
+  productId: string
+  productVariantId: string
+  productName: string
+  variantName: string | null
+  sku: string | null
+  barcode: string | null
+  sellingPrice: number
+  quantityAvailable: number
+  trackInventory: boolean
+  isAvailable: boolean
+}
+
+export interface PosCatalogParams {
+  branchId: string
+  search?: string
+  page?: number
+  pageSize?: number
+}
+
+export interface CheckoutDiscountInput {
+  type: DiscountType
+  value: number
+}
+
+export interface CheckoutItemInput {
+  productVariantId: string
+  quantity: number
+  discount: CheckoutDiscountInput | null
+}
+
+export interface CheckoutPaymentInput {
+  method: PaymentMethod
+  receivedAmount?: number | null
+  amount?: number | null
+  referenceNumber?: string | null
+}
+
+export interface CheckoutRequest {
+  branchId: string
+  registerSessionId: string
+  clientRequestId: string
+  items: CheckoutItemInput[]
+  payments: CheckoutPaymentInput[]
+}
+
+export interface SaleResultDto {
+  saleId: string
+  saleNumber: string
+  status: SaleStatus
+  subtotal: number
+  discountTotal: number
+  taxTotal: number
+  grandTotal: number
+  amountPaid: number
+  changeDue: number
+  wasExistingRequest: boolean
+}
+
+// ---- Sales history & detail ----
+
+export type SaleStatus = 'Completed' | 'Voided' | 'Refunded' | 'PartiallyRefunded'
+
+export interface SaleItemDto {
+  id: string
+  productVariantId: string
+  productName: string
+  variantName: string | null
+  sku: string | null
+  barcode: string | null
+  unitPrice: number
+  quantity: number
+  grossAmount: number
+  discountAmount: number
+  taxAmount: number
+  netAmount: number
+  costPriceSnapshot: number | null
+  returnedQuantity: number
+}
+
+export interface SalePaymentDto {
+  id: string
+  method: PaymentMethod
+  amount: number
+  referenceNumber: string | null
+  receivedAmount: number | null
+  changeAmount: number | null
+}
+
+export interface SaleSummaryDto {
+  id: string
+  saleNumber: string
+  branchId: string
+  branchName: string
+  cashierUserId: string
+  cashierName: string
+  itemCount: number
+  grandTotal: number
+  status: SaleStatus
+  paymentSummary: string
+  createdAtUtc: string
+}
+
+export interface SaleReturnItemDto {
+  id: string
+  saleItemId: string
+  productVariantId: string
+  productName: string
+  quantity: number
+  refundAmount: number
+  restocked: boolean
+}
+
+export interface ReceiptPaymentDto {
+  method: string
+  amount: number
+}
+
+export interface SaleReturnDto {
+  id: string
+  returnNumber: string
+  saleId: string
+  reason: string
+  totalRefund: number
+  createdByUserId: string
+  createdByName: string
+  createdAtUtc: string
+  items: SaleReturnItemDto[]
+  refunds: ReceiptPaymentDto[]
+}
+
+export interface SaleDetailDto {
+  sale: SaleSummaryDto
+  registerSessionId: string
+  subtotal: number
+  discountTotal: number
+  taxTotal: number
+  amountPaid: number
+  changeDue: number
+  completedAtUtc: string | null
+  items: SaleItemDto[]
+  payments: SalePaymentDto[]
+  returns: SaleReturnDto[]
+}
+
+export interface SaleListParams {
+  branchId?: string
+  registerId?: string
+  cashierUserId?: string
+  status?: SaleStatus
+  fromUtc?: string
+  toUtc?: string
+  search?: string
+  page?: number
+  pageSize?: number
+}
+
+// ---- Receipt ----
+
+export interface ReceiptLineDto {
+  description: string
+  variantName: string | null
+  quantity: number
+  unitPrice: number
+  netAmount: number
+}
+
+export interface ReceiptDto {
+  storeName: string
+  branchName: string
+  registerName: string
+  saleNumber: string
+  cashierName: string
+  createdAtUtc: string
+  lines: ReceiptLineDto[]
+  subtotal: number
+  discountTotal: number
+  taxTotal: number
+  grandTotal: number
+  payments: ReceiptPaymentDto[]
+  changeDue: number
+  status: SaleStatus
+}
+
+// ---- Returns ----
+
+export interface ReturnLineInput {
+  saleItemId: string
+  quantity: number
+  restock: boolean
+}
+
+export interface CreateReturnRequest {
+  items: ReturnLineInput[]
+  reason: string
+  refundMethod: PaymentMethod
+  refundReference: string | null
+}
+
+// ---- Tax settings (read-only feed for the cart preview; NOT the settings page) ----
+
+export interface TaxSettingsDto {
+  taxRatePercent: number
+  pricesIncludeTax: boolean
+}

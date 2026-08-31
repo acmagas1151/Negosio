@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Calculator,
   ClipboardList,
   History,
   LayoutDashboard,
@@ -45,9 +46,15 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'Point of sale',
     items: [
-      { label: 'POS', icon: ShoppingCart, enabled: false },
-      { label: 'Sales', icon: ClipboardList, enabled: false },
+      { label: 'POS', icon: ShoppingCart, to: '/pos', enabled: true },
+      { label: 'Registers', icon: Calculator, to: '/registers', enabled: true },
+      { label: 'Sales', icon: ClipboardList, to: '/sales', enabled: true },
+    ],
+  },
+  {
+    items: [
       { label: 'Reports', icon: BarChart3, enabled: false },
       { label: 'Staff', icon: Users, enabled: false },
       { label: 'Settings', icon: Settings, enabled: false },
