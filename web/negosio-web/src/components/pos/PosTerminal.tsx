@@ -301,7 +301,7 @@ export function PosTerminal({
             setStatus('idle')
             setPayOpen(true)
           }}
-          chargeDisabled={status === 'submitting'}
+          chargeDisabled={status === 'submitting' || tax.isPending}
           notice={checkoutError ? <Callout tone="warning">{checkoutError}</Callout> : undefined}
           resuming={resuming}
         />
