@@ -34,17 +34,20 @@ export function ReturnModal({ open, onClose, sale }: Props) {
   const [formError, setFormError] = useState('')
   const [conflict, setConflict] = useState('')
 
+  // Reset ONLY when the modal opens — never when server data changes identity. A conflict
+  // handler below refetches the sale (fresh returnable quantities), and that must not wipe what
+  // the cashier has typed. `restock` starts empty and defaults to `true` per row at render time.
   useEffect(() => {
     if (!open) return
     // oxlint-disable-next-line set-state-in-effect
     setQty({})
-    setRestock(Object.fromEntries(eligible.map((i) => [i.id, true])))
+    setRestock({})
     setReason('')
     setRefundMethod('Cash')
     setRefundReference('')
     setFormError('')
     setConflict('')
-  }, [open, eligible])
+  }, [open])
 
   const pricesIncludeTax = tax.data?.pricesIncludeTax ?? false
   const estimatedRefund = roundMoney(
@@ -101,6 +104,7 @@ export function ReturnModal({ open, onClose, sale }: Props) {
     e.preventDefault()
     if (mutation.isPending) return
     setFormError('')
+    setConflict('')
 
     const rows = eligible.filter((i) => Number(qty[i.id]) > 0)
     if (rows.length === 0) {
