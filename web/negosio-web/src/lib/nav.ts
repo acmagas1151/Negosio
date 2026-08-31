@@ -12,6 +12,7 @@ import {
   Warehouse,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import type { Capability } from './useCan'
 
 export interface NavItem {
   label: string
@@ -19,6 +20,13 @@ export interface NavItem {
   /** Present only for routes that exist today. */
   to?: string
   enabled: boolean
+  /**
+   * If set, the item is only shown to a role that has this capability. Pages whose backend
+   * read endpoints are open to everyone (Catalog, Inventory, Dashboard) are left ungated —
+   * their write controls gate themselves via `useCan`. Pages gated here would otherwise only
+   * lead to a 403.
+   */
+  capability?: Capability
 }
 
 export interface NavGroup {
@@ -26,12 +34,6 @@ export interface NavGroup {
   label?: string
   items: NavItem[]
 }
-
-// TODO(staff-management): nav items are not yet gated by `useCan` — every entry shows for every
-// role. This is inert today (only Owner accounts are reachable; no staff/invite flow exists).
-// When Staff Management lands, gate items by capability (e.g. POS → 'pos:operate',
-// Sales → 'sales:view', Registers → 'register:manage') so non-owner roles don't see or hit
-// endpoints they can't use. Tracked in the project status doc (§10 "role-based nav gating").
 
 export const NAV_GROUPS: NavGroup[] = [
   {
@@ -54,16 +56,28 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Point of sale',
     items: [
-      { label: 'POS', icon: ShoppingCart, to: '/pos', enabled: true },
-      { label: 'Registers', icon: Calculator, to: '/registers', enabled: true },
-      { label: 'Sales', icon: ClipboardList, to: '/sales', enabled: true },
+      { label: 'POS', icon: ShoppingCart, to: '/pos', enabled: true, capability: 'pos:operate' },
+      {
+        label: 'Registers',
+        icon: Calculator,
+        to: '/registers',
+        enabled: true,
+        capability: 'pos:operate',
+      },
+      { label: 'Sales', icon: ClipboardList, to: '/sales', enabled: true, capability: 'sales:view' },
     ],
   },
   {
     items: [
       { label: 'Reports', icon: BarChart3, enabled: false },
-      { label: 'Staff', icon: Users, enabled: false },
-      { label: 'Settings', icon: Settings, to: '/settings', enabled: true },
+      { label: 'Staff', icon: Users, to: '/staff', enabled: true, capability: 'staff:manage' },
+      {
+        label: 'Settings',
+        icon: Settings,
+        to: '/settings',
+        enabled: true,
+        capability: 'settings:write',
+      },
     ],
   },
 ]
