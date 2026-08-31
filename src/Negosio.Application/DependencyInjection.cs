@@ -1,6 +1,7 @@
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Negosio.Application.Auth;
+using Negosio.Application.Branches;
 using Negosio.Application.Catalog;
 using Negosio.Application.Common;
 using Negosio.Application.Dashboard;
@@ -26,6 +27,7 @@ public static class DependencyInjection
         services.AddScoped<ITenantProvisioningService, TenantProvisioningService>();
 
         // Phase 2: Catalog + Inventory
+        services.AddScoped<IBranchQueryService, BranchQueryService>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IProductVariantService, ProductVariantService>();

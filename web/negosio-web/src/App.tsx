@@ -3,7 +3,9 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import CategoriesPage from './pages/CategoriesPage'
 import DashboardPage from './pages/DashboardPage'
+import InventoryPage from './pages/InventoryPage'
 import LoginPage from './pages/LoginPage'
+import MovementsPage from './pages/MovementsPage'
 import ProductCreatePage from './pages/ProductCreatePage'
 import ProductDetailPage from './pages/ProductDetailPage'
 import ProductEditPage from './pages/ProductEditPage'
@@ -17,6 +19,8 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
   { path: '/products/:id', element: <ProductDetailPage /> },
   { path: '/products/:id/edit', element: <ProductEditPage /> },
   { path: '/categories', element: <CategoriesPage /> },
+  { path: '/inventory', element: <InventoryPage /> },
+  { path: '/inventory/movements', element: <MovementsPage /> },
 ]
 
 export default function App() {

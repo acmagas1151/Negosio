@@ -1,6 +1,7 @@
 import {
   BarChart3,
   ClipboardList,
+  History,
   LayoutDashboard,
   Package,
   Settings,
@@ -37,8 +38,14 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'Inventory',
     items: [
-      { label: 'Inventory', icon: Warehouse, enabled: false },
+      { label: 'Stock levels', icon: Warehouse, to: '/inventory', enabled: true },
+      { label: 'Stock movements', icon: History, to: '/inventory/movements', enabled: true },
+    ],
+  },
+  {
+    items: [
       { label: 'POS', icon: ShoppingCart, enabled: false },
       { label: 'Sales', icon: ClipboardList, enabled: false },
       { label: 'Reports', icon: BarChart3, enabled: false },

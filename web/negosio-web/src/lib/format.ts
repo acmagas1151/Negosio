@@ -18,3 +18,18 @@ export function formatMarginPct(cost: number | null, selling: number): string | 
   if (cost === null || selling <= 0) return null
   return `${Math.round(((selling - cost) / selling) * 100)}%`
 }
+
+/**
+ * Stock quantity — up to 3 decimal places (the backend stores decimal(18,3)), trailing zeros
+ * trimmed and thousands separated. `20` -> "20", `19.5` -> "19.5", `12.125` -> "12.125".
+ */
+export function formatQty(n: number): string {
+  return new Intl.NumberFormat('en-PH', { maximumFractionDigits: 3 }).format(n)
+}
+
+/** Signed quantity for a movement row: "+5", "−3" (real minus sign), "0" unchanged. */
+export function formatSignedQty(n: number): string {
+  if (n > 0) return `+${formatQty(n)}`
+  if (n < 0) return `−${formatQty(Math.abs(n))}`
+  return formatQty(0)
+}
