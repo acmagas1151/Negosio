@@ -1,11 +1,15 @@
 using System.Diagnostics;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Negosio.Api.Contracts;
+using Negosio.Application.Abstractions;
 using Negosio.Application.Common;
 using Negosio.Infrastructure.Security;
 
@@ -52,6 +56,13 @@ public sealed class ConfigureJwtBearerOptions : IConfigureNamedOptions<JwtBearer
 
         options.Events = new JwtBearerEvents
         {
+            // Defence against a stale token: after the signature/lifetime pass, confirm the account
+            // still exists, is still active, and still holds the role baked into the token. This is
+            // one indexed lookup on the small platform database per authenticated request. It makes
+            // deactivation effective within one request and forces a re-login after a role change,
+            // without a token blacklist or a shorter global lifetime.
+            OnTokenValidated = ValidateAccountStateAsync,
+
             OnChallenge = async context =>
             {
                 context.HandleResponse();
@@ -67,6 +78,36 @@ public sealed class ConfigureJwtBearerOptions : IConfigureNamedOptions<JwtBearer
                 ErrorCodes.Forbidden,
                 "You do not have permission to access this resource.")
         };
+    }
+
+    private static async Task ValidateAccountStateAsync(TokenValidatedContext context)
+    {
+        var principal = context.Principal;
+        var sub = principal?.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        var tokenRole = principal?.FindFirstValue(JwtTokenGenerator.RoleClaimType);
+
+        if (!Guid.TryParse(sub, out var userId) || string.IsNullOrEmpty(tokenRole))
+        {
+            context.Fail("The token is missing a required claim.");
+            return;
+        }
+
+        var platform = context.HttpContext.RequestServices.GetRequiredService<IPlatformDbContext>();
+        var login = await platform.PlatformUserLogins.AsNoTracking()
+            .Where(l => l.Id == userId)
+            .Select(l => new { l.IsActive, l.Role })
+            .FirstOrDefaultAsync(context.HttpContext.RequestAborted);
+
+        if (login is null || !login.IsActive)
+        {
+            context.Fail("This account is no longer active.");
+            return;
+        }
+
+        if (!string.Equals(tokenRole, login.Role.ToString(), StringComparison.Ordinal))
+        {
+            context.Fail("Your access has changed. Please sign in again.");
+        }
     }
 
     private static async Task WriteErrorAsync(HttpContext context, int statusCode, string code, string message)
