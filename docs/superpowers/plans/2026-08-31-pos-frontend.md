@@ -18,6 +18,8 @@
 - **Reuse shared components** from `src/components/ui/` — do not reinvent `Modal`, `Table`, etc.
 - **`usePagedQuery` `defaultFilters` MUST be a module-level `const`** (the hook memoizes on it by reference).
 - **Never compute authoritative money/stock client-side.** `saleMath.ts` is preview-only; `SaleResultDto` / `SaleDetailDto` / `ReceiptDto` from the server are the source of truth. On any mismatch, show server values, no reconciliation.
+- **Checkout idempotency must survive a refresh/crash.** The active (unresolved) `clientRequestId` is persisted in `localStorage` scoped to the exact terminal (`tenant/branch/register/session`), alongside the cart, and restored on mount. It is kept across `NETWORK_ERROR` / unknown outcomes and transient concurrency retries; cleared only after a confirmed checkout success; rotated only after a *definitive* rejection followed by a meaningful cart edit. **Never persist payment amounts, references, or any payment detail** — only the opaque request id.
+- **Cart/attempt storage is per-register.** `TerminalCtx` carries `registerId`; keys are `…/<tenantId>/<branchId>/<registerId>/<registerSessionId>`. Pruning only ever removes stale keys **for the same register** — never another register's active cart.
 - **Never show cost data to roles outside `costs:view`** (Owner/Admin/Manager/InventoryStaff) — always null-check the API field. (POS/Sales screens in this plan show no cost data at all except `SaleItemDto.costPriceSnapshot`, which the backend already redacts to `null`.)
 - **Commits:** conventional-commit messages, **no** "Co-Authored-By: Claude" / "Generated with Claude Code" trailer (repo convention). Work stays on branch `feature/pos-frontend`; do not merge to `master`.
 - **Currency** is hard-coded PHP — use `formatMoney` / `formatQty` from `src/lib/format.ts`.
@@ -60,7 +62,7 @@
 - `src/components/pos/PaymentModal.tsx`
 - `src/hooks/usePosCart.ts`
 - `src/hooks/useBarcodeScanner.ts`
-- `src/lib/posStorage.ts` — scoped `localStorage` keys + prune
+- `src/lib/posStorage.ts` — per-register/-session `localStorage` keys (cart + unresolved checkout-attempt id) + same-register prune
 
 **Sales / receipt / returns:**
 - `src/pages/SalesPage.tsx`
@@ -832,9 +834,12 @@ git commit -m "feat(pos): registers page with live session state"
 **Interfaces:**
 - Consumes: `PosCatalogItemDto`, `DiscountType` from types.
 - Produces:
-  - `posStorage.cartKey(ctx: TerminalCtx): string`, `posStorage.readCart(ctx): CartLine[] | null`, `posStorage.writeCart(ctx, lines: CartLine[]): void`, `posStorage.clearCart(ctx): void`, `posStorage.pruneOtherCarts(ctx): void`, `posStorage.readRegister(ctx: { tenantId; branchId }): string | null`, `posStorage.writeRegister(ctx, registerId: string): void`
-  - `TerminalCtx = { tenantId: string; branchId: string; registerSessionId: string }`
+  - `TerminalCtx = { tenantId: string; branchId: string; registerId: string; registerSessionId: string }`
   - `CartLine = { variantId: string; productId: string; name: string; variantName: string | null; sku: string | null; unitPrice: number; quantity: number; discount: { type: DiscountType; value: number } }`
+  - `posStorage.cartKey(ctx: TerminalCtx): string`, `posStorage.readCart(ctx): CartLine[] | null`, `posStorage.writeCart(ctx, lines: CartLine[]): void`, `posStorage.clearCart(ctx): void`
+  - `posStorage.readAttemptId(ctx: TerminalCtx): string | null`, `posStorage.writeAttemptId(ctx, id: string): void`, `posStorage.clearAttemptId(ctx): void`
+  - `posStorage.pruneStaleForRegister(ctx: TerminalCtx): void` — removes cart + attempt-id keys for the **same** `tenant/branch/register` whose `registerSessionId` differs from `ctx`; never touches another register
+  - `posStorage.readRegister(c: { tenantId: string; branchId: string }): string | null`, `posStorage.writeRegister(c, registerId: string): void`
   - `usePosCart(ctx: TerminalCtx | null): { lines: CartLine[]; addItem(item: PosCatalogItemDto): void; setQty(variantId: string, qty: number): void; removeLine(variantId: string): void; setLineDiscount(variantId: string, d: { type: DiscountType; value: number }): void; clear(): void; isEmpty: boolean }`
   - `useBarcodeScanner(opts: { enabled: boolean; onScan: (code: string) => void }): void`
 
@@ -846,6 +851,7 @@ import type { DiscountType } from '../api/types'
 export interface TerminalCtx {
   tenantId: string
   branchId: string
+  registerId: string
   registerSessionId: string
 }
 
@@ -861,7 +867,13 @@ export interface CartLine {
 }
 
 const CART_PREFIX = 'negosio.pos.cart.v1.'
+const ATTEMPT_PREFIX = 'negosio.pos.attempt.v1.'
 const REGISTER_PREFIX = 'negosio.pos.register.v1.'
+
+/** tenant/branch/register/session — cart and checkout-attempt id are both scoped to this. */
+const scope = (c: TerminalCtx) => `${c.tenantId}/${c.branchId}/${c.registerId}/${c.registerSessionId}`
+/** tenant/branch/register — everything for one register, any session. */
+const registerScope = (c: TerminalCtx) => `${c.tenantId}/${c.branchId}/${c.registerId}/`
 
 function safeGet(key: string): string | null {
   try {
@@ -874,7 +886,7 @@ function safeSet(key: string, value: string): void {
   try {
     localStorage.setItem(key, value)
   } catch {
-    /* private mode / quota — cart durability is best-effort */
+    /* private mode / quota — persistence is best-effort */
   }
 }
 function safeRemove(key: string): void {
@@ -886,7 +898,8 @@ function safeRemove(key: string): void {
 }
 
 export const posStorage = {
-  cartKey: (c: TerminalCtx) => `${CART_PREFIX}${c.tenantId}/${c.branchId}/${c.registerSessionId}`,
+  cartKey: (c: TerminalCtx) => `${CART_PREFIX}${scope(c)}`,
+  attemptKey: (c: TerminalCtx) => `${ATTEMPT_PREFIX}${scope(c)}`,
 
   readCart(c: TerminalCtx): CartLine[] | null {
     const raw = safeGet(posStorage.cartKey(c))
@@ -902,14 +915,26 @@ export const posStorage = {
     safeSet(posStorage.cartKey(c), JSON.stringify(lines)),
   clearCart: (c: TerminalCtx) => safeRemove(posStorage.cartKey(c)),
 
-  /** Drop cart keys for the same tenant/branch that belong to other (stale) sessions. */
-  pruneOtherCarts(c: TerminalCtx) {
-    const keep = posStorage.cartKey(c)
-    const stalePrefix = `${CART_PREFIX}${c.tenantId}/${c.branchId}/`
+  /** The opaque, unresolved checkout-attempt id. Never store payment details here. */
+  readAttemptId: (c: TerminalCtx) => safeGet(posStorage.attemptKey(c)),
+  writeAttemptId: (c: TerminalCtx, id: string) => safeSet(posStorage.attemptKey(c), id),
+  clearAttemptId: (c: TerminalCtx) => safeRemove(posStorage.attemptKey(c)),
+
+  /**
+   * Remove cart + attempt-id keys that belong to the SAME register but an older session.
+   * Scoped by `tenant/branch/register/` — another register's active cart is never touched.
+   */
+  pruneStaleForRegister(c: TerminalCtx) {
+    const keepCart = posStorage.cartKey(c)
+    const keepAttempt = posStorage.attemptKey(c)
+    const reg = registerScope(c)
     try {
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const k = localStorage.key(i)
-        if (k && k.startsWith(stalePrefix) && k !== keep) localStorage.removeItem(k)
+        if (!k) continue
+        const isOurRegisterCart = k.startsWith(CART_PREFIX + reg) && k !== keepCart
+        const isOurRegisterAttempt = k.startsWith(ATTEMPT_PREFIX + reg) && k !== keepAttempt
+        if (isOurRegisterCart || isOurRegisterAttempt) localStorage.removeItem(k)
       }
     } catch {
       /* ignore */
@@ -925,7 +950,7 @@ export const posStorage = {
 
 - [ ] **Step 2: `src/hooks/usePosCart.ts`**
 
-`useReducer` over `CartLine[]`. Actions: `add` (find by `variantId`; if present `quantity += 1` else push with `quantity: 1`, `discount: { type: 'None', value: 0 }`), `setQty` (drop line when `qty <= 0`, else set; round to 3dp), `remove`, `setDiscount`, `clear`, `hydrate`. On mount (when `ctx` becomes non-null) dispatch `hydrate` from `posStorage.readCart(ctx)` and call `posStorage.pruneOtherCarts(ctx)`. In a `useEffect` on `[lines, ctx]` write through with `posStorage.writeCart`. `clear()` also calls `posStorage.clearCart(ctx)`. Guard every branch for `ctx === null` (no-op).
+`useReducer` over `CartLine[]`. Actions: `add` (find by `variantId`; if present `quantity += 1` else push with `quantity: 1`, `discount: { type: 'None', value: 0 }`), `setQty` (drop line when `qty <= 0`, else set; round to 3dp), `remove`, `setDiscount`, `clear`, `hydrate`. On mount (when `ctx` becomes non-null) dispatch `hydrate` from `posStorage.readCart(ctx)` and call `posStorage.pruneStaleForRegister(ctx)`. In a `useEffect` on `[lines, ctx]` write through with `posStorage.writeCart`. `clear()` also calls `posStorage.clearCart(ctx)` **and** `posStorage.clearAttemptId(ctx)`. Guard every branch for `ctx === null` (no-op). The attempt-id lifecycle itself lives in `PosTerminal` (Task 8) — this hook only clears it on `clear()`.
 
 - [ ] **Step 3: `src/hooks/useBarcodeScanner.ts`**
 
@@ -1018,10 +1043,13 @@ Centered card. "Register {register.name} has no open session." Inline opening-ca
 
 - [ ] **Step 4: `PosPage.tsx` — state machine**
 
+The register selection is **derived state**, not a `useState` seeded from an effect. The only piece of local state is an *explicit user override* (from the picker or the "choose a different register" link); the effective register id is computed each render from `override ?? persisted-if-valid ?? sole-active-register ?? null`. This needs no `useEffect` and no exhaustive-deps suppression.
+
 ```tsx
 export default function PosPage() {
   const { user } = useAuth()
   const canOperate = useCan('pos:operate')
+
   const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: branchesApi.list })
   const branch = branchesQuery.data?.[0]
 
@@ -1032,17 +1060,29 @@ export default function PosPage() {
   })
   const activeRegisters = registersQuery.data?.items ?? []
 
-  const [registerId, setRegisterId] = useState<string | null>(null)
+  // Explicit user choice only. `null` = "no explicit choice yet" (fall back to derivation).
+  const [override, setOverride] = useState<string | null>(null)
+  // `false` = the user asked to re-pick; suppress the persisted/sole-register fallback until they do.
+  const [forcePicker, setForcePicker] = useState(false)
 
-  // Resolve the register: persisted choice (validated) → sole active register → picker.
-  useEffect(() => {
-    if (!branch || registersQuery.isPending) return
-    const persisted = posStorage.readRegister({ tenantId: user!.tenantId, branchId: branch.id })
-    const valid = persisted && activeRegisters.some((r) => r.id === persisted) ? persisted : null
-    if (valid) setRegisterId(valid)
-    else if (activeRegisters.length === 1) setRegisterId(activeRegisters[0].id)
-    // else leave null → RegisterPicker
-  }, [branch, registersQuery.isPending]) // eslint-disable-line react-hooks/exhaustive-deps
+  const persisted =
+    branch ? posStorage.readRegister({ tenantId: user!.tenantId, branchId: branch.id }) : null
+  const persistedValid =
+    persisted && activeRegisters.some((r) => r.id === persisted) ? persisted : null
+
+  const registerId: string | null = forcePicker
+    ? override // only an explicit pick escapes the forced picker
+    : override ?? persistedValid ?? (activeRegisters.length === 1 ? activeRegisters[0].id : null)
+
+  const pickRegister = (id: string) => {
+    posStorage.writeRegister({ tenantId: user!.tenantId, branchId: branch!.id }, id)
+    setOverride(id)
+    setForcePicker(false)
+  }
+  const askForDifferentRegister = () => {
+    setOverride(null)
+    setForcePicker(true)
+  }
 
   const sessionQuery = useQuery({
     queryKey: ['session', 'current', registerId],
@@ -1051,41 +1091,64 @@ export default function PosPage() {
     retry: false,
   })
 
-  if (!canOperate) return <PosDenied />        // small full-screen "You don't have POS access"
+  if (!canOperate) return <PosDenied />
   if (branchesQuery.isPending || registersQuery.isPending) return <PosLoading />
   if (!registerId) {
-    return <PosCentered><RegisterPicker registers={activeRegisters} onPick={(id) => {
-      posStorage.writeRegister({ tenantId: user!.tenantId, branchId: branch!.id }, id)
-      setRegisterId(id)
-    }} /></PosCentered>
+    return (
+      <PosCentered>
+        <RegisterPicker registers={activeRegisters} onPick={pickRegister} />
+      </PosCentered>
+    )
   }
-  const register = activeRegisters.find((r) => r.id === registerId)!
+  const register = activeRegisters.find((r) => r.id === registerId)
+  if (!register) {
+    // persisted id went stale between render and now — force the picker
+    return (
+      <PosCentered>
+        <RegisterPicker registers={activeRegisters} onPick={pickRegister} />
+      </PosCentered>
+    )
+  }
   if (sessionQuery.isError) {
     const err = sessionQuery.error
     if (err instanceof ApiError && err.status === 404) {
-      return <PosCentered><PosSessionGate register={register}
-        onOpened={() => sessionQuery.refetch()}
-        onSwitchRegister={() => setRegisterId(null)} /></PosCentered>
+      return (
+        <PosCentered>
+          <PosSessionGate
+            register={register}
+            onOpened={() => sessionQuery.refetch()}
+            onSwitchRegister={askForDifferentRegister}
+          />
+        </PosCentered>
+      )
     }
-    return <PosCentered><ErrorState message={(err as Error).message} onRetry={() => sessionQuery.refetch()} /></PosCentered>
+    return (
+      <PosCentered>
+        <ErrorState message={(err as Error).message} onRetry={() => sessionQuery.refetch()} />
+      </PosCentered>
+    )
   }
   if (sessionQuery.isPending || !sessionQuery.data) return <PosLoading />
 
   const session = sessionQuery.data
+  const ctx = {
+    tenantId: user!.tenantId,
+    branchId: branch!.id,
+    registerId: register.id,
+    registerSessionId: session.id,
+  }
   return (
-    <PosShell
-      session={session}
-      register={register}
-      onCloseSession={/* opens CloseSessionModal; on close → setRegisterId stays, sessionQuery.refetch() → 404 → gate */}
-    >
-      {/* Task 7: <PosTerminal ctx={{ tenantId: user.tenantId, branchId: branch.id, registerSessionId: session.id }} branchId={branch.id} /> */}
+    <PosShell session={session} register={register} onCloseSession={/* mounts CloseSessionModal; onClosed → sessionQuery.refetch() → 404 → gate */}>
+      {/* Task 7: <PosTerminal ctx={ctx} branchId={branch!.id} onCheckoutRequested={…} /> */}
       <div>Terminal placeholder</div>
     </PosShell>
   )
 }
 ```
 
-Implement the small helper components `PosDenied`, `PosLoading`, `PosCentered` inline in the file. `onCloseSession` holds a `useState` boolean to mount `CloseSessionModal` (from Task 3); on `onClosed` → `sessionQuery.refetch()`.
+Implement `PosDenied`, `PosLoading`, `PosCentered` inline. `onCloseSession` holds a `useState` boolean to mount `CloseSessionModal` (Task 3); on `onClosed` → `sessionQuery.refetch()` (the next fetch 404s → the gate renders).
+
+Note: reading `posStorage.readRegister` during render is fine here — `localStorage` reads are synchronous and cheap, and the value only changes via `pickRegister` (which also sets `override`, forcing a re-render). If oxlint flags the render-time read, hoist it into a `useMemo` keyed on `[branch?.id, user?.tenantId, activeRegisters]`.
 
 - [ ] **Step 5: Verify — build + interactive smoke**
 
@@ -1203,7 +1266,7 @@ Reset `page` to 1 whenever `debounced` changes (effect).
 
 - [ ] **Step 6: Wire into `PosPage.tsx`**
 
-Replace the placeholder with `<PosTerminal ctx={{ tenantId: user.tenantId, branchId: branch.id, registerSessionId: session.id }} branchId={branch.id} onCheckoutRequested={(p) => console.warn('checkout', p)} />`.
+Replace the placeholder with `<PosTerminal ctx={ctx} branchId={branch!.id} onCheckoutRequested={(p) => console.warn('checkout', p)} />` (using the `ctx` object built in Task 6 Step 4 — `{ tenantId, branchId, registerId, registerSessionId }`).
 
 - [ ] **Step 7: Verify — build + interactive smoke**
 
@@ -1239,14 +1302,19 @@ git commit -m "feat(pos): terminal — product search, grid, cart, line discount
   - `PaymentModal({ open, onClose, amountDue, submitting, error, onConfirm }: { open: boolean; onClose: () => void; amountDue: number; submitting: boolean; error: string | null; onConfirm: (payment: CheckoutPaymentInput) => void })`
   - `PosTerminal` now: holds `clientRequestIdRef` (see lifecycle below), `status`, `checkoutError`, mounts `PaymentModal`, calls `checkoutApi.checkout`, and on success calls a prop `onCheckoutSuccess(result: SaleResultDto)`.
 
-**`clientRequestId` lifecycle (spec §9 — implement exactly):**
-- A `useRef<string | null>(null)` in `PosTerminal`. Helper `ensureId()` → if null, set `crypto.randomUUID()`; return it.
-- Call `ensureId()` when the cart transitions **empty → non-empty** (effect on `cart.isEmpty`).
-- **Do NOT** rotate the id when the `PaymentModal` opens/closes.
-- Rotate (`ref.current = null`) only:
-  1. Right after a **successful** checkout (before navigating away / clearing cart).
-  2. On the **next cart mutation** (`addItem`/`setQty`/`removeLine`/`setLineDiscount`) that happens **after** a *definitive* rejection flag is set. Track `needsNewIdOnEdit: boolean` state — set `true` on `INSUFFICIENT_INVENTORY` / `INVALID_SALE_ITEM` / `INVALID_QUANTITY` / `INVALID_DISCOUNT`; when it's `true` and a cart mutation occurs, set `ref.current = null` and clear the flag. Wrap the `usePosCart` callbacks to intercept.
-- Keep the id (no rotation) on `NETWORK_ERROR` and `CHECKOUT_CONCURRENCY_CONFLICT` (transient) — Retry reuses it.
+**`clientRequestId` lifecycle (spec §9 + refinement — implement exactly):**
+
+The id is **persisted** (`posStorage` attempt key, scoped to `tenant/branch/register/session`) so an unresolved checkout survives a refresh or crash. It is mirrored in a `useRef` for synchronous access inside the mutation.
+
+- `const idRef = useRef<string | null>(null)`. On mount (effect on `[ctx]`): `idRef.current = posStorage.readAttemptId(ctx)` (restore an unresolved attempt).
+- `ensureId()` helper: `if (!idRef.current) { idRef.current = crypto.randomUUID(); posStorage.writeAttemptId(ctx, idRef.current) } return idRef.current`.
+- Call `ensureId()` when the cart transitions **empty → non-empty** (effect on `cart.isEmpty`) — so a restored-from-storage cart also has (or regenerates) its id.
+- **Do NOT** touch the id when `PaymentModal` opens/closes.
+- **Clear** the id (`idRef.current = null` + `posStorage.clearAttemptId(ctx)`) only:
+  1. immediately after a **confirmed checkout success** (do this inside `usePosCart.clear()`, which already clears the attempt key, *and* null the ref here).
+- **Rotate** the id (clear, then next `ensureId()` makes a fresh one) only on the **next cart mutation after a *definitive* rejection**: track `needsNewId: boolean` — set `true` on `INSUFFICIENT_INVENTORY` / `INVALID_SALE_ITEM` / `INVALID_QUANTITY` / `INVALID_DISCOUNT`; wrap the `usePosCart` mutators so that when `needsNewId` is `true`, the first call does `idRef.current = null; posStorage.clearAttemptId(ctx); setNeedsNewId(false)` before delegating (the subsequent `ensureId()` writes a fresh persisted id).
+- **Keep** the id (no clear, no rotate) on `NETWORK_ERROR`, unknown/non-`ApiError` outcomes, and `CHECKOUT_CONCURRENCY_CONFLICT` — Retry reuses the same persisted id and the backend dedupes.
+- **Never** persist payment method, received amount, reference, or totals — only the opaque id string.
 
 - [ ] **Step 1: `PaymentModal.tsx`**
 
@@ -1272,7 +1340,7 @@ const idRef = useRef<string | null>(null)
 
 const mutation = useMutation({
   mutationFn: (payment: CheckoutPaymentInput) => {
-    const clientRequestId = idRef.current ?? (idRef.current = crypto.randomUUID())
+    const clientRequestId = ensureId()   // reads/writes the persisted attempt id
     const body: CheckoutRequest = {
       branchId,
       registerSessionId: ctx.registerSessionId,
@@ -1288,7 +1356,7 @@ const mutation = useMutation({
   },
   onMutate: () => { setStatus('submitting'); setPayError(null); setCheckoutError(null) },
   onSuccess: (result) => {
-    idRef.current = null                 // rotation rule 1
+    idRef.current = null                 // clear rule 1 — cart.clear() also clears the persisted attempt key
     setStatus('idle'); setPayOpen(false)
     cart.clear()
     qc.invalidateQueries({ queryKey: ['inventory'] })
@@ -1334,9 +1402,11 @@ const mutation = useMutation({
 })
 ```
 
-Wrap cart mutators so that when `needsNewId` is true, the first call sets `idRef.current = null` and `setNeedsNewId(false)` before delegating.
+Wrap cart mutators so that when `needsNewId` is true, the first call does `idRef.current = null; posStorage.clearAttemptId(ctx); setNeedsNewId(false)` before delegating (next `ensureId()` mints + persists a fresh id).
 
 `CartPanel` gets `notice={checkoutError && <Callout tone="warning">{checkoutError}</Callout>}` and `chargeDisabled={status === 'submitting'}`. `onCharge` → `setPayOpen(true)` (does **not** touch `idRef`).
+
+**On mount**, if `posStorage.readAttemptId(ctx)` returned a non-null id AND the restored cart is non-empty, show a subtle one-line `Callout` in `CartPanel` ("Resuming an unfinished sale") — a cashier who refreshed mid-checkout sees the same cart + same id and Retry is safe.
 
 - [ ] **Step 3: `PosPage` success handling**
 
@@ -1349,6 +1419,8 @@ Pass `onCheckoutSuccess={(result) => navigate('/pos/complete/' + result.saleId, 
 Interactive:
 - Build a cart, **Charge**, PaymentModal → Cash, received > total → Change shows → **Confirm** → navigates to `/pos/complete/:saleId`; cart cleared; `localStorage` cart key gone.
 - **Idempotency:** rebuild a cart; open PaymentModal, note nothing rotates; close + reopen → same attempt. Use CDP to throttle offline, Confirm → network error message, Retry online → single sale (verify only one sale in `/sales`).
+- **Refresh mid-checkout:** build a cart, throttle offline, Confirm → network error; **reload the page** → cart restored, "Resuming an unfinished sale" callout, `posStorage.readAttemptId` returns the same id (inspect `localStorage` — key `negosio.pos.attempt.v1.<tenant>/<branch>/<register>/<session>`); go online, Retry → exactly one sale.
+- **Per-register isolation:** with two active registers, open sessions on both, put items in register A's cart, switch to register B via the picker, add items → inspect `localStorage`: A's cart key (`…/<regA>/<sessionA>`) still intact, not pruned.
 - **INSUFFICIENT_INVENTORY:** set a variant's stock to 1 via the inventory UI, cart qty 5, Charge/Confirm → modal closes, cart callout, grid stock refreshes; lower qty to 1 → the id rotates on that edit; Confirm → succeeds.
 - **Double-submit:** Confirm is disabled while submitting (observe the button).
 
@@ -1613,7 +1685,7 @@ Start API (Development launch profile) + `npm run dev`. Log in as `invui@example
 4. **Print receipt** → receipt renders at 80 mm; `window.print()` fires with `?print=1`; no console errors.
 5. `/sales` → the sale is listed; open it → totals match the receipt.
 6. **Start return** → return 1× Widget A, restock, reason → success → status **Partially refunded**; `/inventory` reflects +1; movement ledger shows `Return`.
-7. **Idempotency:** new cart → PaymentModal open/close keeps the same `clientRequestId` (inspect via a `console.log` temporarily or React DevTools); CDP offline → Confirm → network message → online Retry → exactly one new sale in `/sales`.
+7. **Idempotency + persistence:** new cart → PaymentModal open/close keeps the same `clientRequestId` (inspect `localStorage` key `negosio.pos.attempt.v1.…`); CDP offline → Confirm → network message → **reload page** → cart + attempt id restored, "Resuming an unfinished sale" → online Retry → exactly one new sale in `/sales`. Then a second register with its own open session: verify its cart key is untouched when you switch registers.
 8. **INSUFFICIENT_INVENTORY:** set Widget B stock to 1 (`/inventory` adjust), cart qty 3 → Confirm → modal closes, cart callout, grid stock refreshes; drop qty to 1 (id rotates) → Confirm → succeeds.
 9. **Session-lost:** close the session from `/registers` while `/pos` is open in another tab, then Charge/Confirm in the POS tab → drops to the session gate, cart preserved.
 10. RBAC affordance: (can't fully test without a non-owner user — note that `useCan` gates are in place: `refund:manage` hides Start return, `register:manage` hides New register, `pos:operate` gates POS).
@@ -1659,6 +1731,9 @@ Summarize: build order completed, verification results (test counts, lint/build,
 | §5 Sales / SaleDetail / ReturnModal / ReceiptPage | 10 / 11 / 12 / 9 |
 | §6 register/session UX + no-quick-sell | 4 / 6 |
 | §7 cart state + scoped persistence + register persistence | 5 / 6 / 7 |
+| Refinement: per-register cart key (`tenant/branch/register/session`) + same-register-only prune | 5 (`posStorage`, `TerminalCtx.registerId`) / 6 (`ctx`) |
+| Refinement: persisted unresolved `clientRequestId`, restored on mount, never persists payment detail | 5 (`posStorage` attempt id) / 8 (lifecycle) |
+| Refinement: register resolution is derived state, no `eslint-disable` | 6 (Step 4) |
 | §8 barcode strategy | 5 (hook) / 7 (wiring) |
 | §9 checkout / idempotency lifecycle | 8 |
 | §10 payment UX | 8 |
