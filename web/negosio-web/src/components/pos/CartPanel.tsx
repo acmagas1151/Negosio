@@ -49,14 +49,15 @@ function CartLineRow({
   // quantity". This lets the cashier clear the field and retype without the line vanishing.
   const [qtyDraft, setQtyDraft] = useState<string | null>(null)
 
-  const commitQty = () => {
-    if (qtyDraft === null) return
-    const trimmed = qtyDraft.trim()
+  // Commit from the field's own value (not React state) so a programmatic set-then-blur or a
+  // paste-then-tab still applies — the committed number is always what the input actually holds.
+  const commitQty = (raw: string) => {
+    setQtyDraft(null)
+    const trimmed = raw.trim()
     const n = Number(trimmed)
     if (trimmed !== '' && Number.isFinite(n)) {
       onSetQty(line.variantId, n)
     }
-    setQtyDraft(null)
   }
 
   const stepQty = (next: number) => {
@@ -111,11 +112,10 @@ function CartLineRow({
             step="0.001"
             value={qtyDraft ?? String(line.quantity)}
             onChange={(e) => setQtyDraft(e.target.value)}
-            onBlur={commitQty}
+            onBlur={(e) => commitQty(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
-                commitQty()
                 e.currentTarget.blur()
               }
             }}
