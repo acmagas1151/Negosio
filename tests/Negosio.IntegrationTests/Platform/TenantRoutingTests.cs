@@ -38,12 +38,36 @@ public class TenantRoutingTests : IntegrationTest
     }
 
     [Fact]
-    public async Task A_token_for_an_unknown_tenant_is_rejected_with_404()
+    public async Task A_token_for_a_user_that_does_not_exist_is_rejected_with_401()
     {
+        // No platform login for this subject -> the per-request account-state check fails the token
+        // before tenant routing runs. (Phase 4: OnTokenValidated in ConfigureJwtBearerOptions.)
         var generator = Factory.Services.GetRequiredService<IJwtTokenGenerator>();
         var ghost = generator.Generate(new TokenSubject(Guid.NewGuid(), Guid.NewGuid(), UserRole.Owner, "ghost@example.com"));
 
         Authorize(ghost.Value);
+        var response = await Client.GetAsync("/api/dashboard");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task A_valid_login_whose_tenant_route_is_missing_is_rejected_with_404()
+    {
+        // The account passes the state check but its tenant has no database mapping -> routing fails.
+        var userId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        await InPlatformScopeAsync(async db =>
+        {
+            db.PlatformUserLogins.Add(Negosio.Domain.Entities.PlatformUserLogin.Create(
+                userId, tenantId, "orphan@example.com", "not-a-real-hash", UserRole.Owner));
+            await db.SaveChangesAsync();
+            return true;
+        });
+
+        var generator = Factory.Services.GetRequiredService<IJwtTokenGenerator>();
+        Authorize(generator.Generate(new TokenSubject(userId, tenantId, UserRole.Owner, "orphan@example.com")).Value);
+
         var response = await Client.GetAsync("/api/dashboard");
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
