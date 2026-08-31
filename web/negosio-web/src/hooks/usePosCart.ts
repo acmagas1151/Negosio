@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useReducer } from 'react'
 import type { DiscountType, PosCatalogItemDto } from '../api/types'
 import { posStorage, type CartLine, type TerminalCtx } from '../lib/posStorage'
 
 type Action =
-  | { kind: 'hydrate'; lines: CartLine[] }
   | { kind: 'add'; item: PosCatalogItemDto }
   | { kind: 'setQty'; variantId: string; qty: number }
   | { kind: 'remove'; variantId: string }
@@ -14,8 +13,6 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000
 
 function reducer(state: CartLine[], action: Action): CartLine[] {
   switch (action.kind) {
-    case 'hydrate':
-      return action.lines
     case 'add': {
       const { item } = action
       const existing = state.find((l) => l.variantId === item.productVariantId)
@@ -66,35 +63,32 @@ export interface PosCart {
 
 /**
  * POS cart state (useReducer) mirrored to `localStorage`, scoped to the exact terminal
- * (`tenant/branch/register/session`). Rehydrates on mount; prunes only this register's stale
- * sessions. `clear()` also drops the persisted unresolved checkout-attempt id.
+ * (`tenant/branch/register/session`). Seeded from storage on mount (this component only mounts
+ * once its terminal context is fully resolved, so the seed key is stable for its lifetime).
+ * Prunes only this register's stale sessions. `clear()` also drops the persisted checkout-attempt id.
  */
 export function usePosCart(ctx: TerminalCtx | null): PosCart {
-  const [lines, dispatch] = useReducer(reducer, [])
-  const ctxKey = ctx ? posStorage.cartKey(ctx) : null
-  const hydratedFor = useRef<string | null>(null)
+  const [lines, dispatch] = useReducer(
+    reducer,
+    ctx,
+    (c): CartLine[] => (c ? (posStorage.readCart(c) ?? []) : []),
+  )
+
+  // Callers pass a memoized ctx, so its identity is stable for a mounted terminal.
+  useEffect(() => {
+    if (ctx) posStorage.pruneStaleForRegister(ctx)
+  }, [ctx])
 
   useEffect(() => {
-    if (!ctx || !ctxKey || hydratedFor.current === ctxKey) return
-    hydratedFor.current = ctxKey
-    dispatch({ kind: 'hydrate', lines: posStorage.readCart(ctx) ?? [] })
-    posStorage.pruneStaleForRegister(ctx)
-  }, [ctx, ctxKey])
-
-  useEffect(() => {
-    if (!ctx || hydratedFor.current !== ctxKey) return
-    posStorage.writeCart(ctx, lines)
-  }, [ctx, ctxKey, lines])
+    if (ctx) posStorage.writeCart(ctx, lines)
+  }, [ctx, lines])
 
   const addItem = useCallback((item: PosCatalogItemDto) => dispatch({ kind: 'add', item }), [])
   const setQty = useCallback(
     (variantId: string, qty: number) => dispatch({ kind: 'setQty', variantId, qty }),
     [],
   )
-  const removeLine = useCallback(
-    (variantId: string) => dispatch({ kind: 'remove', variantId }),
-    [],
-  )
+  const removeLine = useCallback((variantId: string) => dispatch({ kind: 'remove', variantId }), [])
   const setLineDiscount = useCallback(
     (variantId: string, d: { type: DiscountType; value: number }) =>
       dispatch({ kind: 'setDiscount', variantId, discount: d }),

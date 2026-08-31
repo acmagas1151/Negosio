@@ -139,12 +139,6 @@ export default function PosPage() {
   }
 
   const session = sessionQuery.data
-  const ctx = {
-    tenantId: user!.tenantId,
-    branchId: branch.id,
-    registerId: register.id,
-    registerSessionId: session.id,
-  }
 
   return (
     <>
@@ -154,8 +148,10 @@ export default function PosPage() {
         onCloseSession={() => setCloseOpen(true)}
       >
         <PosTerminal
-          ctx={ctx}
+          tenantId={user!.tenantId}
           branchId={branch.id}
+          registerId={register.id}
+          registerSessionId={session.id}
           onCheckoutSuccess={(result) =>
             navigate(`/pos/complete/${result.saleId}`, { state: { result } })
           }

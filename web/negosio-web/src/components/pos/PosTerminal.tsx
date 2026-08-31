@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { PackageSearch } from 'lucide-react'
 import { ApiError } from '../../api/client'
@@ -32,13 +32,26 @@ const DEFINITIVE_REJECTIONS = new Set([
 ])
 
 interface Props {
-  ctx: TerminalCtx
+  tenantId: string
   branchId: string
+  registerId: string
+  registerSessionId: string
   onCheckoutSuccess: (result: SaleResultDto) => void
   onSessionLost: () => void
 }
 
-export function PosTerminal({ ctx, branchId, onCheckoutSuccess, onSessionLost }: Props) {
+export function PosTerminal({
+  tenantId,
+  branchId,
+  registerId,
+  registerSessionId,
+  onCheckoutSuccess,
+  onSessionLost,
+}: Props) {
+  const ctx: TerminalCtx = useMemo(
+    () => ({ tenantId, branchId, registerId, registerSessionId }),
+    [tenantId, branchId, registerId, registerSessionId],
+  )
   const cart = usePosCart(ctx)
   const tax = useTaxSettings()
   const qc = useQueryClient()
