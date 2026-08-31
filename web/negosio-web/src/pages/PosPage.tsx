@@ -10,6 +10,7 @@ import { posStorage } from '../lib/posStorage'
 import { CloseSessionModal } from '../components/pos/CloseSessionModal'
 import { PosSessionGate } from '../components/pos/PosSessionGate'
 import { PosShell } from '../components/pos/PosShell'
+import { PosTerminal } from '../components/pos/PosTerminal'
 import { RegisterPicker } from '../components/pos/RegisterPicker'
 import { ErrorState, LoadingState } from '../components/ui'
 
@@ -137,6 +138,12 @@ export default function PosPage() {
   }
 
   const session = sessionQuery.data
+  const ctx = {
+    tenantId: user!.tenantId,
+    branchId: branch.id,
+    registerId: register.id,
+    registerSessionId: session.id,
+  }
 
   return (
     <>
@@ -145,8 +152,11 @@ export default function PosPage() {
         register={register}
         onCloseSession={() => setCloseOpen(true)}
       >
-        {/* Task 7 replaces this with <PosTerminal ctx={ctx} branchId={branch.id} onCheckoutRequested={…} /> */}
-        <div className="p-4 text-sm text-text-muted">Terminal placeholder</div>
+        <PosTerminal
+          ctx={ctx}
+          branchId={branch.id}
+          onCheckoutRequested={(p) => console.warn('checkout requested', p)}
+        />
       </PosShell>
 
       <CloseSessionModal
