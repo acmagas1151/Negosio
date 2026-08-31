@@ -55,6 +55,24 @@ stream their strings never collide within a branch.
 **Void is deferred.** No void numbering is implemented or reserved; a future void may keep the
 original sale number rather than consume a new one.
 
+### Migrating an existing deployment
+
+This shared-sequence + bare-8-digit format was adopted before any production data existed, so the
+codebase carries **no data migration**. A real deployment that already allocated numbers under the
+previous scheme (`INV-<branch>-000001` from the `Sale` counter, `RET-<branch>-000001` from a
+separate `Return` counter) would need a **one-time reconciliation**, run per tenant DB, roughly:
+
+1. Decide whether to renumber history or leave old documents with their legacy strings (renumbering
+   changes printed/exported receipts — usually leave history as-is).
+2. Seed the shared `Sale` counter's `LastNumber` to `MAX(existing sale number, existing return
+   number)` for each `(TenantId, BranchId)` so new documents continue past the highest used value.
+3. Remove or ignore the now-unused `Return` counter rows.
+4. Backfill any UI/read model that expects `OriginalSaleNumber` (here it is computed at read time,
+   so nothing to backfill).
+
+The developer tenant DB used during Phase 3 was reset instead (test sales/returns/movements wiped,
+`Sale` counter zeroed, `Return` counter row dropped, inventory restored) — no script was kept.
+
 ## Consequences
 
 - Contiguous, branch-scoped, human-readable numbers — one shared stream for sales + returns.

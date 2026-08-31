@@ -27,6 +27,12 @@ export interface NavGroup {
   items: NavItem[]
 }
 
+// TODO(staff-management): nav items are not yet gated by `useCan` — every entry shows for every
+// role. This is inert today (only Owner accounts are reachable; no staff/invite flow exists).
+// When Staff Management lands, gate items by capability (e.g. POS → 'pos:operate',
+// Sales → 'sales:view', Registers → 'register:manage') so non-owner roles don't see or hit
+// endpoints they can't use. Tracked in the project status doc (§10 "role-based nav gating").
+
 export const NAV_GROUPS: NavGroup[] = [
   {
     items: [{ label: 'Dashboard', icon: LayoutDashboard, to: '/dashboard', enabled: true }],
