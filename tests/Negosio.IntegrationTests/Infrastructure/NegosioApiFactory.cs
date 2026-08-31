@@ -50,6 +50,10 @@ public sealed class NegosioApiFactory : WebApplicationFactory<Program>, IAsyncLi
         {
             ServerTemplate =
                 "Server=(localdb)\\MSSQLLocalDB;Trusted_Connection=True;MultipleActiveResultSets=true;TrustServerCertificate=true";
+            Console.Error.WriteLine(
+                "[NegosioApiFactory] No NEGOSIO_TEST_SQL and no Docker — falling back to (localdb)\\MSSQLLocalDB, " +
+                "which a developer may also use. Only databases provisioned by THIS run are dropped on cleanup " +
+                "(see DropProvisionedTenantDatabasesAsync); nothing else on the instance is touched.");
         }
 
         using var scope = Services.CreateScope();
@@ -59,7 +63,7 @@ public sealed class NegosioApiFactory : WebApplicationFactory<Program>, IAsyncLi
 
     public new async Task DisposeAsync()
     {
-        await DropTenantDatabasesAsync();
+        await DropProvisionedTenantDatabasesAsync();
         await DropDatabaseAsync(PlatformDatabaseName);
 
         await base.DisposeAsync();
@@ -135,35 +139,62 @@ public sealed class NegosioApiFactory : WebApplicationFactory<Program>, IAsyncLi
         return builder.ConnectionString;
     }
 
-    private async Task DropTenantDatabasesAsync()
+    /// <summary>
+    /// Drop every tenant database THIS test run provisioned — the names are read from this run's own
+    /// platform database (<see cref="PlatformDatabaseName"/>.<c>TenantDatabases</c>), never from a
+    /// blind <c>sys.databases</c> scan. On a shared LocalDB instance a scan for
+    /// <c>Negosio.%</c> would also match a developer's real tenant databases and drop them.
+    /// Best-effort and idempotent; safe to call from both per-test reset and factory teardown.
+    /// </summary>
+    public async Task DropProvisionedTenantDatabasesAsync()
     {
+        var names = new List<string>();
         try
         {
-            await using var connection = new SqlConnection(MasterConnectionString);
-            await connection.OpenAsync();
-
-            var names = new List<string>();
-            await using (var query = connection.CreateCommand())
+            await using var platform = new SqlConnection(PlatformConnectionString);
+            await platform.OpenAsync();
+            await using var read = platform.CreateCommand();
+            read.CommandText = "SELECT DatabaseName FROM TenantDatabases;";
+            await using var reader = await read.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
             {
-                query.CommandText = "SELECT name FROM sys.databases WHERE name LIKE 'Negosio.%';";
-                await using var reader = await query.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    names.Add(reader.GetString(0));
-                }
-            }
-
-            foreach (var name in names)
-            {
-                await using var drop = connection.CreateCommand();
-                drop.CommandText =
-                    $"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{name}];";
-                await drop.ExecuteNonQueryAsync();
+                names.Add(reader.GetString(0));
             }
         }
         catch
         {
-            // Best-effort cleanup.
+            // Platform DB not there / not migrated yet -> this run provisioned nothing.
+            return;
+        }
+
+        if (names.Count == 0)
+        {
+            return;
+        }
+
+        await using var master = new SqlConnection(MasterConnectionString);
+        await master.OpenAsync();
+        foreach (var name in names)
+        {
+            // Defence in depth: the provisioner only ever creates 'Negosio.<...>' names, and these
+            // rows are ours, but the name is interpolated into DDL below — never touch anything else.
+            if (!name.StartsWith("Negosio.", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            try
+            {
+                await using var drop = master.CreateCommand();
+                drop.CommandText =
+                    $"IF DB_ID(N'{name}') IS NOT NULL BEGIN " +
+                    $"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{name}]; END";
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch
+            {
+                // Best-effort cleanup.
+            }
         }
     }
 

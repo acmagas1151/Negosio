@@ -1,7 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Negosio.Application.Abstractions;
@@ -34,32 +33,15 @@ public abstract class IntegrationTest : IAsyncLifetime
 
     public Task DisposeAsync() => Task.CompletedTask;
 
-    /// <summary>Clears the platform database and drops every tenant database provisioned by earlier tests.</summary>
+    /// <summary>
+    /// Clears the platform database and drops the tenant databases provisioned by earlier tests.
+    /// Only databases this test run created are dropped (tracked in this run's platform DB) — never a
+    /// blind <c>sys.databases</c> scan, which on a shared LocalDB instance would also match and drop a
+    /// developer's real tenant databases.
+    /// </summary>
     protected async Task ResetDatabaseAsync()
     {
-        await using (var connection = new SqlConnection(Factory.MasterConnectionString))
-        {
-            await connection.OpenAsync();
-
-            var names = new List<string>();
-            await using (var query = connection.CreateCommand())
-            {
-                // Tenant DBs are 'Negosio.<...>'; the dot is a literal in LIKE, so this excludes the platform DBs.
-                query.CommandText = "SELECT name FROM sys.databases WHERE name LIKE 'Negosio.%';";
-                await using var reader = await query.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    names.Add(reader.GetString(0));
-                }
-            }
-
-            foreach (var name in names)
-            {
-                await using var drop = connection.CreateCommand();
-                drop.CommandText = $"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{name}];";
-                await drop.ExecuteNonQueryAsync();
-            }
-        }
+        await Factory.DropProvisionedTenantDatabasesAsync();
 
         using var scope = Factory.Services.CreateScope();
         var platform = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
