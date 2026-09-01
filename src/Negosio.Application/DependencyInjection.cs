@@ -44,6 +44,7 @@ public static class DependencyInjection
         services.AddScoped<IRegisterService, RegisterService>();
         services.AddScoped<IRegisterSessionService, RegisterSessionService>();
         services.AddScoped<IPosCatalogService, PosCatalogService>();
+        services.AddScoped<IPosContextService, PosContextService>();
         services.AddScoped<ICheckoutService, CheckoutService>();
         services.AddScoped<SaleQueryService>();
         services.AddScoped<ISaleQueryService>(sp => sp.GetRequiredService<SaleQueryService>());
