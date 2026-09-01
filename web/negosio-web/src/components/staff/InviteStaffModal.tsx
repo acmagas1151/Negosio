@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy } from 'lucide-react'
 import { ApiError } from '../../api/client'
+import { branchesApi } from '../../api/branches'
 import { staffApi } from '../../api/staff'
 import type { StaffInvitationResultDto, UserRole } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
 import { fieldErrorsFrom } from '../../lib/formErrors'
-import { assignableRoles, roleLabel } from '../../lib/roles'
+import { assignableRoles, isBranchScoped, roleLabel } from '../../lib/roles'
 import { Button, Callout, Modal, Select, TextField, useToast } from '../ui'
 
 interface Props {
@@ -22,24 +23,37 @@ export function InviteStaffModal({ open, onClose }: Props) {
 
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<UserRole>(roles[0] ?? 'Cashier')
+  const [branchId, setBranchId] = useState('')
   const [emailError, setEmailError] = useState('')
+  const [branchError, setBranchError] = useState('')
   const [formError, setFormError] = useState('')
   const [result, setResult] = useState<StaffInvitationResultDto | null>(null)
   const [copied, setCopied] = useState(false)
+
+  const branchesQuery = useQuery({
+    queryKey: ['branches', 'active'],
+    queryFn: () => branchesApi.list(),
+    enabled: open,
+  })
+  const branches = branchesQuery.data ?? []
+  const needsBranch = isBranchScoped(role)
 
   useEffect(() => {
     if (!open) return
     // oxlint-disable-next-line set-state-in-effect
     setEmail('')
     setRole(roles[0] ?? 'Cashier')
+    setBranchId('')
     setEmailError('')
+    setBranchError('')
     setFormError('')
     setResult(null)
     setCopied(false)
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const mutation = useMutation({
-    mutationFn: () => staffApi.invite({ email: email.trim(), role }),
+    mutationFn: () =>
+      staffApi.invite({ email: email.trim(), role, branchId: needsBranch ? branchId : null }),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['staff'] })
       toast('success', `Invitation sent to ${data.email}`)
@@ -65,9 +79,14 @@ export function InviteStaffModal({ open, onClose }: Props) {
     e.preventDefault()
     if (mutation.isPending) return
     setEmailError('')
+    setBranchError('')
     setFormError('')
     if (!email.trim()) {
       setEmailError('Enter an email address.')
+      return
+    }
+    if (needsBranch && !branchId) {
+      setBranchError('Choose a branch for this role.')
       return
     }
     mutation.mutate()
@@ -153,6 +172,22 @@ export function InviteStaffModal({ open, onClose }: Props) {
               </option>
             ))}
           </Select>
+          {needsBranch && (
+            <Select
+              label="Branch"
+              name="branchId"
+              value={branchId}
+              onChange={(e) => setBranchId(e.target.value)}
+              error={branchError || undefined}
+            >
+              <option value="">Select a branch</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </Select>
+          )}
           <p className="text-[13px] text-text-muted">
             They&rsquo;ll choose their own name and password when they accept.
           </p>

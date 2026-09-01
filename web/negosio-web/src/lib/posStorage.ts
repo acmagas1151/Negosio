@@ -21,6 +21,7 @@ export interface CartLine {
 const CART_PREFIX = 'negosio.pos.cart.v1.'
 const ATTEMPT_PREFIX = 'negosio.pos.attempt.v1.'
 const REGISTER_PREFIX = 'negosio.pos.register.v1.'
+const BRANCH_PREFIX = 'negosio.pos.branch.v1.'
 
 /** tenant/branch/register/session — cart and checkout-attempt id are both scoped to this. */
 const scope = (c: TerminalCtx) =>
@@ -98,4 +99,10 @@ export const posStorage = {
     safeGet(`${REGISTER_PREFIX}${c.tenantId}/${c.branchId}`),
   writeRegister: (c: { tenantId: string; branchId: string }, registerId: string) =>
     safeSet(`${REGISTER_PREFIX}${c.tenantId}/${c.branchId}`, registerId),
+
+  /** Last branch an all-branch operator (Owner/Admin) chose for the POS. */
+  readBranch: (c: { tenantId: string }) => safeGet(`${BRANCH_PREFIX}${c.tenantId}`),
+  writeBranch: (c: { tenantId: string }, branchId: string) =>
+    safeSet(`${BRANCH_PREFIX}${c.tenantId}`, branchId),
+  clearBranch: (c: { tenantId: string }) => safeRemove(`${BRANCH_PREFIX}${c.tenantId}`),
 }

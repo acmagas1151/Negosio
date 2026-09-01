@@ -18,9 +18,17 @@ public class StaffTests : IntegrationTest
 
     // ---- helpers -------------------------------------------------------------
 
-    private async Task<StaffInvitationResultDto> InviteAsync(string email, UserRole role, HttpStatusCode expected = HttpStatusCode.Created)
+    private async Task<StaffInvitationResultDto> InviteAsync(
+        string email, UserRole role, HttpStatusCode expected = HttpStatusCode.Created, Guid? branchId = null)
     {
-        var response = await Client.PostAsJsonAsync("/api/staff/invitations", new InviteStaffRequest(email, role.ToString()));
+        // Branch-scoped roles need a branch — default to the tenant's sole branch.
+        if (branchId is null && role is not (UserRole.Owner or UserRole.Admin))
+        {
+            branchId = await InScopeAsync(db => db.Branches.Select(b => b.Id).FirstAsync());
+        }
+
+        var response = await Client.PostAsJsonAsync("/api/staff/invitations",
+            new InviteStaffRequest(email, role.ToString(), branchId?.ToString()));
         response.StatusCode.Should().Be(expected);
         return expected == HttpStatusCode.Created
             ? (await response.Content.ReadFromJsonAsync<StaffInvitationResultDto>(TestJson.Options))!
@@ -176,12 +184,13 @@ public class StaffTests : IntegrationTest
     [Fact]
     public async Task Admin_can_manage_staff_but_never_creates_an_Admin_or_Owner()
     {
-        await RegisterLoginAndAuthorizeAsync();
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
         var adminToken = await AddTenantUserTokenAsync("admin@example.com", UserRole.Admin);
         Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
 
         // Admin can invite a Cashier
-        (await Client.PostAsJsonAsync("/api/staff/invitations", new InviteStaffRequest("c@example.com", "Cashier")))
+        (await Client.PostAsJsonAsync("/api/staff/invitations", new InviteStaffRequest("c@example.com", "Cashier", mainId.ToString())))
             .StatusCode.Should().Be(HttpStatusCode.Created);
 
         // Admin cannot invite an Admin

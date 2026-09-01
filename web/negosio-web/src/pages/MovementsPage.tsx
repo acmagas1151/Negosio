@@ -49,7 +49,7 @@ const TYPE_OPTIONS: StockMovementType[] = [
 export default function MovementsPage() {
   const q = usePagedQuery<Filters>({ defaultFilters: DEFAULT_FILTERS })
 
-  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: branchesApi.list })
+  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: () => branchesApi.list() })
   const productsQuery = useQuery({
     queryKey: ['products', 'inventory-picker'],
     queryFn: () =>

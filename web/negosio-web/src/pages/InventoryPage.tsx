@@ -34,7 +34,7 @@ export default function InventoryPage() {
   const [adjustRow, setAdjustRow] = useState<InventoryRowDto | null>(null)
   const [openingOpen, setOpeningOpen] = useState(false)
 
-  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: branchesApi.list })
+  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: () => branchesApi.list() })
   const categoriesQuery = useQuery({
     queryKey: ['categories', 'all-active'],
     queryFn: categoriesApi.listAllActive,

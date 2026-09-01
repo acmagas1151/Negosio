@@ -59,6 +59,14 @@ public sealed class StaffController : ControllerBase
         CancellationToken cancellationToken)
         => Ok(await _staff.ChangeRoleAsync(id, request, cancellationToken));
 
+    [HttpPost("{id:guid}/branch")]
+    [ProducesResponseType(typeof(StaffMemberDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<StaffMemberDto>> ChangeBranch(
+        Guid id,
+        [FromBody] ChangeStaffBranchRequest request,
+        CancellationToken cancellationToken)
+        => Ok(await _staff.ChangeBranchAsync(id, request, cancellationToken));
+
     [HttpPost("{id:guid}/deactivate")]
     [ProducesResponseType(typeof(StaffMemberDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<StaffMemberDto>> Deactivate(Guid id, CancellationToken cancellationToken)

@@ -24,6 +24,16 @@ public sealed class ChangeStaffRoleRequestValidator : AbstractValidator<ChangeSt
     }
 }
 
+public sealed class ChangeStaffBranchRequestValidator : AbstractValidator<ChangeStaffBranchRequest>
+{
+    public ChangeStaffBranchRequestValidator()
+    {
+        RuleFor(x => x.BranchId)
+            .NotEmpty().WithMessage("A branch is required.")
+            .Must(v => Guid.TryParse(v, out _)).WithMessage("Enter a valid branch.");
+    }
+}
+
 public sealed class AcceptInvitationRequestValidator : AbstractValidator<AcceptInvitationRequest>
 {
     public AcceptInvitationRequestValidator()

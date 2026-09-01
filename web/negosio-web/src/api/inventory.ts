@@ -2,7 +2,6 @@ import { apiRequest } from './client'
 import { qs } from './query-string'
 import type {
   AdjustInventoryRequest,
-  BranchDto,
   InventoryListParams,
   InventoryRowDto,
   MovementListParams,
@@ -10,10 +9,8 @@ import type {
   StockMovementDto,
 } from './types'
 
-export const branchesApi = {
-  /** The current tenant's active branches — authoritative source for branch selectors. */
-  list: () => apiRequest<BranchDto[]>('/api/branches'),
-}
+// Kept here for import-site compatibility; the implementation lives in ./branches.
+export { branchesApi } from './branches'
 
 export const inventoryApi = {
   list: (params: InventoryListParams) =>

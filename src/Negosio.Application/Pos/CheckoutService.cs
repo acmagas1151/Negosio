@@ -2,6 +2,7 @@ using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Application.Inventory;
 using Negosio.Domain.Entities;
@@ -16,6 +17,7 @@ public sealed class CheckoutService : ICheckoutService
     private readonly IValidator<CheckoutRequest> _validator;
     private readonly IDocumentNumberService _documentNumbers;
     private readonly IInventoryPosting _inventory;
+    private readonly IBranchAccessResolver _branchAccess;
     private readonly ILogger<CheckoutService> _logger;
 
     public CheckoutService(
@@ -24,6 +26,7 @@ public sealed class CheckoutService : ICheckoutService
         IValidator<CheckoutRequest> validator,
         IDocumentNumberService documentNumbers,
         IInventoryPosting inventory,
+        IBranchAccessResolver branchAccess,
         ILogger<CheckoutService> logger)
     {
         _db = db;
@@ -31,6 +34,7 @@ public sealed class CheckoutService : ICheckoutService
         _validator = validator;
         _documentNumbers = documentNumbers;
         _inventory = inventory;
+        _branchAccess = branchAccess;
         _logger = logger;
     }
 
@@ -53,9 +57,9 @@ public sealed class CheckoutService : ICheckoutService
         }
 
         // 2. Validate branch + register session.
+        var branchId = await _branchAccess.ResolveTargetBranchAsync(request.BranchId, cancellationToken: cancellationToken);
         var branch = await _db.Branches
-            .SingleOrDefaultAsync(b => b.TenantId == tenantId && b.Id == request.BranchId, cancellationToken)
-            ?? throw new NotFoundException(ErrorCodes.BranchNotFound, "Branch not found.");
+            .SingleAsync(b => b.TenantId == tenantId && b.Id == branchId, cancellationToken);
 
         var session = await _db.RegisterSessions
             .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == request.RegisterSessionId, cancellationToken)
@@ -64,6 +68,11 @@ public sealed class CheckoutService : ICheckoutService
         if (session.BranchId != branch.Id)
         {
             throw new NotFoundException(ErrorCodes.RegisterSessionNotFound, "Register session does not belong to this branch.");
+        }
+
+        if (session.OpenedByUserId != _currentUser.UserId)
+        {
+            throw new ForbiddenAppException(ErrorCodes.SessionNotOwned, "This register session belongs to another user.");
         }
 
         if (session.Status != RegisterSessionStatus.Open)

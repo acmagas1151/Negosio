@@ -65,6 +65,7 @@ if (app.Environment.IsDevelopment())
 app.UseCors();
 app.UseAuthentication();
 app.UseMiddleware<TenantResolutionMiddleware>();
+app.UseMiddleware<BranchAccessMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();

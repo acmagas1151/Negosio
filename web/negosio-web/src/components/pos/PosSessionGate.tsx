@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { sessionsApi } from '../../api/pos'
-import type { RegisterDto } from '../../api/types'
-import { Button, Callout, TextField } from '../ui'
+import { Button, TextField } from '../ui'
 
 interface Props {
-  register: RegisterDto
+  register: { id: string; name: string }
   onOpened: () => void
   onSwitchRegister: () => void
 }
@@ -14,19 +14,18 @@ interface Props {
 export function PosSessionGate({ register, onOpened, onSwitchRegister }: Props) {
   const [openingCash, setOpeningCash] = useState('')
   const [error, setError] = useState('')
-  const [alreadyOpen, setAlreadyOpen] = useState(false)
 
   const mutation = useMutation({
     mutationFn: () => sessionsApi.open({ registerId: register.id, openingCash: Number(openingCash) }),
     onSuccess: () => onOpened(),
     onError: (err) => {
-      if (
-        err instanceof ApiError &&
-        err.status === 409 &&
-        err.code === 'REGISTER_SESSION_ALREADY_OPEN'
-      ) {
-        setAlreadyOpen(true)
-        onOpened()
+      if (err instanceof ApiError && err.status === 409 && err.code === 'REGISTER_SESSION_ALREADY_OPEN') {
+        // Someone took this register first — send the operator back to re-pick.
+        onSwitchRegister()
+        return
+      }
+      if (err instanceof ApiError && err.status === 409 && err.code === 'CASHIER_SESSION_OPEN') {
+        setError('You already have an open session on another register. Continue or close it first.')
         return
       }
       setError(err instanceof Error ? err.message : 'Could not open the session.')
@@ -53,10 +52,6 @@ export function PosSessionGate({ register, onOpened, onSwitchRegister }: Props) 
         </p>
       </div>
 
-      {alreadyOpen && (
-        <Callout tone="warning">This register already has an open session — loading it now.</Callout>
-      )}
-
       <form onSubmit={submit} className="space-y-4">
         <TextField
           label="Opening cash"
@@ -74,13 +69,18 @@ export function PosSessionGate({ register, onOpened, onSwitchRegister }: Props) 
         </Button>
       </form>
 
-      <button
-        type="button"
-        onClick={onSwitchRegister}
-        className="text-[13px] font-semibold text-primary-700 hover:underline"
-      >
-        Choose a different register
-      </button>
+      <div className="flex items-center justify-between border-t border-border pt-3 text-[13px]">
+        <button
+          type="button"
+          onClick={onSwitchRegister}
+          className="font-semibold text-primary-700 hover:underline"
+        >
+          ← Back to registers
+        </button>
+        <Link to="/dashboard" className="font-semibold text-text-muted hover:underline">
+          Exit POS
+        </Link>
+      </div>
     </div>
   )
 }

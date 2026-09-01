@@ -43,6 +43,12 @@ public sealed class RegisterSessionConfiguration : IEntityTypeConfiguration<Regi
             .HasFilter($"[Status] = {(int)RegisterSessionStatus.Open}")
             .HasDatabaseName("IX_RegisterSessions_RegisterId_Open");
 
+        // At most one OPEN session per user (a cashier can't hold two tills at once).
+        builder.HasIndex(s => new { s.TenantId, s.OpenedByUserId })
+            .IsUnique()
+            .HasFilter($"[Status] = {(int)RegisterSessionStatus.Open}")
+            .HasDatabaseName("IX_RegisterSessions_OpenedByUserId_Open");
+
         builder.HasIndex(s => new { s.TenantId, s.RegisterId, s.Status })
             .HasDatabaseName("IX_RegisterSessions_TenantId_RegisterId_Status");
         builder.HasIndex(s => new { s.TenantId, s.BranchId, s.OpenedAtUtc })

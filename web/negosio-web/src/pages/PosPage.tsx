@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
-import { branchesApi } from '../api/inventory'
 import { ApiError } from '../api/client'
-import { registersApi, sessionsApi } from '../api/pos'
+import { posApi, sessionsApi } from '../api/pos'
 import { useAuth } from '../auth/AuthContext'
 import { useCan } from '../lib/useCan'
 import { posStorage } from '../lib/posStorage'
+import { BranchPicker } from '../components/pos/BranchPicker'
 import { CloseSessionModal } from '../components/pos/CloseSessionModal'
 import { PosSessionGate } from '../components/pos/PosSessionGate'
 import { PosShell } from '../components/pos/PosShell'
@@ -41,42 +41,43 @@ export default function PosPage() {
   const navigate = useNavigate()
   const canOperate = useCan('pos:operate')
 
-  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: branchesApi.list })
-  const branch = branchesQuery.data?.[0]
+  const contextQuery = useQuery({ queryKey: ['pos', 'context'], queryFn: posApi.context })
+
+  const [branchOverride, setBranchOverride] = useState<string | null>(null)
+  const [registerId, setRegisterId] = useState<string | null>(null)
+  const [skipGate, setSkipGate] = useState(false)
+  const [closeOpen, setCloseOpen] = useState(false)
+  const [pickerNotice, setPickerNotice] = useState<string | null>(null)
+
+  const ctx = contextQuery.data
+  const persistedBranch =
+    user && ctx?.canPickBranch ? posStorage.readBranch({ tenantId: user.tenantId }) : null
+  const persistedBranchValid =
+    persistedBranch && ctx?.branches.some((b) => b.id === persistedBranch) ? persistedBranch : null
+  const branchId: string | null = ctx
+    ? ctx.canPickBranch
+      ? (branchOverride ?? persistedBranchValid ?? null)
+      : ctx.branchId
+    : null
+  const branchName = ctx?.branches.find((b) => b.id === branchId)?.name ?? ctx?.branchName ?? null
+
+  const pickBranch = (id: string) => {
+    if (user) posStorage.writeBranch({ tenantId: user.tenantId }, id)
+    setBranchOverride(id)
+    setRegisterId(null)
+  }
+  const switchBranch = () => {
+    if (user) posStorage.clearBranch({ tenantId: user.tenantId })
+    setBranchOverride(null)
+    setRegisterId(null)
+  }
 
   const registersQuery = useQuery({
-    queryKey: ['registers', 'active-for-pos'],
-    queryFn: () => registersApi.list({ isActive: true, pageSize: 100 }),
-    enabled: !!branch,
+    queryKey: ['pos', 'registers', branchId],
+    queryFn: () => posApi.registers(branchId ?? undefined),
+    enabled: !!branchId,
   })
-  const activeRegisters = registersQuery.data?.items ?? []
-
-  // Explicit user choice only; `null` = fall back to derivation.
-  const [override, setOverride] = useState<string | null>(null)
-  // The user asked to re-pick: suppress the persisted / sole-register fallback until they choose.
-  const [forcePicker, setForcePicker] = useState(false)
-  const [closeOpen, setCloseOpen] = useState(false)
-
-  const persisted =
-    branch && user
-      ? posStorage.readRegister({ tenantId: user.tenantId, branchId: branch.id })
-      : null
-  const persistedValid =
-    persisted && activeRegisters.some((r) => r.id === persisted) ? persisted : null
-
-  const registerId: string | null = forcePicker
-    ? override
-    : (override ?? persistedValid ?? (activeRegisters.length === 1 ? activeRegisters[0].id : null))
-
-  const pickRegister = (id: string) => {
-    if (branch && user) posStorage.writeRegister({ tenantId: user.tenantId, branchId: branch.id }, id)
-    setOverride(id)
-    setForcePicker(false)
-  }
-  const askForDifferentRegister = () => {
-    setOverride(null)
-    setForcePicker(true)
-  }
+  const registers = registersQuery.data ?? []
 
   const sessionQuery = useQuery({
     queryKey: ['session', 'current', registerId],
@@ -86,30 +87,67 @@ export default function PosPage() {
   })
 
   if (!canOperate) return <PosDenied />
-  if (branchesQuery.isPending || (!!branch && registersQuery.isPending)) {
-    return <PosCentered><LoadingState /></PosCentered>
-  }
-  if (!branch) {
+
+  if (contextQuery.isPending) return <PosCentered><LoadingState /></PosCentered>
+  if (contextQuery.isError) {
     return (
       <PosCentered>
-        <ErrorState message="No branch is configured for this business." />
+        <ErrorState
+          message={(contextQuery.error as Error).message}
+          onRetry={() => contextQuery.refetch()}
+        />
       </PosCentered>
     )
   }
 
-  if (!registerId) {
+  if (ctx!.canPickBranch && !branchId) {
     return (
       <PosCentered>
-        <RegisterPicker registers={activeRegisters} onPick={pickRegister} />
+        <BranchPicker branches={ctx!.branches} onPick={pickBranch} />
       </PosCentered>
     )
   }
 
-  const register = activeRegisters.find((r) => r.id === registerId)
-  if (!register) {
+  if (!branchId) {
     return (
       <PosCentered>
-        <RegisterPicker registers={activeRegisters} onPick={pickRegister} />
+        <ErrorState message="No active branch is available for the point of sale." />
+      </PosCentered>
+    )
+  }
+
+  if (registersQuery.isPending) return <PosCentered><LoadingState /></PosCentered>
+
+  const chosen = registerId ? registers.find((r) => r.id === registerId) : undefined
+  const backToRegisters = () => {
+    setRegisterId(null)
+    setSkipGate(false)
+    registersQuery.refetch()
+  }
+
+  const sessionErr = sessionQuery.error
+  // A register grabbed by someone else since the picker loaded → show the picker again with a notice.
+  const takenByAnother = sessionErr instanceof ApiError && sessionErr.status === 403
+
+  if (!registerId || !chosen || takenByAnother) {
+    return (
+      <PosCentered>
+        <RegisterPicker
+          registers={registers}
+          branchName={branchName}
+          notice={takenByAnother ? 'That register is now in use by someone else.' : pickerNotice}
+          onSelect={(id) => {
+            setPickerNotice(null)
+            setSkipGate(false)
+            setRegisterId(id)
+          }}
+          onContinue={(id) => {
+            setPickerNotice(null)
+            setSkipGate(true)
+            setRegisterId(id)
+          }}
+          onSwitchBranch={ctx!.canPickBranch ? switchBranch : undefined}
+        />
       </PosCentered>
     )
   }
@@ -120,9 +158,9 @@ export default function PosPage() {
       return (
         <PosCentered>
           <PosSessionGate
-            register={register}
+            register={chosen}
             onOpened={() => sessionQuery.refetch()}
-            onSwitchRegister={askForDifferentRegister}
+            onSwitchRegister={backToRegisters}
           />
         </PosCentered>
       )
@@ -135,6 +173,17 @@ export default function PosPage() {
   }
 
   if (sessionQuery.isPending || !sessionQuery.data) {
+    if (skipGate && sessionQuery.isFetched && !sessionQuery.data) {
+      return (
+        <PosCentered>
+          <PosSessionGate
+            register={chosen}
+            onOpened={() => sessionQuery.refetch()}
+            onSwitchRegister={backToRegisters}
+          />
+        </PosCentered>
+      )
+    }
     return <PosCentered><LoadingState /></PosCentered>
   }
 
@@ -142,15 +191,11 @@ export default function PosPage() {
 
   return (
     <>
-      <PosShell
-        session={session}
-        register={register}
-        onCloseSession={() => setCloseOpen(true)}
-      >
+      <PosShell session={session} register={chosen} onCloseSession={() => setCloseOpen(true)}>
         <PosTerminal
           tenantId={user!.tenantId}
-          branchId={branch.id}
-          registerId={register.id}
+          branchId={branchId}
+          registerId={chosen.id}
           registerSessionId={session.id}
           onCheckoutSuccess={(result) =>
             navigate(`/pos/complete/${result.saleId}`, { state: { result } })
@@ -163,7 +208,10 @@ export default function PosPage() {
         open={closeOpen}
         onClose={() => setCloseOpen(false)}
         session={session}
-        onClosed={() => sessionQuery.refetch()}
+        onClosed={() => {
+          setCloseOpen(false)
+          backToRegisters()
+        }}
       />
     </>
   )

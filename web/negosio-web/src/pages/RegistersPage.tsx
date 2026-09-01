@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Calculator } from 'lucide-react'
 import { branchesApi } from '../api/inventory'
 import { registersApi } from '../api/pos'
-import type { RegisterDto, RegisterSessionDto } from '../api/types'
+import type { RegisterDto } from '../api/types'
 import { usePagedQuery } from '../hooks/usePagedQuery'
 import { useCan } from '../lib/useCan'
 import { RegisterFormModal } from '../components/registers/RegisterFormModal'
@@ -42,7 +42,7 @@ export default function RegistersPage() {
   const [editing, setEditing] = useState<RegisterDto | null>(null)
   const [confirmTarget, setConfirmTarget] = useState<RegisterDto | null>(null)
 
-  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: branchesApi.list })
+  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: () => branchesApi.list() })
   const branches = branchesQuery.data ?? []
   const multiBranch = branches.length > 1
 
@@ -94,9 +94,7 @@ export default function RegistersPage() {
     setModalOpen(true)
   }
 
-  const targetHasOpenSession =
-    confirmTarget != null &&
-    qc.getQueryData<RegisterSessionDto>(['session', 'current', confirmTarget.id]) != null
+  const targetHasOpenSession = confirmTarget?.openSession != null
 
   const colCount = multiBranch ? (canManage ? 6 : 5) : canManage ? 5 : 4
 

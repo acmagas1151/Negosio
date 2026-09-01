@@ -26,6 +26,13 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.CreatedAtUtc).IsRequired();
         builder.Property(u => u.UpdatedAtUtc).IsRequired();
 
+        builder.Property(u => u.BranchId);
+        builder.HasOne<Branch>()
+            .WithMany()
+            .HasForeignKey(u => u.BranchId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasIndex(u => u.BranchId).HasDatabaseName("IX_Users_BranchId");
+
         // Unique within this tenant database. Global email uniqueness now lives on PlatformUserLogin.
         builder.HasIndex(u => u.Email)
             .IsUnique()

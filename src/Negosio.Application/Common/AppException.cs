@@ -90,6 +90,21 @@ public sealed class ForbiddenAppException : AppException
     }
 }
 
+/// <summary>
+/// 401 - a branch-scoped user's assigned branch is inactive, so their session may not continue.
+/// Distinct from <see cref="UnauthorizedAppException"/> so the client can react specifically.
+/// </summary>
+public sealed class BranchInactiveException : AppException
+{
+    public BranchInactiveException()
+        : base(
+            ErrorCodes.BranchInactive,
+            "Your assigned branch is currently inactive. Please contact your administrator.",
+            StatusCodes.Status401Unauthorized)
+    {
+    }
+}
+
 /// <summary>500 - provisioning a new tenant's database did not complete.</summary>
 public sealed class TenantProvisioningException : AppException
 {

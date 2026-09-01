@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Common;
 
 namespace Negosio.Application.Pos;
@@ -8,11 +9,13 @@ public sealed class PosCatalogService : IPosCatalogService
 {
     private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
+    private readonly IBranchAccessResolver _branchAccess;
 
-    public PosCatalogService(ITenantDbContext db, ICurrentUser currentUser)
+    public PosCatalogService(ITenantDbContext db, ICurrentUser currentUser, IBranchAccessResolver branchAccess)
     {
         _db = db;
         _currentUser = currentUser;
+        _branchAccess = branchAccess;
     }
 
     private sealed record Row(
@@ -22,8 +25,7 @@ public sealed class PosCatalogService : IPosCatalogService
     public async Task<PagedResult<PosCatalogItemDto>> SearchAsync(PosCatalogQuery query, CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
-        await RequireBranchAsync(tenantId, query.BranchId, cancellationToken);
-        var branchId = query.BranchId;
+        var branchId = await _branchAccess.ResolveTargetBranchAsync(query.BranchId, cancellationToken: cancellationToken);
 
         var q = from v in _db.ProductVariants.AsNoTracking().Where(v => v.TenantId == tenantId && v.IsActive)
                 join p in _db.Products.Where(p => p.IsActive) on v.ProductId equals p.Id
@@ -56,7 +58,7 @@ public sealed class PosCatalogService : IPosCatalogService
     public async Task<PosCatalogItemDto> BarcodeLookupAsync(Guid branchId, string barcode, CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
-        await RequireBranchAsync(tenantId, branchId, cancellationToken);
+        branchId = await _branchAccess.ResolveTargetBranchAsync(branchId, cancellationToken: cancellationToken);
 
         var trimmed = (barcode ?? string.Empty).Trim();
 
@@ -87,15 +89,6 @@ public sealed class PosCatalogService : IPosCatalogService
         r.QuantityAvailable,
         r.TrackInventory,
         !r.TrackInventory || r.QuantityAvailable > 0m);
-
-    private async Task RequireBranchAsync(Guid tenantId, Guid branchId, CancellationToken cancellationToken)
-    {
-        var exists = await _db.Branches.AnyAsync(b => b.TenantId == tenantId && b.Id == branchId, cancellationToken);
-        if (!exists)
-        {
-            throw new NotFoundException(ErrorCodes.BranchNotFound, "Branch not found.");
-        }
-    }
 
     private Guid RequireTenant()
     {

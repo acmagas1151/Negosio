@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Domain.Enums;
 
@@ -27,11 +28,13 @@ public sealed class DashboardService : IDashboardService
 {
     private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
+    private readonly IBranchAccessResolver _branchAccess;
 
-    public DashboardService(ITenantDbContext db, ICurrentUser currentUser)
+    public DashboardService(ITenantDbContext db, ICurrentUser currentUser, IBranchAccessResolver branchAccess)
     {
         _db = db;
         _currentUser = currentUser;
+        _branchAccess = branchAccess;
     }
 
     public async Task<DashboardResponse> GetAsync(CancellationToken cancellationToken = default)
@@ -49,17 +52,25 @@ public sealed class DashboardService : IDashboardService
             .SingleOrDefaultAsync(p => p.Id == tenantId, cancellationToken)
             ?? throw new NotFoundException("Tenant not found.");
 
-        var branchCount = await _db.Branches.CountAsync(b => b.TenantId == tenantId, cancellationToken);
+        // Branch-scoped roles see only their assigned branch's operational picture.
+        var branchFilter = await _branchAccess.ResolveListFilterAsync(null, cancellationToken);
+
+        var branchCount = branchFilter is null
+            ? await _db.Branches.CountAsync(b => b.TenantId == tenantId && b.IsActive, cancellationToken)
+            : 1;
         var userCount = await _db.Users.CountAsync(u => u.TenantId == tenantId, cancellationToken);
         var totalProducts = await _db.Products.CountAsync(p => p.TenantId == tenantId && p.IsActive, cancellationToken);
         var activeCategories = await _db.Categories.CountAsync(c => c.TenantId == tenantId && c.IsActive, cancellationToken);
         var lowStockItems = await _db.BranchInventories
-            .CountAsync(i => i.TenantId == tenantId && i.QuantityOnHand <= i.ReorderLevel, cancellationToken);
+            .CountAsync(i => i.TenantId == tenantId
+                && (branchFilter == null || i.BranchId == branchFilter)
+                && i.QuantityOnHand <= i.ReorderLevel, cancellationToken);
 
         // Today's sales: SQL aggregates only, no row materialisation.
         var startOfDayUtc = DateTime.UtcNow.Date;
         var todaysSalesQuery = _db.Sales.Where(s =>
             s.TenantId == tenantId
+            && (branchFilter == null || s.BranchId == branchFilter)
             && (s.Status == SaleStatus.Completed || s.Status == SaleStatus.PartiallyRefunded)
             && s.CompletedAtUtc >= startOfDayUtc);
 

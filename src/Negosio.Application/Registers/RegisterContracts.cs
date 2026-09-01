@@ -3,6 +3,13 @@ using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Registers;
 
+public sealed record RegisterOpenSessionDto(
+    Guid SessionId,
+    Guid OpenedByUserId,
+    string OpenedByName,
+    DateTime OpenedAtUtc,
+    decimal OpeningCash);
+
 public sealed record RegisterDto(
     Guid Id,
     Guid BranchId,
@@ -11,7 +18,8 @@ public sealed record RegisterDto(
     string Code,
     bool IsActive,
     DateTime CreatedAtUtc,
-    DateTime UpdatedAtUtc);
+    DateTime UpdatedAtUtc,
+    RegisterOpenSessionDto? OpenSession = null);
 
 public sealed record CreateRegisterRequest(Guid BranchId, string Name, string Code);
 
@@ -60,6 +68,9 @@ public interface IRegisterSessionService
     Task<RegisterSessionDto> OpenAsync(OpenRegisterSessionRequest request, CancellationToken cancellationToken = default);
 
     Task<RegisterSessionDto> CloseAsync(Guid sessionId, CloseRegisterSessionRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>Owner/Admin only — close a session owned by someone else (same reconciliation).</summary>
+    Task<RegisterSessionDto> ForceCloseAsync(Guid sessionId, CloseRegisterSessionRequest request, CancellationToken cancellationToken = default);
 
     Task<RegisterSessionDto> GetCurrentAsync(Guid? registerId, Guid? branchId, CancellationToken cancellationToken = default);
 }

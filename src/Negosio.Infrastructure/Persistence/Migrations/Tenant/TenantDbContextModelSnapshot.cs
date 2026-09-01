@@ -503,6 +503,11 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                         .HasDatabaseName("IX_RegisterSessions_RegisterId_Open")
                         .HasFilter("[Status] = 1");
 
+                    b.HasIndex("TenantId", "OpenedByUserId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_RegisterSessions_OpenedByUserId_Open")
+                        .HasFilter("[Status] = 1");
+
                     b.HasIndex("TenantId", "BranchId", "OpenedAtUtc")
                         .HasDatabaseName("IX_RegisterSessions_TenantId_BranchId_OpenedAtUtc");
 
@@ -591,12 +596,12 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                         .IsUnique()
                         .HasDatabaseName("IX_Sales_TenantId_ClientRequestId");
 
-                    b.HasIndex("TenantId", "SaleNumber")
-                        .IsUnique()
-                        .HasDatabaseName("IX_Sales_TenantId_SaleNumber");
-
                     b.HasIndex("TenantId", "BranchId", "CreatedAtUtc")
                         .HasDatabaseName("IX_Sales_TenantId_BranchId_CreatedAtUtc");
+
+                    b.HasIndex("TenantId", "BranchId", "SaleNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Sales_TenantId_BranchId_SaleNumber");
 
                     b.HasIndex("TenantId", "CreatedByUserId", "CreatedAtUtc")
                         .HasDatabaseName("IX_Sales_TenantId_CreatedByUserId_CreatedAtUtc");
@@ -745,15 +750,15 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
 
                     b.HasIndex("SaleId");
 
-                    b.HasIndex("TenantId", "ReturnNumber")
-                        .IsUnique()
-                        .HasDatabaseName("IX_SaleReturns_TenantId_ReturnNumber");
-
                     b.HasIndex("TenantId", "SaleId")
                         .HasDatabaseName("IX_SaleReturns_TenantId_SaleId");
 
                     b.HasIndex("TenantId", "BranchId", "CreatedAtUtc")
                         .HasDatabaseName("IX_SaleReturns_TenantId_BranchId_CreatedAtUtc");
+
+                    b.HasIndex("TenantId", "BranchId", "ReturnNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_SaleReturns_TenantId_BranchId_ReturnNumber");
 
                     b.ToTable("SaleReturns", (string)null);
                 });
@@ -909,6 +914,9 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                     b.Property<Guid>("Id")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("BranchId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
@@ -940,6 +948,9 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                         .HasColumnType("datetime2");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BranchId")
+                        .HasDatabaseName("IX_Users_BranchId");
 
                     b.HasIndex("Email")
                         .IsUnique()
@@ -1090,6 +1101,14 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                         .HasForeignKey("ProductVariantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Negosio.Domain.Entities.User", b =>
+                {
+                    b.HasOne("Negosio.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Negosio.Domain.Entities.Product", b =>

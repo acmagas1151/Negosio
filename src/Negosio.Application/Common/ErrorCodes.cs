@@ -69,4 +69,12 @@ public static class ErrorCodes
     public const string StaffAlreadyActive = "STAFF_ALREADY_ACTIVE";
     public const string StaffAlreadyDeactivated = "STAFF_ALREADY_DEACTIVATED";
     public const string SessionStale = "SESSION_STALE";                  // JWT role/active state no longer matches — sign in again
+
+    // ---- Phase 5: Branch management & branch-scoped access ----
+    public const string LastActiveBranch = "LAST_ACTIVE_BRANCH";         // cannot deactivate the tenant's last active branch
+    public const string BranchInactive = "BRANCH_INACTIVE";              // assigned / target branch is inactive
+    public const string BranchForbidden = "BRANCH_FORBIDDEN";            // branch-scoped user targeted a branch that is not theirs
+    public const string SessionNotOwned = "SESSION_NOT_OWNED";           // operating / closing another user's register session
+    public const string CashierSessionOpen = "CASHIER_SESSION_OPEN";     // user already has an open register session
+    public const string StaffHasOpenRegisterSession = "STAFF_HAS_OPEN_REGISTER_SESSION"; // cannot reassign while a session is open
 }

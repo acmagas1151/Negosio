@@ -6,14 +6,32 @@ import { formatMoney } from '../../lib/format'
 import { cn } from '../../lib/cn'
 import { Button, Callout, Modal, TextField } from '../ui'
 
+/** Just enough of a session to reconcile + close it. RegisterSessionDto satisfies this. */
+interface SessionLike {
+  id: string
+  registerName: string
+  openingCash: number
+}
+
 interface Props {
   open: boolean
   onClose: () => void
-  session: RegisterSessionDto | null
+  session: SessionLike | null
   onClosed: (session: RegisterSessionDto) => void
+  /** 'force' = Owner/Admin closing another user's session (same reconciliation). */
+  variant?: 'self' | 'force'
+  openedByName?: string
 }
 
-export function CloseSessionModal({ open, onClose, session, onClosed }: Props) {
+export function CloseSessionModal({
+  open,
+  onClose,
+  session,
+  onClosed,
+  variant = 'self',
+  openedByName,
+}: Props) {
+  const isForce = variant === 'force'
   const [closingCash, setClosingCash] = useState('')
   const [error, setError] = useState('')
   const [result, setResult] = useState<RegisterSessionDto | null>(null)
@@ -27,7 +45,10 @@ export function CloseSessionModal({ open, onClose, session, onClosed }: Props) {
   }, [open])
 
   const mutation = useMutation({
-    mutationFn: () => sessionsApi.close(session!.id, { closingCash: Number(closingCash) }),
+    mutationFn: () =>
+      (isForce ? sessionsApi.forceClose : sessionsApi.close)(session!.id, {
+        closingCash: Number(closingCash),
+      }),
     onSuccess: (closed) => setResult(closed),
     onError: (err) => setError(err instanceof Error ? err.message : 'Could not close the session.'),
   })
@@ -53,7 +74,7 @@ export function CloseSessionModal({ open, onClose, session, onClosed }: Props) {
     <Modal
       open={open}
       onClose={onClose}
-      title="Close register session"
+      title={isForce ? `Force close ${session.registerName}` : 'Close register session'}
       footer={
         result ? (
           <Button
@@ -70,8 +91,13 @@ export function CloseSessionModal({ open, onClose, session, onClosed }: Props) {
             <Button variant="secondary" size="sm" onClick={onClose} disabled={mutation.isPending}>
               Cancel
             </Button>
-            <Button size="sm" onClick={submit} loading={mutation.isPending}>
-              Close session
+            <Button
+              size="sm"
+              variant={isForce ? 'destructive' : 'primary'}
+              onClick={submit}
+              loading={mutation.isPending}
+            >
+              {isForce ? 'Force close session' : 'Close session'}
             </Button>
           </>
         )
@@ -102,7 +128,17 @@ export function CloseSessionModal({ open, onClose, session, onClosed }: Props) {
           <p className="mb-4 text-[13px] text-text-muted">
             Register: <span className="font-medium text-text-secondary">{session.registerName}</span>{' '}
             · opened with {formatMoney(session.openingCash)}
+            {isForce && openedByName ? ` by ${openedByName}` : ''}
           </p>
+          {isForce && (
+            <div className="mb-3">
+              <Callout tone="warning">
+                This session belongs to {openedByName ?? 'another user'}. Counting the drawer and
+                force closing releases the register; the session stays on record under its original
+                operator.
+              </Callout>
+            </div>
+          )}
           <TextField
             label="Counted cash in drawer"
             name="closingCash"

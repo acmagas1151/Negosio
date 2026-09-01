@@ -72,6 +72,9 @@ namespace Negosio.Infrastructure.Persistence.Migrations.PlatformDb
                     b.Property<DateTime?>("AcceptedAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<Guid?>("BranchId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 

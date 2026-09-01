@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Building2,
   Calculator,
   ClipboardList,
   History,
@@ -58,19 +59,22 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'POS', icon: ShoppingCart, to: '/pos', enabled: true, capability: 'pos:operate' },
       {
+        // Register *management*. Cashiers choose a register from the POS flow, not here.
         label: 'Registers',
         icon: Calculator,
         to: '/registers',
         enabled: true,
-        capability: 'pos:operate',
+        capability: 'register:manage',
       },
       { label: 'Sales', icon: ClipboardList, to: '/sales', enabled: true, capability: 'sales:view' },
     ],
   },
   {
     items: [
-      { label: 'Reports', icon: BarChart3, enabled: false },
+      // Placeholder — hidden from operational-only roles (Cashier) until Reporting ships.
+      { label: 'Reports', icon: BarChart3, enabled: false, capability: 'register:manage' },
       { label: 'Staff', icon: Users, to: '/staff', enabled: true, capability: 'staff:manage' },
+      { label: 'Branches', icon: Building2, to: '/branches', enabled: true, capability: 'branch:manage' },
       {
         label: 'Settings',
         icon: Settings,

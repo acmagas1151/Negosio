@@ -44,7 +44,15 @@ public sealed class RegisterSessionService : IRegisterSessionService
             .AnyAsync(s => s.TenantId == tenantId && s.RegisterId == register.Id && s.Status == RegisterSessionStatus.Open, cancellationToken);
         if (alreadyOpen)
         {
-            throw new ConflictException(ErrorCodes.RegisterSessionAlreadyOpen, "This register already has an open session.");
+            throw new ConflictException(ErrorCodes.RegisterSessionAlreadyOpen, "This register is already in use.");
+        }
+
+        var mineOpen = await _db.RegisterSessions
+            .AnyAsync(s => s.TenantId == tenantId && s.OpenedByUserId == _currentUser.UserId && s.Status == RegisterSessionStatus.Open, cancellationToken);
+        if (mineOpen)
+        {
+            throw new ConflictException(ErrorCodes.CashierSessionOpen,
+                "You already have an open register session. Continue or close it first.");
         }
 
         var session = RegisterSession.Open(tenantId, register.BranchId, register.Id, _currentUser.UserId, request.OpeningCash);
@@ -54,10 +62,16 @@ public sealed class RegisterSessionService : IRegisterSessionService
         {
             await _db.SaveChangesAsync(cancellationToken);
         }
-        catch (DbUpdateException ex) when (SqlUniqueViolation.Is(ex))
+        catch (DbUpdateException ex) when (SqlUniqueViolation.TryGetConstraintName(ex, out var name))
         {
-            // Lost the race against the filtered unique open-session index.
-            throw new ConflictException(ErrorCodes.RegisterSessionAlreadyOpen, "This register already has an open session.");
+            // Lost the race against a filtered unique open-session index.
+            if (name?.Contains("OpenedByUserId", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                throw new ConflictException(ErrorCodes.CashierSessionOpen,
+                    "You already have an open register session. Continue or close it first.");
+            }
+
+            throw new ConflictException(ErrorCodes.RegisterSessionAlreadyOpen, "This register is already in use.");
         }
 
         return await ProjectAsync(session.Id, tenantId, cancellationToken);
@@ -72,12 +86,37 @@ public sealed class RegisterSessionService : IRegisterSessionService
             .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == sessionId, cancellationToken)
             ?? throw new NotFoundException(ErrorCodes.RegisterSessionNotFound, "Register session not found.");
 
+        if (session.OpenedByUserId != _currentUser.UserId)
+        {
+            throw new ForbiddenAppException(ErrorCodes.SessionNotOwned, "This register session belongs to another user.");
+        }
+
+        return await ReconcileAndCloseAsync(session, tenantId, request.ClosingCash, cancellationToken);
+    }
+
+    /// <summary>Owner/Admin override: close another user's stuck session with the same reconciliation.</summary>
+    public async Task<RegisterSessionDto> ForceCloseAsync(
+        Guid sessionId, CloseRegisterSessionRequest request, CancellationToken cancellationToken = default)
+    {
+        var tenantId = RequireTenant();
+        await _closeValidator.ValidateAndThrowAppAsync(request, cancellationToken);
+
+        var session = await _db.RegisterSessions
+            .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == sessionId, cancellationToken)
+            ?? throw new NotFoundException(ErrorCodes.RegisterSessionNotFound, "Register session not found.");
+
+        return await ReconcileAndCloseAsync(session, tenantId, request.ClosingCash, cancellationToken);
+    }
+
+    private async Task<RegisterSessionDto> ReconcileAndCloseAsync(
+        RegisterSession session, Guid tenantId, decimal closingCash, CancellationToken cancellationToken)
+    {
         if (session.Status != RegisterSessionStatus.Open)
         {
             throw new BusinessRuleException(ErrorCodes.RegisterSessionNotOpen, "This register session is not open.");
         }
 
-        var saleIds = _db.Sales.Where(s => s.TenantId == tenantId && s.RegisterSessionId == sessionId).Select(s => s.Id);
+        var saleIds = _db.Sales.Where(s => s.TenantId == tenantId && s.RegisterSessionId == session.Id).Select(s => s.Id);
 
         var cashIn = await _db.Payments
             .Where(p => p.TenantId == tenantId && p.Method == PaymentMethod.Cash && saleIds.Contains(p.SaleId))
@@ -89,7 +128,9 @@ public sealed class RegisterSessionService : IRegisterSessionService
             .SumAsync(r => (decimal?)r.Amount, cancellationToken) ?? 0m;
 
         var expected = session.OpeningCash + cashIn - cashOut;
-        session.Close(_currentUser.UserId, request.ClosingCash, expected);
+        // ClosedByUserId = the acting user (the original cashier on a normal close, an Owner/Admin
+        // on a force-close); OpenedByUserId is never touched.
+        session.Close(_currentUser.UserId, closingCash, expected);
         await _db.SaveChangesAsync(cancellationToken);
 
         return await ProjectAsync(session.Id, tenantId, cancellationToken);
@@ -99,8 +140,11 @@ public sealed class RegisterSessionService : IRegisterSessionService
     {
         var tenantId = RequireTenant();
 
+        // "The current session" for the POS flow means the caller's own open session.
         var open = _db.RegisterSessions.AsNoTracking()
-            .Where(s => s.TenantId == tenantId && s.Status == RegisterSessionStatus.Open);
+            .Where(s => s.TenantId == tenantId
+                && s.Status == RegisterSessionStatus.Open
+                && s.OpenedByUserId == _currentUser.UserId);
 
         if (registerId is { } rid)
         {

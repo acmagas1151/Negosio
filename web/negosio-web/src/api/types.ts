@@ -205,8 +205,27 @@ export interface BranchDto {
   id: string
   name: string
   code: string
+  addressLine1: string
+  addressLine2: string | null
+  city: string
+  province: string
+  postalCode: string | null
   isActive: boolean
+  createdAtUtc: string
+  assignedStaffCount: number
 }
+
+export interface CreateBranchRequest {
+  name: string
+  code: string
+  addressLine1: string
+  addressLine2: string | null
+  city: string
+  province: string
+  postalCode: string | null
+}
+
+export type UpdateBranchRequest = Omit<CreateBranchRequest, 'code'>
 
 // ---- Inventory ----
 
@@ -295,6 +314,14 @@ export interface MovementListParams {
 
 export type RegisterSessionStatus = 'Open' | 'Closed'
 
+export interface RegisterOpenSessionDto {
+  sessionId: string
+  openedByUserId: string
+  openedByName: string
+  openedAtUtc: string
+  openingCash: number
+}
+
 export interface RegisterDto {
   id: string
   branchId: string
@@ -304,6 +331,7 @@ export interface RegisterDto {
   isActive: boolean
   createdAtUtc: string
   updatedAtUtc: string
+  openSession: RegisterOpenSessionDto | null
 }
 
 export interface CreateRegisterRequest {
@@ -348,6 +376,36 @@ export interface OpenRegisterSessionRequest {
 
 export interface CloseRegisterSessionRequest {
   closingCash: number
+}
+
+// ---- POS: branch/register context ----
+
+export interface PosBranchDto {
+  id: string
+  name: string
+  code: string
+}
+
+export interface PosContextDto {
+  branchId: string | null
+  branchName: string | null
+  canPickBranch: boolean
+  branches: PosBranchDto[]
+}
+
+export interface PosOpenSessionDto {
+  sessionId: string
+  openedByUserId: string
+  openedByName: string
+  mine: boolean
+}
+
+export interface PosRegisterDto {
+  id: string
+  name: string
+  code: string
+  isActive: boolean
+  openSession: PosOpenSessionDto | null
 }
 
 // ---- POS: catalog & checkout ----
@@ -590,15 +648,23 @@ export interface StaffMemberDto {
   invitedAtUtc: string | null
   expiresAtUtc: string | null
   invitedByName: string | null
+  branchId: string | null
+  branchName: string | null
 }
 
 export interface InviteStaffRequest {
   email: string
   role: UserRole
+  branchId?: string | null
 }
 
 export interface ChangeStaffRoleRequest {
   role: UserRole
+  branchId?: string | null
+}
+
+export interface ChangeStaffBranchRequest {
+  branchId: string
 }
 
 /** `acceptPath` (e.g. "/invite/<token>") is returned outside Production only — no email provider yet. */

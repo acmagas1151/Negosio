@@ -42,7 +42,7 @@ public sealed class SaleReturnConfiguration : IEntityTypeConfiguration<SaleRetur
         builder.HasIndex(r => new { r.TenantId, r.SaleId }).HasDatabaseName("IX_SaleReturns_TenantId_SaleId");
         builder.HasIndex(r => new { r.TenantId, r.BranchId, r.CreatedAtUtc })
             .HasDatabaseName("IX_SaleReturns_TenantId_BranchId_CreatedAtUtc");
-        builder.HasIndex(r => new { r.TenantId, r.ReturnNumber })
-            .IsUnique().HasDatabaseName("IX_SaleReturns_TenantId_ReturnNumber");
+        builder.HasIndex(r => new { r.TenantId, r.BranchId, r.ReturnNumber })
+            .IsUnique().HasDatabaseName("IX_SaleReturns_TenantId_BranchId_ReturnNumber");
     }
 }

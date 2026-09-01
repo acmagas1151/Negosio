@@ -54,7 +54,7 @@ public class SaleAggregateTests
     [Fact]
     public void MarkReturned_flips_to_partial_then_full()
     {
-        var sale = Sale.Begin(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "00000001", Guid.NewGuid(), Guid.NewGuid());
+        var sale = Sale.Begin(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "0000001", Guid.NewGuid(), Guid.NewGuid());
         var item = sale.AddItem(Guid.NewGuid(), "Coke", null, "SKU", null, 75m, 2m, DiscountType.None, 0m, 150m, 0m, 0m, 150m, 40m);
         sale.Complete(150m, 0m, 0m, 150m, 150m, 0m);
 
@@ -70,7 +70,7 @@ public class SaleAggregateTests
     [Fact]
     public void RecordReturn_cannot_exceed_the_line_quantity()
     {
-        var sale = Sale.Begin(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "00000001", Guid.NewGuid(), Guid.NewGuid());
+        var sale = Sale.Begin(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "0000001", Guid.NewGuid(), Guid.NewGuid());
         var item = sale.AddItem(Guid.NewGuid(), "Coke", null, null, null, 75m, 2m, DiscountType.None, 0m, 150m, 0m, 0m, 150m, null);
 
         var act = () => item.RecordReturn(3m);

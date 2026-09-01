@@ -19,6 +19,7 @@ import RegisterPage from './pages/RegisterPage'
 import RegistersPage from './pages/RegistersPage'
 import SaleDetailPage from './pages/SaleDetailPage'
 import SalesPage from './pages/SalesPage'
+import BranchesPage from './pages/BranchesPage'
 import SettingsPage from './pages/SettingsPage'
 import StaffPage from './pages/StaffPage'
 
@@ -34,7 +35,7 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
   {
     path: '/registers',
     element: (
-      <RequireCapability capability="pos:operate" title="Registers">
+      <RequireCapability capability="register:manage" title="Registers">
         <RegistersPage />
       </RequireCapability>
     ),
@@ -62,6 +63,14 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
     element: (
       <RequireCapability capability="staff:manage" title="Staff">
         <StaffPage />
+      </RequireCapability>
+    ),
+  },
+  {
+    path: '/branches',
+    element: (
+      <RequireCapability capability="branch:manage" title="Branches">
+        <BranchesPage />
       </RequireCapability>
     ),
   },

@@ -119,13 +119,22 @@ public abstract class IntegrationTest : IAsyncLifetime
     /// Create an extra user in the current tenant — both the tenant profile and the platform login
     /// (so the per-request account-state check in ConfigureJwtBearerOptions passes) — and mint a token.
     /// </summary>
-    protected async Task<string> AddTenantUserTokenAsync(string email, Negosio.Domain.Enums.UserRole role)
+    protected async Task<string> AddTenantUserTokenAsync(
+        string email, Negosio.Domain.Enums.UserRole role, Guid? branchId = null)
     {
         var userId = Guid.NewGuid();
 
         await InScopeAsync(async db =>
         {
-            db.Users.Add(Negosio.Domain.Entities.User.Create(userId, CurrentTenantId, email, "Test", "User", role));
+            // Branch-scoped roles must have an active branch (Phase 5). Default to the tenant's first.
+            var resolvedBranchId = branchId;
+            if (resolvedBranchId is null && role is not (Negosio.Domain.Enums.UserRole.Owner or Negosio.Domain.Enums.UserRole.Admin))
+            {
+                resolvedBranchId = await db.Branches.Select(b => b.Id).FirstAsync();
+            }
+
+            db.Users.Add(Negosio.Domain.Entities.User.Create(
+                userId, CurrentTenantId, email, "Test", "User", role, resolvedBranchId));
             await db.SaveChangesAsync();
             return true;
         });
@@ -141,6 +150,39 @@ public abstract class IntegrationTest : IAsyncLifetime
         var generator = Factory.Services.GetRequiredService<IJwtTokenGenerator>();
         return generator.Generate(new TokenSubject(userId, CurrentTenantId, role, email)).Value;
     }
+
+    /// <summary>
+    /// Add a user who can actually log in: a real password hash on the platform login plus a tenant
+    /// User (optionally branch-assigned). Returns the user id.
+    /// </summary>
+    protected async Task<Guid> AddLoginableTenantUserAsync(
+        string email, string password, Negosio.Domain.Enums.UserRole role, Guid? branchId = null)
+    {
+        var userId = Guid.NewGuid();
+        var hasher = Factory.Services.GetRequiredService<Negosio.Application.Abstractions.IPasswordHasher>();
+        var hash = hasher.Hash(password);
+
+        await InScopeAsync(async db =>
+        {
+            db.Users.Add(Negosio.Domain.Entities.User.Create(
+                userId, CurrentTenantId, email, "Test", "User", role, branchId));
+            await db.SaveChangesAsync();
+            return true;
+        });
+
+        await InPlatformScopeAsync(async platform =>
+        {
+            platform.PlatformUserLogins.Add(Negosio.Domain.Entities.PlatformUserLogin.Create(
+                userId, CurrentTenantId, email, hash, role));
+            await platform.SaveChangesAsync();
+            return true;
+        });
+
+        return userId;
+    }
+
+    protected async Task<HttpResponseMessage> RawLoginAsync(string email, string password) =>
+        await Client.PostAsJsonAsync("/api/auth/login", new LoginRequest(email, password));
 
     protected async Task<CategoryDto> CreateCategoryAsync(string name = "Beverages", string? description = null)
     {
@@ -177,6 +219,16 @@ public abstract class IntegrationTest : IAsyncLifetime
 
     protected Task<Guid> GetMainBranchIdAsync(LoginResponse login) =>
         InTenantScopeAsync(login.User.TenantId, db => db.Branches.Select(b => b.Id).FirstAsync());
+
+    /// <summary>Create an extra branch in the current tenant via the API (Owner/Admin token required).</summary>
+    protected async Task<Negosio.Application.Branches.BranchDto> CreateBranchAsync(
+        string name = "BGC", string code = "BGC", string city = "Taguig", string province = "Metro Manila")
+    {
+        var response = await Client.PostAsJsonAsync("/api/branches",
+            new Negosio.Application.Branches.CreateBranchRequest(name, code, "5th Ave", null, city, province, "1634"));
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<Negosio.Application.Branches.BranchDto>(TestJson.Options))!;
+    }
 
     protected async Task<RegisterDto> CreateRegisterAsync(Guid branchId, string name = "Main Counter", string code = "R1")
     {

@@ -83,7 +83,7 @@ public sealed class StaffInvitationService : IStaffInvitationService
             }
 
             await CreateTenantUserAsync(invitation.TenantId, existingLogin.Id, invitation.EmailNormalized,
-                request.FirstName, request.LastName, existingLogin.Role, cancellationToken);
+                request.FirstName, request.LastName, existingLogin.Role, invitation.BranchId, cancellationToken);
 
             _logger.LogInformation("Staff invitation {InvitationId} completed (recovery) for user {UserId}",
                 invitation.Id, existingLogin.Id);
@@ -120,7 +120,7 @@ public sealed class StaffInvitationService : IStaffInvitationService
         }
 
         await CreateTenantUserAsync(invitation.TenantId, userId, invitation.EmailNormalized,
-            request.FirstName, request.LastName, invitation.Role, cancellationToken);
+            request.FirstName, request.LastName, invitation.Role, invitation.BranchId, cancellationToken);
 
         _logger.LogInformation(
             "Staff invitation {InvitationId} accepted: user {UserId} ({Role}) joined tenant {TenantId}",
@@ -160,7 +160,7 @@ public sealed class StaffInvitationService : IStaffInvitationService
 
     private async Task CreateTenantUserAsync(
         Guid tenantId, Guid userId, string email, string firstName, string lastName,
-        UserRole role, CancellationToken cancellationToken)
+        UserRole role, Guid? branchId, CancellationToken cancellationToken)
     {
         await using var db = await _tenantFactory.CreateAsync(tenantId, cancellationToken);
         if (await db.Users.AnyAsync(u => u.Id == userId, cancellationToken))
@@ -168,7 +168,7 @@ public sealed class StaffInvitationService : IStaffInvitationService
             return;
         }
 
-        db.Users.Add(User.Create(userId, tenantId, email, firstName, lastName, role));
+        db.Users.Add(User.Create(userId, tenantId, email, firstName, lastName, role, branchId));
         await db.SaveChangesAsync(cancellationToken);
     }
 }

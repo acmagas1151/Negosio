@@ -13,12 +13,27 @@ public sealed class PosController : ControllerBase
 {
     private readonly IPosCatalogService _catalog;
     private readonly ICheckoutService _checkout;
+    private readonly IPosContextService _context;
 
-    public PosController(IPosCatalogService catalog, ICheckoutService checkout)
+    public PosController(IPosCatalogService catalog, ICheckoutService checkout, IPosContextService context)
     {
         _catalog = catalog;
         _checkout = checkout;
+        _context = context;
     }
+
+    /// <summary>The branch this POS session runs against (auto for branch-scoped roles).</summary>
+    [HttpGet("context")]
+    [ProducesResponseType(typeof(PosContextDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PosContextDto>> Context(CancellationToken cancellationToken)
+        => Ok(await _context.GetContextAsync(cancellationToken));
+
+    /// <summary>Active registers in the resolved branch, each with its open-session state.</summary>
+    [HttpGet("registers")]
+    [ProducesResponseType(typeof(IReadOnlyList<PosRegisterDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<PosRegisterDto>>> Registers(
+        [FromQuery] Guid? branchId, CancellationToken cancellationToken)
+        => Ok(await _context.GetRegistersAsync(branchId, cancellationToken));
 
     [HttpGet("catalog")]
     [ProducesResponseType(typeof(PagedResult<PosCatalogItemDto>), StatusCodes.Status200OK)]

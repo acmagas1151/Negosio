@@ -32,6 +32,16 @@ public sealed class RegisterSessionsController : ControllerBase
         CancellationToken cancellationToken)
         => Ok(await _sessions.CloseAsync(id, request, cancellationToken));
 
+    /// <summary>Owner/Admin override: close another user's stuck session.</summary>
+    [HttpPost("{id:guid}/force-close")]
+    [Authorize(Policy = AuthorizationPolicies.RegisterForceClose)]
+    [ProducesResponseType(typeof(RegisterSessionDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RegisterSessionDto>> ForceClose(
+        Guid id,
+        [FromBody] CloseRegisterSessionRequest request,
+        CancellationToken cancellationToken)
+        => Ok(await _sessions.ForceCloseAsync(id, request, cancellationToken));
+
     [HttpGet("current")]
     [ProducesResponseType(typeof(RegisterSessionDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<RegisterSessionDto>> Current(

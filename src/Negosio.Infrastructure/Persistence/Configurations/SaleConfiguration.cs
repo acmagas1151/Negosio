@@ -51,9 +51,10 @@ public sealed class SaleConfiguration : IEntityTypeConfiguration<Sale>
         builder.Navigation(s => s.Items).UsePropertyAccessMode(PropertyAccessMode.Field);
         builder.Navigation(s => s.Payments).UsePropertyAccessMode(PropertyAccessMode.Field);
 
-        // Receipt number + idempotency key, both unique per tenant.
-        builder.HasIndex(s => new { s.TenantId, s.SaleNumber })
-            .IsUnique().HasDatabaseName("IX_Sales_TenantId_SaleNumber");
+        // Receipt number is unique per branch (each branch runs its own sequence); the
+        // idempotency key is unique per tenant.
+        builder.HasIndex(s => new { s.TenantId, s.BranchId, s.SaleNumber })
+            .IsUnique().HasDatabaseName("IX_Sales_TenantId_BranchId_SaleNumber");
         builder.HasIndex(s => new { s.TenantId, s.ClientRequestId })
             .IsUnique().HasDatabaseName("IX_Sales_TenantId_ClientRequestId");
 

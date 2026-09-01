@@ -29,6 +29,10 @@ public static class DependencyInjection
 
         // Phase 2: Catalog + Inventory
         services.AddScoped<IBranchQueryService, BranchQueryService>();
+
+        // Phase 5: Branch management & branch-scoped access
+        services.AddScoped<IBranchManagementService, BranchManagementService>();
+        services.AddScoped<IBranchAccessResolver, BranchAccessResolver>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IProductVariantService, ProductVariantService>();
@@ -40,6 +44,7 @@ public static class DependencyInjection
         services.AddScoped<IRegisterService, RegisterService>();
         services.AddScoped<IRegisterSessionService, RegisterSessionService>();
         services.AddScoped<IPosCatalogService, PosCatalogService>();
+        services.AddScoped<IPosContextService, PosContextService>();
         services.AddScoped<ICheckoutService, CheckoutService>();
         services.AddScoped<SaleQueryService>();
         services.AddScoped<ISaleQueryService>(sp => sp.GetRequiredService<SaleQueryService>());
