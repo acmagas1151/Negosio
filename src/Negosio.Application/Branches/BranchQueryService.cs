@@ -36,9 +36,12 @@ public sealed class BranchQueryService : IBranchQueryService
             query = query.Where(b => b.IsActive);
         }
 
+        // TODO(task-5): branch-scoped users must see only their assigned branch.
         return await query
             .OrderBy(b => b.Name)
-            .Select(b => new BranchDto(b.Id, b.Name, b.Code, b.IsActive))
+            .Select(b => new BranchDto(
+                b.Id, b.Name, b.Code, b.AddressLine1, b.AddressLine2, b.City, b.Province, b.PostalCode,
+                b.IsActive, b.CreatedAtUtc))
             .ToListAsync(cancellationToken);
     }
 }

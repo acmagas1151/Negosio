@@ -85,4 +85,34 @@ public class Branch : Entity
             province?.Trim() ?? string.Empty,
             string.IsNullOrWhiteSpace(postalCode) ? null : postalCode.Trim());
     }
+
+    /// <summary>Editable branch details. <see cref="Code"/> is immutable after creation.</summary>
+    public void UpdateDetails(
+        string name, string addressLine1, string? addressLine2, string city, string province, string? postalCode)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Branch name is required.", nameof(name));
+        }
+
+        Name = name.Trim();
+        AddressLine1 = addressLine1?.Trim() ?? string.Empty;
+        AddressLine2 = string.IsNullOrWhiteSpace(addressLine2) ? null : addressLine2.Trim();
+        City = city?.Trim() ?? string.Empty;
+        Province = province?.Trim() ?? string.Empty;
+        PostalCode = string.IsNullOrWhiteSpace(postalCode) ? null : postalCode.Trim();
+        Touch();
+    }
+
+    public void Deactivate()
+    {
+        IsActive = false;
+        Touch();
+    }
+
+    public void Reactivate()
+    {
+        IsActive = true;
+        Touch();
+    }
 }
