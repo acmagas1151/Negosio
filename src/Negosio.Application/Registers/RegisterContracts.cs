@@ -61,5 +61,8 @@ public interface IRegisterSessionService
 
     Task<RegisterSessionDto> CloseAsync(Guid sessionId, CloseRegisterSessionRequest request, CancellationToken cancellationToken = default);
 
+    /// <summary>Owner/Admin only — close a session owned by someone else (same reconciliation).</summary>
+    Task<RegisterSessionDto> ForceCloseAsync(Guid sessionId, CloseRegisterSessionRequest request, CancellationToken cancellationToken = default);
+
     Task<RegisterSessionDto> GetCurrentAsync(Guid? registerId, Guid? branchId, CancellationToken cancellationToken = default);
 }

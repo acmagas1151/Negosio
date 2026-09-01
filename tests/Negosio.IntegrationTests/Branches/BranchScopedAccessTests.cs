@@ -139,11 +139,23 @@ public class BranchScopedAccessTests : IntegrationTest
 
         var mainReg = await CreateRegisterAsync(mainId, "MR", "MR");
         var bgcReg = await CreateRegisterAsync(bgc.Id, "BR", "BR");
-        var mainSession = await OpenSessionAsync(mainReg.Id);
-        var bgcSession = await OpenSessionAsync(bgcReg.Id);
 
-        async Task<string> Sell(Guid branch, Guid session, Guid variant)
+        // One open session per cashier — a separate cashier operates each branch.
+        var mainCashier = await AddTenantUserTokenAsync("main.c@example.com", UserRole.Cashier, mainId);
+        var bgcCashier = await AddTenantUserTokenAsync("bgc.c@example.com", UserRole.Cashier, bgc.Id);
+
+        Authorize(mainCashier);
+        var mainSession = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
+            new Negosio.Application.Registers.OpenRegisterSessionRequest(mainReg.Id, 1000m))).Content
+            .ReadFromJsonAsync<Negosio.Application.Registers.RegisterSessionDto>(TestJson.Options))!;
+        Authorize(bgcCashier);
+        var bgcSession = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
+            new Negosio.Application.Registers.OpenRegisterSessionRequest(bgcReg.Id, 1000m))).Content
+            .ReadFromJsonAsync<Negosio.Application.Registers.RegisterSessionDto>(TestJson.Options))!;
+
+        async Task<string> Sell(string token, Guid branch, Guid session, Guid variant)
         {
+            Authorize(token);
             var r = await CheckoutOkAsync(new CheckoutRequest(
                 branch, session, Guid.NewGuid(),
                 new[] { new CheckoutItemInput(variant, 1m, null) },
@@ -151,10 +163,10 @@ public class BranchScopedAccessTests : IntegrationTest
             return r.SaleNumber;
         }
 
-        (await Sell(mainId, mainSession.Id, mainVariant)).Should().Be("0000001");
-        (await Sell(bgc.Id, bgcSession.Id, bgcVariant)).Should().Be("0000001");
-        (await Sell(mainId, mainSession.Id, mainVariant)).Should().Be("0000002");
-        (await Sell(bgc.Id, bgcSession.Id, bgcVariant)).Should().Be("0000002");
+        (await Sell(mainCashier, mainId, mainSession.Id, mainVariant)).Should().Be("0000001");
+        (await Sell(bgcCashier, bgc.Id, bgcSession.Id, bgcVariant)).Should().Be("0000001");
+        (await Sell(mainCashier, mainId, mainSession.Id, mainVariant)).Should().Be("0000002");
+        (await Sell(bgcCashier, bgc.Id, bgcSession.Id, bgcVariant)).Should().Be("0000002");
     }
 
     [Fact]

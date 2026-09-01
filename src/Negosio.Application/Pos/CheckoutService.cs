@@ -70,6 +70,11 @@ public sealed class CheckoutService : ICheckoutService
             throw new NotFoundException(ErrorCodes.RegisterSessionNotFound, "Register session does not belong to this branch.");
         }
 
+        if (session.OpenedByUserId != _currentUser.UserId)
+        {
+            throw new ForbiddenAppException(ErrorCodes.SessionNotOwned, "This register session belongs to another user.");
+        }
+
         if (session.Status != RegisterSessionStatus.Open)
         {
             throw new BusinessRuleException(ErrorCodes.RegisterSessionNotOpen, "The register session is not open.");
