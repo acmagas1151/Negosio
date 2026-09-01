@@ -112,8 +112,12 @@ public class StaffInvitation : Entity
         Touch();
     }
 
-    /// <summary>Issue a fresh token + expiry for a resend. Only valid while the invitation is still pending.</summary>
-    public void Reissue(string newTokenHash, DateTime newExpiresAtUtc, DateTime nowUtc)
+    /// <summary>
+    /// Issue a fresh token + expiry (and role + branch) for a resend / re-invite. Only valid while
+    /// the invitation is still pending or has expired. Callers pass the current values to keep them.
+    /// </summary>
+    public void Reissue(
+        string newTokenHash, DateTime newExpiresAtUtc, DateTime nowUtc, UserRole role, Guid? branchId)
     {
         if (!IsPending(nowUtc) && StatusAt(nowUtc) != StaffInvitationStatus.Expired)
         {
@@ -125,8 +129,15 @@ public class StaffInvitation : Entity
             throw new ArgumentException("Token hash is required.", nameof(newTokenHash));
         }
 
+        if (role == UserRole.Owner)
+        {
+            throw new InvalidOperationException("Staff cannot be invited as Owner.");
+        }
+
         TokenHash = newTokenHash;
         ExpiresAtUtc = newExpiresAtUtc;
+        Role = role;
+        BranchId = branchId;
         Touch();
     }
 }

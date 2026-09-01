@@ -2,6 +2,7 @@ using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Domain.Entities;
 using Negosio.Domain.Enums;
@@ -21,12 +22,15 @@ public sealed class StaffService : IStaffService
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<StaffService> _logger;
 
+    private readonly IValidator<ChangeStaffBranchRequest> _branchValidator;
+
     public StaffService(
         IPlatformDbContext platform,
         ITenantDbContext tenant,
         ICurrentUser currentUser,
         IValidator<InviteStaffRequest> inviteValidator,
         IValidator<ChangeStaffRoleRequest> roleValidator,
+        IValidator<ChangeStaffBranchRequest> branchValidator,
         IAppEnvironment environment,
         TimeProvider timeProvider,
         ILogger<StaffService> logger)
@@ -36,6 +40,7 @@ public sealed class StaffService : IStaffService
         _currentUser = currentUser;
         _inviteValidator = inviteValidator;
         _roleValidator = roleValidator;
+        _branchValidator = branchValidator;
         _environment = environment;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -53,8 +58,12 @@ public sealed class StaffService : IStaffService
 
         var users = await _tenant.Users.AsNoTracking()
             .Where(u => u.TenantId == tenantId)
-            .Select(u => new { u.Id, u.FirstName, u.LastName, u.Email, u.Role, u.IsActive, u.CreatedAtUtc })
+            .Select(u => new { u.Id, u.FirstName, u.LastName, u.Email, u.Role, u.IsActive, u.CreatedAtUtc, u.BranchId })
             .ToListAsync(cancellationToken);
+
+        var branchNames = await _tenant.Branches.AsNoTracking()
+            .Where(b => b.TenantId == tenantId)
+            .ToDictionaryAsync(b => b.Id, b => b.Name, cancellationToken);
 
         var userIds = users.Select(u => u.Id).ToList();
         var logins = await _platform.PlatformUserLogins.AsNoTracking()
@@ -71,7 +80,9 @@ public sealed class StaffService : IStaffService
             return new StaffMemberDto(
                 u.Id, StaffMemberKind.Member, u.FirstName, u.LastName, u.Email, role,
                 active ? StaffMemberStatus.Active : StaffMemberStatus.Deactivated,
-                JoinedAtUtc: u.CreatedAtUtc, InvitedAtUtc: null, ExpiresAtUtc: null, InvitedByName: null);
+                JoinedAtUtc: u.CreatedAtUtc, InvitedAtUtc: null, ExpiresAtUtc: null, InvitedByName: null,
+                BranchId: u.BranchId,
+                BranchName: u.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null);
         });
 
         var now = UtcNow;
@@ -83,7 +94,9 @@ public sealed class StaffService : IStaffService
             i.Id, StaffMemberKind.Invitation, null, null, i.EmailNormalized, i.Role,
             now >= i.ExpiresAtUtc ? StaffMemberStatus.Expired : StaffMemberStatus.Invited,
             JoinedAtUtc: null, InvitedAtUtc: i.CreatedAtUtc, ExpiresAtUtc: i.ExpiresAtUtc,
-            InvitedByName: names.GetValueOrDefault(i.InvitedByUserId)));
+            InvitedByName: names.GetValueOrDefault(i.InvitedByUserId),
+            BranchId: i.BranchId,
+            BranchName: i.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null));
 
         return members.Concat(invitationRows)
             .OrderBy(m => m.Kind == StaffMemberKind.Invitation)
@@ -94,7 +107,7 @@ public sealed class StaffService : IStaffService
     public async Task<StaffMemberDto> GetAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         var (user, login) = await LoadMemberAsync(userId, cancellationToken);
-        return ToDto(user, login);
+        return await ToDtoAsync(user, login, cancellationToken);
     }
 
     public async Task<StaffInvitationResultDto> InviteAsync(InviteStaffRequest request, CancellationToken cancellationToken = default)
@@ -109,6 +122,8 @@ public sealed class StaffService : IStaffService
         {
             throw new ConflictException(ErrorCodes.StaffEmailInUse, "That email already has a Negosio account.");
         }
+
+        var branchId = await ResolveInvitationBranchAsync(role, request.BranchId, cancellationToken);
 
         var now = UtcNow;
         var existing = await _platform.StaffInvitations
@@ -127,13 +142,13 @@ public sealed class StaffService : IStaffService
                 throw new ConflictException(ErrorCodes.StaffAlreadyInvited, "There is already a pending invitation for this email.");
             }
 
-            // An expired invitation is re-sent with a fresh token; to change its role, revoke and re-invite.
-            existing.Reissue(token.Hash, expiresAt, now);
+            // An expired invitation is re-sent with a fresh token, role and branch from this request.
+            existing.Reissue(token.Hash, expiresAt, now, role, branchId);
             invitation = existing;
         }
         else
         {
-            invitation = StaffInvitation.Create(tenantId, email, role, token.Hash, expiresAt, _currentUser.UserId);
+            invitation = StaffInvitation.Create(tenantId, email, role, token.Hash, expiresAt, _currentUser.UserId, branchId);
             _platform.StaffInvitations.Add(invitation);
         }
 
@@ -155,7 +170,7 @@ public sealed class StaffService : IStaffService
         }
 
         var token = InvitationToken.Generate();
-        invitation.Reissue(token.Hash, now.AddDays(InvitationLifetimeDays), now);
+        invitation.Reissue(token.Hash, now.AddDays(InvitationLifetimeDays), now, invitation.Role, invitation.BranchId);
         await _platform.SaveChangesAsync(cancellationToken);
         return BuildResult(invitation, token.Raw, logNew: false);
     }
@@ -189,22 +204,83 @@ public sealed class StaffService : IStaffService
         GuardTargetIsNotSelf(userId, "change your own role");
         GuardActingUserMayActOn(login.Role);
 
-        if (login.Role == newRole)
+        var wasScoped = !BranchRoles.IsAllBranch(login.Role);
+        var nowScoped = !BranchRoles.IsAllBranch(newRole);
+
+        // Reconcile the branch assignment with the new role (backend invariant).
+        Guid? newBranchId = user.BranchId;
+        if (!wasScoped && nowScoped)
         {
-            return ToDto(user, login);
+            newBranchId = await RequireActiveBranchAsync(request.BranchId, cancellationToken);
+        }
+        else if (wasScoped && nowScoped && !string.IsNullOrWhiteSpace(request.BranchId))
+        {
+            newBranchId = await RequireActiveBranchAsync(request.BranchId, cancellationToken);
+        }
+        else if (wasScoped && !nowScoped)
+        {
+            newBranchId = null;
+        }
+
+        if (login.Role == newRole && newBranchId == user.BranchId)
+        {
+            return await ToDtoAsync(user, login, cancellationToken);
         }
 
         // Platform first — it is the authority the JWT / OnTokenValidated check reads from.
-        login.ChangeRole(newRole);
-        await _platform.SaveChangesAsync(cancellationToken);
+        if (login.Role != newRole)
+        {
+            login.ChangeRole(newRole);
+            await _platform.SaveChangesAsync(cancellationToken);
+            user.ChangeRole(newRole);
+        }
 
-        user.ChangeRole(newRole);
+        if (newBranchId is { } b)
+        {
+            user.AssignBranch(b);
+        }
+        else
+        {
+            user.ClearBranch();
+        }
         await _tenant.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Staff {UserId} role changed to {Role} in tenant {TenantId} by {ActorId}",
-            userId, newRole, login.TenantId, _currentUser.UserId);
+        _logger.LogInformation("Staff {UserId} role changed to {Role} (branch {BranchId}) in tenant {TenantId} by {ActorId}",
+            userId, newRole, newBranchId, login.TenantId, _currentUser.UserId);
 
-        return ToDto(user, login);
+        return await ToDtoAsync(user, login, cancellationToken);
+    }
+
+    public async Task<StaffMemberDto> ChangeBranchAsync(
+        Guid userId, ChangeStaffBranchRequest request, CancellationToken cancellationToken = default)
+    {
+        _ = TenantId;
+        await _branchValidator.ValidateAndThrowAppAsync(request, cancellationToken);
+
+        var (user, login) = await LoadMemberAsync(userId, cancellationToken);
+
+        if (BranchRoles.IsAllBranch(login.Role))
+        {
+            throw new BusinessRuleException(ErrorCodes.BranchForbidden, "Owners and admins aren't assigned to a branch.");
+        }
+
+        var hasOpenSession = await _tenant.RegisterSessions
+            .AnyAsync(s => s.OpenedByUserId == userId && s.Status == RegisterSessionStatus.Open, cancellationToken);
+        if (hasOpenSession)
+        {
+            throw new ConflictException(
+                ErrorCodes.StaffHasOpenRegisterSession,
+                "Close or force-close this person's open register session before moving them.");
+        }
+
+        var branchId = await RequireActiveBranchAsync(request.BranchId, cancellationToken);
+        user.AssignBranch(branchId);
+        await _tenant.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation("Staff {UserId} moved to branch {BranchId} in tenant {TenantId} by {ActorId}",
+            userId, branchId, login.TenantId, _currentUser.UserId);
+
+        return await ToDtoAsync(user, login, cancellationToken);
     }
 
     public async Task<StaffMemberDto> DeactivateAsync(Guid userId, CancellationToken cancellationToken = default)
@@ -237,7 +313,7 @@ public sealed class StaffService : IStaffService
         _logger.LogInformation("Staff {UserId} deactivated in tenant {TenantId} by {ActorId}",
             userId, tenantId, _currentUser.UserId);
 
-        return ToDto(user, login);
+        return await ToDtoAsync(user, login, cancellationToken);
     }
 
     public async Task<StaffMemberDto> ReactivateAsync(Guid userId, CancellationToken cancellationToken = default)
@@ -259,7 +335,7 @@ public sealed class StaffService : IStaffService
         _logger.LogInformation("Staff {UserId} reactivated in tenant {TenantId} by {ActorId}",
             userId, tenantId, _currentUser.UserId);
 
-        return ToDto(user, login);
+        return await ToDtoAsync(user, login, cancellationToken);
     }
 
     // ---- helpers ----
@@ -345,8 +421,55 @@ public sealed class StaffService : IStaffService
             AcceptPath: _environment.IsProduction ? null : acceptPath);
     }
 
-    private static StaffMemberDto ToDto(User user, PlatformUserLogin login) => new(
-        user.Id, StaffMemberKind.Member, user.FirstName, user.LastName, user.Email, login.Role,
-        login.IsActive ? StaffMemberStatus.Active : StaffMemberStatus.Deactivated,
-        JoinedAtUtc: user.CreatedAtUtc, InvitedAtUtc: null, ExpiresAtUtc: null, InvitedByName: null);
+    private async Task<StaffMemberDto> ToDtoAsync(User user, PlatformUserLogin login, CancellationToken cancellationToken)
+    {
+        string? branchName = null;
+        if (user.BranchId is { } branchId)
+        {
+            branchName = await _tenant.Branches.AsNoTracking()
+                .Where(b => b.Id == branchId).Select(b => b.Name).FirstOrDefaultAsync(cancellationToken);
+        }
+
+        return new StaffMemberDto(
+            user.Id, StaffMemberKind.Member, user.FirstName, user.LastName, user.Email, login.Role,
+            login.IsActive ? StaffMemberStatus.Active : StaffMemberStatus.Deactivated,
+            JoinedAtUtc: user.CreatedAtUtc, InvitedAtUtc: null, ExpiresAtUtc: null, InvitedByName: null,
+            BranchId: user.BranchId, BranchName: branchName);
+    }
+
+    /// <summary>Branch-scoped role → an active branch id is required; Owner/Admin → must be null.</summary>
+    private async Task<Guid?> ResolveInvitationBranchAsync(UserRole role, string? branchId, CancellationToken cancellationToken)
+    {
+        if (BranchRoles.IsAllBranch(role))
+        {
+            if (!string.IsNullOrWhiteSpace(branchId))
+            {
+                throw new BusinessRuleException(ErrorCodes.BranchForbidden, "Owners and admins aren't assigned to a branch.");
+            }
+
+            return null;
+        }
+
+        return await RequireActiveBranchAsync(branchId, cancellationToken);
+    }
+
+    private async Task<Guid> RequireActiveBranchAsync(string? branchId, CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(branchId, out var id))
+        {
+            throw new ValidationAppException(new Dictionary<string, string[]>
+            {
+                ["branchId"] = new[] { "A branch is required for this role." }
+            });
+        }
+
+        var active = await _tenant.Branches.AnyAsync(
+            b => b.TenantId == _currentUser.TenantId && b.Id == id && b.IsActive, cancellationToken);
+        if (!active)
+        {
+            throw new BusinessRuleException(ErrorCodes.BranchInactive, "That branch is inactive or does not exist.");
+        }
+
+        return id;
+    }
 }

@@ -33,11 +33,17 @@ public sealed record StaffMemberDto(
     DateTime? JoinedAtUtc,
     DateTime? InvitedAtUtc,
     DateTime? ExpiresAtUtc,
-    string? InvitedByName);
+    string? InvitedByName,
+    Guid? BranchId,
+    string? BranchName);
 
-public sealed record InviteStaffRequest(string Email, string Role);
+/// <summary>Branch is required for a branch-scoped role, and must be absent for Owner/Admin.</summary>
+public sealed record InviteStaffRequest(string Email, string Role, string? BranchId = null);
 
-public sealed record ChangeStaffRoleRequest(string Role);
+/// <summary>Branch is required when the new role is branch-scoped and the member had none.</summary>
+public sealed record ChangeStaffRoleRequest(string Role, string? BranchId = null);
+
+public sealed record ChangeStaffBranchRequest(string BranchId);
 
 /// <summary>
 /// Returned after creating / resending an invitation. <see cref="AcceptPath"/> is populated in
@@ -64,6 +70,8 @@ public interface IStaffService
     Task RevokeInvitationAsync(Guid invitationId, CancellationToken cancellationToken = default);
 
     Task<StaffMemberDto> ChangeRoleAsync(Guid userId, ChangeStaffRoleRequest request, CancellationToken cancellationToken = default);
+
+    Task<StaffMemberDto> ChangeBranchAsync(Guid userId, ChangeStaffBranchRequest request, CancellationToken cancellationToken = default);
 
     Task<StaffMemberDto> DeactivateAsync(Guid userId, CancellationToken cancellationToken = default);
 

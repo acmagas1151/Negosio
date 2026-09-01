@@ -82,9 +82,10 @@ public class StaffInvitationTests
         var invite = NewInvitation(_now.AddDays(-10)); // already expired
         invite.StatusAt(_now).Should().Be(StaffInvitationStatus.Expired);
 
-        invite.Reissue("new-hash", _now.AddDays(7), _now);
+        invite.Reissue("new-hash", _now.AddDays(7), _now, UserRole.Cashier, Guid.NewGuid());
 
         invite.TokenHash.Should().Be("new-hash");
+        invite.BranchId.Should().NotBeNull();
         invite.StatusAt(_now).Should().Be(StaffInvitationStatus.Pending);
     }
 }

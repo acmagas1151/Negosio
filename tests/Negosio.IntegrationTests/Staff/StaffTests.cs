@@ -18,9 +18,17 @@ public class StaffTests : IntegrationTest
 
     // ---- helpers -------------------------------------------------------------
 
-    private async Task<StaffInvitationResultDto> InviteAsync(string email, UserRole role, HttpStatusCode expected = HttpStatusCode.Created)
+    private async Task<StaffInvitationResultDto> InviteAsync(
+        string email, UserRole role, HttpStatusCode expected = HttpStatusCode.Created, Guid? branchId = null)
     {
-        var response = await Client.PostAsJsonAsync("/api/staff/invitations", new InviteStaffRequest(email, role.ToString()));
+        // Branch-scoped roles need a branch — default to the tenant's sole branch.
+        if (branchId is null && role is not (UserRole.Owner or UserRole.Admin))
+        {
+            branchId = await InScopeAsync(db => db.Branches.Select(b => b.Id).FirstAsync());
+        }
+
+        var response = await Client.PostAsJsonAsync("/api/staff/invitations",
+            new InviteStaffRequest(email, role.ToString(), branchId?.ToString()));
         response.StatusCode.Should().Be(expected);
         return expected == HttpStatusCode.Created
             ? (await response.Content.ReadFromJsonAsync<StaffInvitationResultDto>(TestJson.Options))!
@@ -29,29 +37,9 @@ public class StaffTests : IntegrationTest
 
     private static string TokenFromPath(string acceptPath) => acceptPath.Split('/').Last();
 
-    private async Task<HttpResponseMessage> AcceptAsync(string token, string first = "Sam", string last = "Staff", string password = "SecurePassword123!")
-    {
-        var response = await Client.PostAsJsonAsync($"/api/auth/invitations/{token}/accept",
+    private async Task<HttpResponseMessage> AcceptAsync(string token, string first = "Sam", string last = "Staff", string password = "SecurePassword123!") =>
+        await Client.PostAsJsonAsync($"/api/auth/invitations/{token}/accept",
             new AcceptInvitationRequest(first, last, password));
-
-        // Phase 5 interim: invitations don't carry a branch yet (Task 10). Bind any newly-accepted
-        // branch-scoped user to the tenant's sole branch so they can authenticate.
-        if (response.IsSuccessStatusCode)
-        {
-            await InScopeAsync(async db =>
-            {
-                var branchId = await db.Branches.Select(b => b.Id).FirstAsync();
-                foreach (var u in await db.Users.Where(u => u.BranchId == null && u.Role != UserRole.Owner && u.Role != UserRole.Admin).ToListAsync())
-                {
-                    u.AssignBranch(branchId);
-                }
-                await db.SaveChangesAsync();
-                return true;
-            });
-        }
-
-        return response;
-    }
 
     private async Task<LoginResponse> LoginAsync(string email, string password = "SecurePassword123!")
     {
@@ -71,20 +59,6 @@ public class StaffTests : IntegrationTest
 
         ClearAuth();
         (await AcceptAsync(TokenFromPath(invite.AcceptPath!))).EnsureSuccessStatusCode();
-
-        // Phase 5: branch-scoped roles must have a branch. Bind to the tenant's sole branch.
-        if (role is not (UserRole.Owner or UserRole.Admin))
-        {
-            await InScopeAsync(async db =>
-            {
-                var user = await db.Users.SingleAsync(u => u.Email == email);
-                var branchId = await db.Branches.Select(b => b.Id).FirstAsync();
-                user.AssignBranch(branchId);
-                await db.SaveChangesAsync();
-                return true;
-            });
-        }
-
         var login = await LoginAsync(email);
 
         Client.DefaultRequestHeaders.Authorization = ownerAuth;
@@ -210,12 +184,13 @@ public class StaffTests : IntegrationTest
     [Fact]
     public async Task Admin_can_manage_staff_but_never_creates_an_Admin_or_Owner()
     {
-        await RegisterLoginAndAuthorizeAsync();
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
         var adminToken = await AddTenantUserTokenAsync("admin@example.com", UserRole.Admin);
         Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
 
         // Admin can invite a Cashier
-        (await Client.PostAsJsonAsync("/api/staff/invitations", new InviteStaffRequest("c@example.com", "Cashier")))
+        (await Client.PostAsJsonAsync("/api/staff/invitations", new InviteStaffRequest("c@example.com", "Cashier", mainId.ToString())))
             .StatusCode.Should().Be(HttpStatusCode.Created);
 
         // Admin cannot invite an Admin
