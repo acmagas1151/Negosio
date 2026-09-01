@@ -50,9 +50,11 @@ public sealed class RegisterService : IRegisterService
             .Select(r => new RegisterDto(
                 r.Id, r.BranchId,
                 _db.Branches.Where(b => b.Id == r.BranchId).Select(b => b.Name).FirstOrDefault() ?? string.Empty,
-                r.Name, r.Code, r.IsActive, r.CreatedAtUtc, r.UpdatedAtUtc));
+                r.Name, r.Code, r.IsActive, r.CreatedAtUtc, r.UpdatedAtUtc, null));
 
-        return await PagedResult<RegisterDto>.CreateAsync(projected, query.Page, query.PageSize, cancellationToken);
+        var page = await PagedResult<RegisterDto>.CreateAsync(projected, query.Page, query.PageSize, cancellationToken);
+        var withSessions = await AttachOpenSessionsAsync(tenantId, page.Items, cancellationToken);
+        return new PagedResult<RegisterDto>(withSessions, page.Page, page.PageSize, page.TotalCount, page.TotalPages);
     }
 
     public async Task<RegisterDto> GetAsync(Guid id, CancellationToken cancellationToken = default)
@@ -64,10 +66,43 @@ public sealed class RegisterService : IRegisterService
             .Select(r => new RegisterDto(
                 r.Id, r.BranchId,
                 _db.Branches.Where(b => b.Id == r.BranchId).Select(b => b.Name).FirstOrDefault() ?? string.Empty,
-                r.Name, r.Code, r.IsActive, r.CreatedAtUtc, r.UpdatedAtUtc))
+                r.Name, r.Code, r.IsActive, r.CreatedAtUtc, r.UpdatedAtUtc, null))
             .SingleOrDefaultAsync(cancellationToken);
 
-        return dto ?? throw new NotFoundException(ErrorCodes.RegisterNotFound, "Register not found.");
+        if (dto is null)
+        {
+            throw new NotFoundException(ErrorCodes.RegisterNotFound, "Register not found.");
+        }
+
+        return (await AttachOpenSessionsAsync(tenantId, new[] { dto }, cancellationToken))[0];
+    }
+
+    /// <summary>Stitch each register's current open session (any owner) into the DTO for the management view.</summary>
+    private async Task<IReadOnlyList<RegisterDto>> AttachOpenSessionsAsync(
+        Guid tenantId, IReadOnlyList<RegisterDto> registers, CancellationToken cancellationToken)
+    {
+        var ids = registers.Select(r => r.Id).ToList();
+        if (ids.Count == 0)
+        {
+            return registers;
+        }
+
+        var sessions = await (
+            from s in _db.RegisterSessions.AsNoTracking()
+                .Where(s => s.TenantId == tenantId
+                    && s.Status == Domain.Enums.RegisterSessionStatus.Open
+                    && ids.Contains(s.RegisterId))
+            join u in _db.Users on s.OpenedByUserId equals u.Id
+            select new
+            {
+                s.RegisterId,
+                Dto = new RegisterOpenSessionDto(s.Id, s.OpenedByUserId, u.FirstName + " " + u.LastName, s.OpenedAtUtc, s.OpeningCash),
+            })
+            .ToDictionaryAsync(x => x.RegisterId, x => x.Dto, cancellationToken);
+
+        return registers
+            .Select(r => sessions.TryGetValue(r.Id, out var open) ? r with { OpenSession = open } : r)
+            .ToList();
     }
 
     public async Task<RegisterDto> CreateAsync(CreateRegisterRequest request, CancellationToken cancellationToken = default)

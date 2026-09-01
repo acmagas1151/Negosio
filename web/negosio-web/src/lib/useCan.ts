@@ -13,6 +13,7 @@ export type Capability =
   | 'settings:write'
   | 'staff:manage'
   | 'branch:manage'
+  | 'register:force-close'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
 // 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
@@ -36,6 +37,8 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   'settings:write': new Set<UserRole>(['Owner', 'Admin']),
   'staff:manage': new Set<UserRole>(['Owner', 'Admin']),
   'branch:manage': new Set<UserRole>(['Owner', 'Admin']),
+  // Mirrors AuthorizationPolicies.RegisterForceClose — an administrative override, not RegisterManage.
+  'register:force-close': new Set<UserRole>(['Owner', 'Admin']),
 }
 
 /**

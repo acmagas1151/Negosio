@@ -313,6 +313,14 @@ export interface MovementListParams {
 
 export type RegisterSessionStatus = 'Open' | 'Closed'
 
+export interface RegisterOpenSessionDto {
+  sessionId: string
+  openedByUserId: string
+  openedByName: string
+  openedAtUtc: string
+  openingCash: number
+}
+
 export interface RegisterDto {
   id: string
   branchId: string
@@ -322,6 +330,7 @@ export interface RegisterDto {
   isActive: boolean
   createdAtUtc: string
   updatedAtUtc: string
+  openSession: RegisterOpenSessionDto | null
 }
 
 export interface CreateRegisterRequest {

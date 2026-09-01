@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Negosio.Application.Common;
 using Negosio.Application.Pos;
 using Negosio.Application.Registers;
 using Negosio.Domain.Enums;
@@ -121,6 +122,26 @@ public class RegisterSessionModelTests : IntegrationTest
         dto.Status.Should().Be(RegisterSessionStatus.Closed);
         dto.OpenedByUserId.Should().Be(caraSession.OpenedByUserId); // still the original cashier
         dto.CashDifference.Should().Be(0m); // 500 opening, no sales, 500 counted
+    }
+
+    [Fact]
+    public async Task Register_list_exposes_the_open_session_for_the_management_view()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+        var caraToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
+
+        Authorize(caraToken);
+        await OpenAsync(register.Id, 750m);
+
+        Authorize(owner.AccessToken);
+        var list = await Client.GetFromJsonAsync<PagedResult<RegisterDto>>("/api/registers?pageSize=50", TestJson.Options);
+
+        var row = list!.Items.Single(r => r.Id == register.Id);
+        row.OpenSession.Should().NotBeNull();
+        row.OpenSession!.OpenedByName.Should().Contain("User");
+        row.OpenSession.OpeningCash.Should().Be(750m);
     }
 
     [Fact]

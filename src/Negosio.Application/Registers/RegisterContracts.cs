@@ -3,6 +3,13 @@ using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Registers;
 
+public sealed record RegisterOpenSessionDto(
+    Guid SessionId,
+    Guid OpenedByUserId,
+    string OpenedByName,
+    DateTime OpenedAtUtc,
+    decimal OpeningCash);
+
 public sealed record RegisterDto(
     Guid Id,
     Guid BranchId,
@@ -11,7 +18,8 @@ public sealed record RegisterDto(
     string Code,
     bool IsActive,
     DateTime CreatedAtUtc,
-    DateTime UpdatedAtUtc);
+    DateTime UpdatedAtUtc,
+    RegisterOpenSessionDto? OpenSession = null);
 
 public sealed record CreateRegisterRequest(Guid BranchId, string Name, string Code);
 
