@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Common;
 
 namespace Negosio.Application.Sales;
@@ -8,11 +9,13 @@ public sealed class ReceiptService : IReceiptService
 {
     private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
+    private readonly IBranchAccessResolver _branchAccess;
 
-    public ReceiptService(ITenantDbContext db, ICurrentUser currentUser)
+    public ReceiptService(ITenantDbContext db, ICurrentUser currentUser, IBranchAccessResolver branchAccess)
     {
         _db = db;
         _currentUser = currentUser;
+        _branchAccess = branchAccess;
     }
 
     public async Task<ReceiptDto> GetReceiptAsync(Guid saleId, CancellationToken cancellationToken = default)
@@ -24,6 +27,12 @@ public sealed class ReceiptService : IReceiptService
             .Include(s => s.Payments)
             .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == saleId, cancellationToken)
             ?? throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
+
+        var assigned = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
+        if (assigned is { } scopedBranchId && scopedBranchId != sale.BranchId)
+        {
+            throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
+        }
 
         var storeName = await _db.TenantProfiles.Where(p => p.Id == tenantId).Select(p => p.Name).SingleAsync(cancellationToken);
         var branchName = await _db.Branches.Where(b => b.Id == sale.BranchId).Select(b => b.Name).FirstOrDefaultAsync(cancellationToken) ?? string.Empty;

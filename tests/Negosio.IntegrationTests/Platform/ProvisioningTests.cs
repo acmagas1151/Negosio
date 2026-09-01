@@ -41,7 +41,7 @@ public class ProvisioningTests : IntegrationTest
         await using var tenantDb = await Factory.OpenTenantConnectionAsync(body.TenantId);
         (await PlatformSql.StringsAsync(tenantDb,
                 "SELECT MigrationId FROM __EFMigrationsHistory ORDER BY MigrationId"))
-            .Should().ContainSingle().Which.Should().EndWith("_TenantBaseline");
+            .Should().Contain(m => m.EndsWith("_TenantBaseline"));
 
         (await PlatformSql.CountAsync(tenantDb, "Branches")).Should().Be(1);
         (await PlatformSql.CountAsync(tenantDb, "Users")).Should().Be(1);

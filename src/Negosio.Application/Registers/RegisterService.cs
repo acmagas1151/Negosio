@@ -1,6 +1,7 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Domain.Entities;
 
@@ -12,22 +13,26 @@ public sealed class RegisterService : IRegisterService
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<CreateRegisterRequest> _createValidator;
     private readonly IValidator<UpdateRegisterRequest> _updateValidator;
+    private readonly IBranchAccessResolver _branchAccess;
 
     public RegisterService(
         ITenantDbContext db,
         ICurrentUser currentUser,
         IValidator<CreateRegisterRequest> createValidator,
-        IValidator<UpdateRegisterRequest> updateValidator)
+        IValidator<UpdateRegisterRequest> updateValidator,
+        IBranchAccessResolver branchAccess)
     {
         _db = db;
         _currentUser = currentUser;
         _createValidator = createValidator;
         _updateValidator = updateValidator;
+        _branchAccess = branchAccess;
     }
 
     public async Task<PagedResult<RegisterDto>> ListAsync(RegisterListQuery query, CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
+        query = query with { BranchId = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken) };
 
         var registers = _db.Registers.AsNoTracking().Where(r => r.TenantId == tenantId);
         if (query.BranchId is { } branchId)
@@ -70,13 +75,9 @@ public sealed class RegisterService : IRegisterService
         var tenantId = RequireTenant();
         await _createValidator.ValidateAndThrowAppAsync(request, cancellationToken);
 
-        var branchExists = await _db.Branches.AnyAsync(b => b.TenantId == tenantId && b.Id == request.BranchId, cancellationToken);
-        if (!branchExists)
-        {
-            throw new NotFoundException(ErrorCodes.BranchNotFound, "Branch not found.");
-        }
+        var branchId = await _branchAccess.ResolveTargetBranchAsync(request.BranchId, cancellationToken: cancellationToken);
 
-        var register = Register.Create(tenantId, request.BranchId, request.Name, request.Code);
+        var register = Register.Create(tenantId, branchId, request.Name, request.Code);
         _db.Registers.Add(register);
 
         await SaveOrTranslateAsync(cancellationToken);

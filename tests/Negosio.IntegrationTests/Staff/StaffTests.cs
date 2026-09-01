@@ -51,6 +51,20 @@ public class StaffTests : IntegrationTest
 
         ClearAuth();
         (await AcceptAsync(TokenFromPath(invite.AcceptPath!))).EnsureSuccessStatusCode();
+
+        // Phase 5: branch-scoped roles must have a branch. Bind to the tenant's sole branch.
+        if (role is not (UserRole.Owner or UserRole.Admin))
+        {
+            await InScopeAsync(async db =>
+            {
+                var user = await db.Users.SingleAsync(u => u.Email == email);
+                var branchId = await db.Branches.Select(b => b.Id).FirstAsync();
+                user.AssignBranch(branchId);
+                await db.SaveChangesAsync();
+                return true;
+            });
+        }
+
         var login = await LoginAsync(email);
 
         Client.DefaultRequestHeaders.Authorization = ownerAuth;

@@ -24,8 +24,8 @@ public class TenantMigrationTests : IntegrationTest
             var pending = await db.Database.GetPendingMigrationsAsync();
             pending.Should().BeEmpty();
 
-            var applied = await db.Database.GetAppliedMigrationsAsync();
-            applied.Should().ContainSingle().Which.Should().EndWith("_TenantBaseline");
+            var applied = (await db.Database.GetAppliedMigrationsAsync()).ToList();
+            applied.Should().Contain(m => m.EndsWith("_TenantBaseline"));
             return true;
         });
     }

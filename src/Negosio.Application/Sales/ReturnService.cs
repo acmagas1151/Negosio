@@ -1,6 +1,7 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Application.Inventory;
 using Negosio.Domain.Entities;
@@ -16,6 +17,7 @@ public sealed class ReturnService : IReturnService
     private readonly IDocumentNumberService _documentNumbers;
     private readonly IInventoryPosting _inventory;
     private readonly SaleQueryService _saleQuery;
+    private readonly IBranchAccessResolver _branchAccess;
 
     public ReturnService(
         ITenantDbContext db,
@@ -23,7 +25,8 @@ public sealed class ReturnService : IReturnService
         IValidator<CreateReturnRequest> validator,
         IDocumentNumberService documentNumbers,
         IInventoryPosting inventory,
-        SaleQueryService saleQuery)
+        SaleQueryService saleQuery,
+        IBranchAccessResolver branchAccess)
     {
         _db = db;
         _currentUser = currentUser;
@@ -31,6 +34,7 @@ public sealed class ReturnService : IReturnService
         _documentNumbers = documentNumbers;
         _inventory = inventory;
         _saleQuery = saleQuery;
+        _branchAccess = branchAccess;
     }
 
     public async Task<SaleReturnDto> CreateReturnAsync(Guid saleId, CreateReturnRequest request, CancellationToken cancellationToken = default)
@@ -42,6 +46,8 @@ public sealed class ReturnService : IReturnService
             .Include(s => s.Items)
             .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == saleId, cancellationToken)
             ?? throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
+
+        await GuardSaleBranchAsync(sale.BranchId, cancellationToken);
 
         if (sale.Status is not (SaleStatus.Completed or SaleStatus.PartiallyRefunded))
         {
@@ -110,13 +116,30 @@ public sealed class ReturnService : IReturnService
     {
         var tenantId = RequireTenant();
 
-        var exists = await _db.Sales.AnyAsync(s => s.TenantId == tenantId && s.Id == saleId, cancellationToken);
-        if (!exists)
+        var branchId = await _db.Sales.Where(s => s.TenantId == tenantId && s.Id == saleId)
+            .Select(s => (Guid?)s.BranchId).FirstOrDefaultAsync(cancellationToken);
+        if (branchId is null)
         {
             throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
         }
 
+        await GuardSaleBranchAsync(branchId.Value, cancellationToken);
+
         return await _saleQuery.LoadReturnsAsync(tenantId, saleId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Branch-scoped users may only act on their own branch's sales (404, not 403). Owner/Admin are
+    /// unrestricted — and returns against an inactive historical branch must still work, so there is
+    /// no active-branch check here.
+    /// </summary>
+    private async Task GuardSaleBranchAsync(Guid saleBranchId, CancellationToken cancellationToken)
+    {
+        var assigned = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
+        if (assigned is { } branchId && branchId != saleBranchId)
+        {
+            throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
+        }
     }
 
     private Guid RequireTenant()

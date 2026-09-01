@@ -1,6 +1,7 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Catalog;
 using Negosio.Application.Common;
 using Negosio.Domain.Entities;
@@ -13,21 +14,25 @@ public sealed class InventoryService : IInventoryService
     private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<AdjustInventoryRequest> _adjustValidator;
+    private readonly IBranchAccessResolver _branchAccess;
 
     public InventoryService(
         ITenantDbContext db,
         ICurrentUser currentUser,
-        IValidator<AdjustInventoryRequest> adjustValidator)
+        IValidator<AdjustInventoryRequest> adjustValidator,
+        IBranchAccessResolver branchAccess)
     {
         _db = db;
         _currentUser = currentUser;
         _adjustValidator = adjustValidator;
+        _branchAccess = branchAccess;
     }
 
     public async Task<PagedResult<InventoryRowDto>> ListAsync(InventoryListQuery query, CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
         var canViewCost = CatalogAccess.CanViewCost(_currentUser.Role);
+        query = query with { BranchId = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken) };
 
         var rows =
             from i in _db.BranchInventories.AsNoTracking().Where(i => i.TenantId == tenantId)
@@ -104,9 +109,9 @@ public sealed class InventoryService : IInventoryService
         var tenantId = RequireTenant();
         await _adjustValidator.ValidateAndThrowAppAsync(request, cancellationToken);
 
+        var branchId = await _branchAccess.ResolveTargetBranchAsync(request.BranchId, cancellationToken: cancellationToken);
         var branch = await _db.Branches
-            .SingleOrDefaultAsync(b => b.TenantId == tenantId && b.Id == request.BranchId, cancellationToken)
-            ?? throw new NotFoundException(ErrorCodes.BranchNotFound, "Branch not found.");
+            .SingleAsync(b => b.TenantId == tenantId && b.Id == branchId, cancellationToken);
 
         var product = await _db.Products
             .Include(p => p.Variants)
@@ -209,6 +214,7 @@ public sealed class InventoryService : IInventoryService
     public async Task<PagedResult<StockMovementDto>> ListMovementsAsync(MovementListQuery query, CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
+        query = query with { BranchId = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken) };
 
         var rows =
             from m in _db.StockMovements.AsNoTracking().Where(m => m.TenantId == tenantId)

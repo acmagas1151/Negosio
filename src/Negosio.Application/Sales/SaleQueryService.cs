@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Catalog;
 using Negosio.Application.Common;
 
@@ -9,16 +10,19 @@ public sealed class SaleQueryService : ISaleQueryService
 {
     private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
+    private readonly IBranchAccessResolver _branchAccess;
 
-    public SaleQueryService(ITenantDbContext db, ICurrentUser currentUser)
+    public SaleQueryService(ITenantDbContext db, ICurrentUser currentUser, IBranchAccessResolver branchAccess)
     {
         _db = db;
         _currentUser = currentUser;
+        _branchAccess = branchAccess;
     }
 
     public async Task<PagedResult<SaleSummaryDto>> ListAsync(SaleListQuery query, CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
+        query = query with { BranchId = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken) };
 
         var sales = _db.Sales.AsNoTracking().Where(s => s.TenantId == tenantId);
 
@@ -97,6 +101,8 @@ public sealed class SaleQueryService : ISaleQueryService
             .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == id, cancellationToken)
             ?? throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
 
+        await GuardBranchAsync(sale.BranchId, cancellationToken);
+
         var branchName = await _db.Branches.Where(b => b.Id == sale.BranchId).Select(b => b.Name).FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
         var cashierName = await _db.Users.Where(u => u.Id == sale.CreatedByUserId).Select(u => u.FirstName + " " + u.LastName).FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
 
@@ -152,6 +158,16 @@ public sealed class SaleQueryService : ISaleQueryService
                 i.Id, i.SaleItemId, i.ProductVariantId, i.ProductNameSnapshot, i.Quantity, i.RefundAmount, i.Restocked)).ToList(),
             r.Refunds.Select(rp => new ReceiptPaymentDto(rp.Method.ToString(), rp.Amount)).ToList()))
             .ToList();
+    }
+
+    /// <summary>A branch-scoped user may not see another branch's sale — 404, not 403, to hide its existence.</summary>
+    internal async Task GuardBranchAsync(Guid saleBranchId, CancellationToken cancellationToken)
+    {
+        var assigned = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
+        if (assigned is { } branchId && branchId != saleBranchId)
+        {
+            throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
+        }
     }
 
     private Guid RequireTenant()

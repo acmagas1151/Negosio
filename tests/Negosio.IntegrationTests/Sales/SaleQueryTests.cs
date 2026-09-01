@@ -68,7 +68,7 @@ public class SaleQueryTests : IntegrationTest
         var ownerView = await Client.GetFromJsonAsync<SaleDetailDto>($"/api/sales/{sale.SaleId}", TestJson.Options);
         ownerView!.Items.Single().CostPriceSnapshot.Should().NotBeNull();
 
-        var cashierToken = await AddTenantUserTokenAsync("cashier@example.com", UserRole.Cashier);
+        var cashierToken = await AddTenantUserTokenAsync("cashier@example.com", UserRole.Cashier, branchId);
 
         Authorize(cashierToken);
         var cashierView = await Client.GetFromJsonAsync<SaleDetailDto>($"/api/sales/{sale.SaleId}", TestJson.Options);
