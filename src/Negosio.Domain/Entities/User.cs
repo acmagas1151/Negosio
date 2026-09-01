@@ -66,6 +66,35 @@ public class User : Entity
         return new User(id, tenantId, NormalizeEmail(normalizedEmail), firstName.Trim(), lastName.Trim(), role);
     }
 
+    /// <summary>Change this user's role. The Owner role is never assignable through this path.</summary>
+    public void ChangeRole(UserRole role)
+    {
+        if (role == UserRole.Owner)
+        {
+            throw new InvalidOperationException("The Owner role cannot be assigned.");
+        }
+
+        if (Role == UserRole.Owner)
+        {
+            throw new InvalidOperationException("An Owner's role cannot be changed.");
+        }
+
+        Role = role;
+        Touch();
+    }
+
+    public void Deactivate()
+    {
+        IsActive = false;
+        Touch();
+    }
+
+    public void Reactivate()
+    {
+        IsActive = true;
+        Touch();
+    }
+
     /// <summary>Single source of truth for email normalization used when saving and when comparing.</summary>
     public static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
 }

@@ -569,3 +569,60 @@ export interface UpdateTaxSettingsRequest {
   taxRatePercent: number
   pricesIncludeTax: boolean
 }
+
+// ---- Phase 4: Staff & access management ----
+// One email = one Negosio account = one tenant (unchanged). Staff are invited by an Owner/Admin,
+// set their own name + password on acceptance, and hold exactly one role.
+
+export type StaffMemberKind = 'Member' | 'Invitation'
+
+export type StaffMemberStatus = 'Active' | 'Deactivated' | 'Invited' | 'Expired'
+
+export interface StaffMemberDto {
+  id: string
+  kind: StaffMemberKind
+  firstName: string | null
+  lastName: string | null
+  email: string
+  role: UserRole
+  status: StaffMemberStatus
+  joinedAtUtc: string | null
+  invitedAtUtc: string | null
+  expiresAtUtc: string | null
+  invitedByName: string | null
+}
+
+export interface InviteStaffRequest {
+  email: string
+  role: UserRole
+}
+
+export interface ChangeStaffRoleRequest {
+  role: UserRole
+}
+
+/** `acceptPath` (e.g. "/invite/<token>") is returned outside Production only — no email provider yet. */
+export interface StaffInvitationResultDto {
+  invitationId: string
+  email: string
+  role: UserRole
+  expiresAtUtc: string
+  acceptPath: string | null
+}
+
+export interface InvitationPreviewDto {
+  businessName: string
+  email: string
+  role: UserRole
+  expiresAtUtc: string
+}
+
+export interface AcceptInvitationRequest {
+  firstName: string
+  lastName: string
+  password: string
+}
+
+export interface AcceptInvitationResultDto {
+  email: string
+}

@@ -46,7 +46,7 @@ public abstract class IntegrationTest : IAsyncLifetime
         using var scope = Factory.Services.CreateScope();
         var platform = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
         await platform.Database.ExecuteSqlRawAsync(
-            "DELETE FROM PlatformUserLogins; DELETE FROM TenantDatabases; DELETE FROM Tenants;");
+            "DELETE FROM StaffInvitations; DELETE FROM PlatformUserLogins; DELETE FROM TenantDatabases; DELETE FROM Tenants;");
     }
 
     /// <summary>Run against the current tenant's operational database.</summary>
@@ -115,19 +115,31 @@ public abstract class IntegrationTest : IAsyncLifetime
         return login;
     }
 
-    /// <summary>Mint a token for an extra user created directly in the current tenant's database.</summary>
+    /// <summary>
+    /// Create an extra user in the current tenant — both the tenant profile and the platform login
+    /// (so the per-request account-state check in ConfigureJwtBearerOptions passes) — and mint a token.
+    /// </summary>
     protected async Task<string> AddTenantUserTokenAsync(string email, Negosio.Domain.Enums.UserRole role)
     {
-        var user = await InScopeAsync(async db =>
+        var userId = Guid.NewGuid();
+
+        await InScopeAsync(async db =>
         {
-            var u = Negosio.Domain.Entities.User.Create(Guid.NewGuid(), CurrentTenantId, email, "Test", "User", role);
-            db.Users.Add(u);
+            db.Users.Add(Negosio.Domain.Entities.User.Create(userId, CurrentTenantId, email, "Test", "User", role));
             await db.SaveChangesAsync();
-            return u;
+            return true;
+        });
+
+        await InPlatformScopeAsync(async platform =>
+        {
+            platform.PlatformUserLogins.Add(Negosio.Domain.Entities.PlatformUserLogin.Create(
+                userId, CurrentTenantId, email, "not-a-real-hash", role));
+            await platform.SaveChangesAsync();
+            return true;
         });
 
         var generator = Factory.Services.GetRequiredService<IJwtTokenGenerator>();
-        return generator.Generate(new TokenSubject(user.Id, user.TenantId, user.Role, user.Email)).Value;
+        return generator.Generate(new TokenSubject(userId, CurrentTenantId, role, email)).Value;
     }
 
     protected async Task<CategoryDto> CreateCategoryAsync(string name = "Beverages", string? description = null)

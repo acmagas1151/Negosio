@@ -11,6 +11,7 @@ using Negosio.Application.Pos;
 using Negosio.Application.Registers;
 using Negosio.Application.Sales;
 using Negosio.Application.Settings;
+using Negosio.Application.Staff;
 
 namespace Negosio.Application;
 
@@ -45,6 +46,10 @@ public static class DependencyInjection
         services.AddScoped<IReceiptService, ReceiptService>();
         services.AddScoped<IReturnService, ReturnService>();
         services.AddScoped<ITenantSettingsService, TenantSettingsService>();
+
+        // Phase 4: Staff & access management
+        services.AddScoped<IStaffService, StaffService>();
+        services.AddScoped<IStaffInvitationService, StaffInvitationService>();
 
         return services;
     }

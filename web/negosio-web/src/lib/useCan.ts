@@ -1,7 +1,8 @@
+import { useMemo } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import type { UserRole } from '../api/types'
 
-type Capability =
+export type Capability =
   | 'catalog:write'
   | 'inventory:write'
   | 'costs:view'
@@ -10,6 +11,7 @@ type Capability =
   | 'sales:view'
   | 'refund:manage'
   | 'settings:write'
+  | 'staff:manage'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
 // 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
@@ -31,6 +33,7 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   'sales:view': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
   'refund:manage': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
   'settings:write': new Set<UserRole>(['Owner', 'Admin']),
+  'staff:manage': new Set<UserRole>(['Owner', 'Admin']),
 }
 
 /**
@@ -41,4 +44,13 @@ export function useCan(capability: Capability): boolean {
   const { user } = useAuth()
   if (!user) return false
   return CAPABILITY_ROLES[capability].has(user.role)
+}
+
+/** Returns a stable predicate — for callers (nav) that must check several capabilities at once. */
+export function useCapabilities(): (capability: Capability) => boolean {
+  const { user } = useAuth()
+  return useMemo(() => {
+    const role = user?.role
+    return (capability: Capability) => (role ? CAPABILITY_ROLES[capability].has(role) : false)
+  }, [user?.role])
 }

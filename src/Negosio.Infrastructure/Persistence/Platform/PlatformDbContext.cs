@@ -23,6 +23,8 @@ public sealed class PlatformDbContext : DbContext, IPlatformDbContext
 
     public DbSet<PlatformUserLogin> PlatformUserLogins => Set<PlatformUserLogin>();
 
+    public DbSet<StaffInvitation> StaffInvitations => Set<StaffInvitation>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(

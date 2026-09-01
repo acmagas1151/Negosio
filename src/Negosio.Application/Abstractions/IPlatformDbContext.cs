@@ -16,6 +16,8 @@ public interface IPlatformDbContext
 
     DbSet<PlatformUserLogin> PlatformUserLogins { get; }
 
+    DbSet<StaffInvitation> StaffInvitations { get; }
+
     DatabaseFacade Database { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

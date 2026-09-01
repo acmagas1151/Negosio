@@ -53,4 +53,20 @@ public static class ErrorCodes
     public const string ReturnNotAllowed = "RETURN_NOT_ALLOWED";
     public const string ReturnQuantityExceeded = "RETURN_QUANTITY_EXCEEDED";
     public const string DuplicateCheckoutRequest = "DUPLICATE_CHECKOUT_REQUEST";
+
+    // ---- Phase 4: Staff & access management ----
+    public const string StaffNotFound = "STAFF_NOT_FOUND";
+    public const string InvitationNotFound = "INVITATION_NOT_FOUND";
+    public const string InvitationInvalid = "INVITATION_INVALID";        // expired / revoked / already accepted
+    public const string InvitationAlreadyAccepted = "INVITATION_ALREADY_ACCEPTED";
+    public const string StaffEmailInUse = "STAFF_EMAIL_IN_USE";          // email already has a login (this or another tenant)
+    public const string StaffAlreadyInvited = "STAFF_ALREADY_INVITED";
+    public const string RoleNotAssignable = "ROLE_NOT_ASSIGNABLE";       // acting user may not grant this role
+    public const string OwnerRoleForbidden = "OWNER_ROLE_FORBIDDEN";     // Owner is never assignable (no transfer yet)
+    public const string OwnerProtected = "OWNER_PROTECTED";              // Admin cannot act on an Owner
+    public const string StaffSelfAction = "STAFF_SELF_ACTION";           // cannot deactivate / re-role yourself
+    public const string LastOwner = "LAST_OWNER";                        // cannot remove the tenant's last Owner
+    public const string StaffAlreadyActive = "STAFF_ALREADY_ACTIVE";
+    public const string StaffAlreadyDeactivated = "STAFF_ALREADY_DEACTIVATED";
+    public const string SessionStale = "SESSION_STALE";                  // JWT role/active state no longer matches — sign in again
 }

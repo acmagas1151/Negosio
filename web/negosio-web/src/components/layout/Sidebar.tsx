@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { cn } from '../../lib/cn'
 import { NAV_GROUPS } from '../../lib/nav'
+import { useCapabilities } from '../../lib/useCan'
 import { Badge } from '../ui'
 import { Brand } from './Brand'
 
@@ -10,6 +11,14 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onNavigate }: SidebarProps) {
+  const can = useCapabilities()
+
+  // Drop items the current role can't use, then drop any group that empties out.
+  const groups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !item.capability || can(item.capability)),
+  })).filter((group) => group.items.length > 0)
+
   return (
     <div className="flex h-full flex-col gap-6 border-r border-border bg-surface px-4 py-5">
       <div className="px-2">
@@ -17,7 +26,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       </div>
 
       <nav className="flex-1 space-y-5" aria-label="Main">
-        {NAV_GROUPS.map((group, i) => (
+        {groups.map((group, i) => (
           <div key={group.label ?? `group-${i}`}>
             {group.label && (
               <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted">

@@ -1,9 +1,9 @@
-using System.Text.RegularExpressions;
 using FluentValidation;
+using Negosio.Application.Common;
 
 namespace Negosio.Application.Auth;
 
-public sealed partial class RegisterRequestValidator : AbstractValidator<RegisterRequest>
+public sealed class RegisterRequestValidator : AbstractValidator<RegisterRequest>
 {
     public RegisterRequestValidator()
     {
@@ -35,37 +35,7 @@ public sealed partial class RegisterRequestValidator : AbstractValidator<Registe
                 .NotEmpty().WithMessage("Owner email is required.")
                 .EmailAddress().WithMessage("Owner email is not a valid email address.")
                 .MaximumLength(256);
-            RuleFor(x => x.Owner.Password)
-                .NotEmpty().WithMessage("Owner password is required.")
-                .MinimumLength(8).WithMessage("Password must be at least 8 characters long.")
-                .MaximumLength(128)
-                .Must(HasRequiredComplexity)
-                .WithMessage("Password must contain an uppercase letter, a lowercase letter, a digit, and a special character.");
+            RuleFor(x => x.Owner.Password).Password();
         });
     }
-
-    private static bool HasRequiredComplexity(string? password)
-    {
-        if (string.IsNullOrEmpty(password))
-        {
-            return false;
-        }
-
-        return UppercaseRegex().IsMatch(password)
-            && LowercaseRegex().IsMatch(password)
-            && DigitRegex().IsMatch(password)
-            && SpecialCharRegex().IsMatch(password);
-    }
-
-    [GeneratedRegex("[A-Z]")]
-    private static partial Regex UppercaseRegex();
-
-    [GeneratedRegex("[a-z]")]
-    private static partial Regex LowercaseRegex();
-
-    [GeneratedRegex("[0-9]")]
-    private static partial Regex DigitRegex();
-
-    [GeneratedRegex("[^a-zA-Z0-9]")]
-    private static partial Regex SpecialCharRegex();
 }
