@@ -11,7 +11,8 @@ public sealed record BranchDto(
     string Province,
     string? PostalCode,
     bool IsActive,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    int AssignedStaffCount);
 
 public sealed record CreateBranchRequest(
     string Name,

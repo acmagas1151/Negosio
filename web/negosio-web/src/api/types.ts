@@ -212,6 +212,7 @@ export interface BranchDto {
   postalCode: string | null
   isActive: boolean
   createdAtUtc: string
+  assignedStaffCount: number
 }
 
 export interface CreateBranchRequest {

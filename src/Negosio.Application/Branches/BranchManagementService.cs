@@ -118,10 +118,11 @@ public sealed class BranchManagementService : IBranchManagementService
         return await GetAsync(id, cancellationToken);
     }
 
-    private static System.Linq.Expressions.Expression<Func<Branch, BranchDto>> Projection =>
+    private System.Linq.Expressions.Expression<Func<Branch, BranchDto>> Projection =>
         b => new BranchDto(
             b.Id, b.Name, b.Code, b.AddressLine1, b.AddressLine2, b.City, b.Province, b.PostalCode,
-            b.IsActive, b.CreatedAtUtc);
+            b.IsActive, b.CreatedAtUtc,
+            _db.Users.Count(u => u.BranchId == b.Id && u.IsActive));
 
     private Guid RequireTenant()
     {

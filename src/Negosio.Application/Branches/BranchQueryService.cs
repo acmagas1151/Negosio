@@ -50,8 +50,9 @@ public sealed class BranchQueryService : IBranchQueryService
             .ToListAsync(cancellationToken);
     }
 
-    private static Expression<Func<Branch, BranchDto>> Projection =>
+    private Expression<Func<Branch, BranchDto>> Projection =>
         b => new BranchDto(
             b.Id, b.Name, b.Code, b.AddressLine1, b.AddressLine2, b.City, b.Province, b.PostalCode,
-            b.IsActive, b.CreatedAtUtc);
+            b.IsActive, b.CreatedAtUtc,
+            _db.Users.Count(u => u.BranchId == b.Id && u.IsActive));
 }

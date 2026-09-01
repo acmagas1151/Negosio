@@ -188,7 +188,13 @@ export default function BranchesPage() {
         title={confirm?.action === 'deactivate' ? 'Deactivate branch' : 'Reactivate branch'}
         message={
           confirm?.action === 'deactivate'
-            ? 'Staff assigned to this branch will lose access until you reactivate it or reassign them. New POS, register and stock activity is blocked. Historical data is kept.'
+            ? `${
+                confirm.branch.assignedStaffCount > 0
+                  ? `${confirm.branch.assignedStaffCount} staff ${
+                      confirm.branch.assignedStaffCount === 1 ? 'member is' : 'members are'
+                    } assigned here and will be unable to access Negosio until you reactivate the branch or reassign them. `
+                  : ''
+              }New POS, register and stock activity is blocked. Existing data and open register sessions are kept.`
             : 'The branch becomes selectable for operational work again, and its assigned staff can sign in.'
         }
         confirmLabel={confirm?.action === 'deactivate' ? 'Deactivate' : 'Reactivate'}
