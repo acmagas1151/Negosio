@@ -9,6 +9,8 @@ import type {
   PagedResult,
   PosCatalogItemDto,
   PosCatalogParams,
+  PosContextDto,
+  PosRegisterDto,
   ReceiptDto,
   RegisterDto,
   RegisterListParams,
@@ -39,6 +41,14 @@ export const sessionsApi = {
     apiRequest<RegisterSessionDto>(`/api/register-sessions/current${qs({ ...params })}`),
   close: (id: string, body: CloseRegisterSessionRequest) =>
     apiRequest<RegisterSessionDto>(`/api/register-sessions/${id}/close`, { method: 'POST', body }),
+  forceClose: (id: string, body: CloseRegisterSessionRequest) =>
+    apiRequest<RegisterSessionDto>(`/api/register-sessions/${id}/force-close`, { method: 'POST', body }),
+}
+
+export const posApi = {
+  context: () => apiRequest<PosContextDto>('/api/pos/context'),
+  registers: (branchId?: string) =>
+    apiRequest<PosRegisterDto[]>(`/api/pos/registers${qs({ branchId })}`),
 }
 
 export const posCatalogApi = {

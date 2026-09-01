@@ -6,6 +6,8 @@ import { staffApi } from '../api/staff'
 import type { StaffMemberDto } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { roleLabel } from '../lib/roles'
+import { isBranchScoped } from '../lib/roles'
+import { ChangeBranchModal } from '../components/staff/ChangeBranchModal'
 import { ChangeRoleModal } from '../components/staff/ChangeRoleModal'
 import { InviteStaffModal } from '../components/staff/InviteStaffModal'
 import { RoleBadge, StaffStatusBadge } from '../components/staff/StaffBadges'
@@ -40,6 +42,7 @@ export default function StaffPage() {
   const [statusFilter, setStatusFilter] = useState('')
   const [inviteOpen, setInviteOpen] = useState(false)
   const [roleTarget, setRoleTarget] = useState<StaffMemberDto | null>(null)
+  const [branchTarget, setBranchTarget] = useState<StaffMemberDto | null>(null)
   const [confirm, setConfirm] = useState<{ member: StaffMemberDto; action: 'deactivate' | 'reactivate' | 'revoke' } | null>(null)
 
   const query = useQuery({ queryKey: ['staff'], queryFn: staffApi.list })
@@ -100,6 +103,7 @@ export default function StaffPage() {
       <Table.HeaderCell>Name</Table.HeaderCell>
       <Table.HeaderCell>Email</Table.HeaderCell>
       <Table.HeaderCell>Role</Table.HeaderCell>
+      <Table.HeaderCell>Branch</Table.HeaderCell>
       <Table.HeaderCell>Status</Table.HeaderCell>
       <Table.HeaderCell align="right">Actions</Table.HeaderCell>
     </Table.Head>
@@ -158,7 +162,7 @@ export default function StaffPage() {
             <Table.Body>
               {Array.from({ length: 4 }).map((_, i) => (
                 <Table.Row key={i}>
-                  {Array.from({ length: 5 }).map((__, j) => (
+                  {Array.from({ length: 6 }).map((__, j) => (
                     <Table.Cell key={j}>
                       <SkeletonText className={j === 0 ? 'w-32' : 'w-20'} />
                     </Table.Cell>
@@ -198,6 +202,7 @@ export default function StaffPage() {
                   <Table.Cell>
                     <RoleBadge role={m.role} />
                   </Table.Cell>
+                  <Table.Cell className="text-text-secondary">{m.branchName ?? '—'}</Table.Cell>
                   <Table.Cell>
                     <StaffStatusBadge status={m.status} />
                   </Table.Cell>
@@ -226,6 +231,11 @@ export default function StaffPage() {
                           <Button variant="ghost" size="sm" onClick={() => setRoleTarget(m)}>
                             Change role
                           </Button>
+                          {isBranchScoped(m.role) && (
+                            <Button variant="ghost" size="sm" onClick={() => setBranchTarget(m)}>
+                              Change branch
+                            </Button>
+                          )}
                           {m.status === 'Deactivated' ? (
                             <Button
                               variant="ghost"
@@ -258,6 +268,7 @@ export default function StaffPage() {
 
       <InviteStaffModal open={inviteOpen} onClose={() => setInviteOpen(false)} />
       <ChangeRoleModal open={roleTarget !== null} onClose={() => setRoleTarget(null)} member={roleTarget} />
+      <ChangeBranchModal open={branchTarget !== null} onClose={() => setBranchTarget(null)} member={branchTarget} />
       <ConfirmDialog
         open={confirm !== null}
         onClose={() => setConfirm(null)}

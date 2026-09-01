@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { ClipboardList, ReceiptText } from 'lucide-react'
+import { branchesApi } from '../api/branches'
 import { salesApi } from '../api/pos'
 import type { SaleStatus } from '../api/types'
 import { usePagedQuery } from '../hooks/usePagedQuery'
@@ -18,19 +19,38 @@ import {
   Table,
 } from '../components/ui'
 
-type Filters = { status: string | undefined; from: string | undefined; to: string | undefined }
+type Filters = {
+  status: string | undefined
+  from: string | undefined
+  to: string | undefined
+  branchId: string | undefined
+}
 
-const DEFAULT_FILTERS: Filters = { status: undefined, from: undefined, to: undefined }
+const DEFAULT_FILTERS: Filters = { status: undefined, from: undefined, to: undefined, branchId: undefined }
 
 const STATUSES: SaleStatus[] = ['Completed', 'PartiallyRefunded', 'Refunded', 'Voided']
 
 export default function SalesPage() {
   const q = usePagedQuery<Filters>({ defaultFilters: DEFAULT_FILTERS })
 
+  const branchesQuery = useQuery({
+    queryKey: ['branches', 'sales-filter'],
+    queryFn: () => branchesApi.list({ includeInactive: true }),
+  })
+  const branches = branchesQuery.data ?? []
+  const multiBranch = branches.length > 1
+
   const query = useQuery({
     queryKey: [
       'sales',
-      { page: q.page, search: q.search, status: q.filters.status, from: q.filters.from, to: q.filters.to },
+      {
+        page: q.page,
+        search: q.search,
+        status: q.filters.status,
+        from: q.filters.from,
+        to: q.filters.to,
+        branchId: q.filters.branchId,
+      },
     ],
     queryFn: () =>
       salesApi.list({
@@ -38,17 +58,21 @@ export default function SalesPage() {
         pageSize: q.pageSize,
         search: q.search || undefined,
         status: (q.filters.status as SaleStatus) || undefined,
+        branchId: q.filters.branchId,
         // Whole-day bounds in the browser's local zone (no tenant-timezone model yet — accepted).
         fromUtc: q.filters.from ? new Date(`${q.filters.from}T00:00:00.000`).toISOString() : undefined,
         toUtc: q.filters.to ? new Date(`${q.filters.to}T23:59:59.999`).toISOString() : undefined,
       }),
   })
 
-  const filtered = Boolean(q.search || q.filters.status || q.filters.from || q.filters.to)
+  const filtered = Boolean(
+    q.search || q.filters.status || q.filters.from || q.filters.to || q.filters.branchId,
+  )
 
   const header = (
     <Table.Head>
       <Table.HeaderCell>Sale #</Table.HeaderCell>
+      {multiBranch && <Table.HeaderCell>Branch</Table.HeaderCell>}
       <Table.HeaderCell>Date</Table.HeaderCell>
       <Table.HeaderCell align="right">Items</Table.HeaderCell>
       <Table.HeaderCell align="right">Total</Table.HeaderCell>
@@ -56,6 +80,7 @@ export default function SalesPage() {
       <Table.HeaderCell>Status</Table.HeaderCell>
     </Table.Head>
   )
+  const colCount = multiBranch ? 7 : 6
 
   return (
     <DashboardLayout title="Sales">
@@ -82,6 +107,22 @@ export default function SalesPage() {
               </option>
             ))}
           </Select>
+          {multiBranch && (
+            <Select
+              aria-label="Branch"
+              className="sm:max-w-[12rem]"
+              value={q.filters.branchId ?? ''}
+              onChange={(e) => q.setFilter('branchId', e.target.value || undefined)}
+            >
+              <option value="">All branches</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                  {b.isActive ? '' : ' (inactive)'}
+                </option>
+              ))}
+            </Select>
+          )}
           <input
             type="date"
             aria-label="From date"
@@ -106,7 +147,7 @@ export default function SalesPage() {
             <Table.Body>
               {Array.from({ length: 6 }).map((_, i) => (
                 <Table.Row key={i}>
-                  {Array.from({ length: 6 }).map((__, j) => (
+                  {Array.from({ length: colCount }).map((__, j) => (
                     <Table.Cell key={j}>
                       <SkeletonText className={j === 0 ? 'w-32' : 'w-16'} />
                     </Table.Cell>
@@ -140,6 +181,7 @@ export default function SalesPage() {
                         #{s.saleNumber}
                       </Link>
                     </Table.Cell>
+                    {multiBranch && <Table.Cell>{s.branchName}</Table.Cell>}
                     <Table.Cell>{new Date(s.createdAtUtc).toLocaleString()}</Table.Cell>
                     <Table.Cell align="right">{s.itemCount}</Table.Cell>
                     <Table.Cell align="right" className="font-semibold text-text-primary">

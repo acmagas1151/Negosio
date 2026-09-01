@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
+import { branchesApi } from '../api/branches'
 import { salesApi } from '../api/pos'
 import { PAYMENT_METHOD_LABELS } from '../lib/pos'
 import { formatMoney } from '../lib/format'
@@ -24,6 +25,11 @@ export default function SaleDetailPage() {
     queryFn: () => salesApi.get(id),
     enabled: !!id,
   })
+  const branchesQuery = useQuery({
+    queryKey: ['branches', 'sales-filter'],
+    queryFn: () => branchesApi.list({ includeInactive: true }),
+  })
+  const multiBranch = (branchesQuery.data?.length ?? 0) > 1
 
   return (
     <DashboardLayout title="Sale">
@@ -56,8 +62,8 @@ export default function SaleDetailPage() {
                       <StatusBadge status={d.sale.status} />
                     </div>
                     <p className="mt-1 text-[13px] text-text-muted">
-                      {new Date(d.sale.createdAtUtc).toLocaleString()} · {d.sale.cashierName} ·{' '}
-                      {d.sale.branchName}
+                      {new Date(d.sale.createdAtUtc).toLocaleString()} · {d.sale.cashierName}
+                      {multiBranch ? ` · ${d.sale.branchName}` : ''}
                     </p>
                   </div>
                   <div className="flex gap-2">

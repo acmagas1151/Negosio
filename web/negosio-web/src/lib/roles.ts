@@ -32,3 +32,10 @@ export function assignableRoles(actor: UserRole): UserRole[] {
   if (actor === 'Admin') return NON_OWNER_ROLES.filter((r) => r !== 'Admin')
   return []
 }
+
+const BRANCH_SCOPED: UserRole[] = ['Manager', 'Cashier', 'InventoryStaff', 'KitchenStaff', 'Viewer']
+
+/** Mirrors BranchRoles on the backend — every role except Owner/Admin is bound to one branch. */
+export function isBranchScoped(role: UserRole): boolean {
+  return BRANCH_SCOPED.includes(role)
+}

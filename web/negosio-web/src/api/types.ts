@@ -368,6 +368,36 @@ export interface CloseRegisterSessionRequest {
   closingCash: number
 }
 
+// ---- POS: branch/register context ----
+
+export interface PosBranchDto {
+  id: string
+  name: string
+  code: string
+}
+
+export interface PosContextDto {
+  branchId: string | null
+  branchName: string | null
+  canPickBranch: boolean
+  branches: PosBranchDto[]
+}
+
+export interface PosOpenSessionDto {
+  sessionId: string
+  openedByUserId: string
+  openedByName: string
+  mine: boolean
+}
+
+export interface PosRegisterDto {
+  id: string
+  name: string
+  code: string
+  isActive: boolean
+  openSession: PosOpenSessionDto | null
+}
+
 // ---- POS: catalog & checkout ----
 
 export type PaymentMethod = 'Cash' | 'Card' | 'GCash' | 'Maya' | 'BankTransfer' | 'Other'
@@ -608,15 +638,23 @@ export interface StaffMemberDto {
   invitedAtUtc: string | null
   expiresAtUtc: string | null
   invitedByName: string | null
+  branchId: string | null
+  branchName: string | null
 }
 
 export interface InviteStaffRequest {
   email: string
   role: UserRole
+  branchId?: string | null
 }
 
 export interface ChangeStaffRoleRequest {
   role: UserRole
+  branchId?: string | null
+}
+
+export interface ChangeStaffBranchRequest {
+  branchId: string
 }
 
 /** `acceptPath` (e.g. "/invite/<token>") is returned outside Production only — no email provider yet. */

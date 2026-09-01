@@ -2,6 +2,7 @@ import { apiRequest } from './client'
 import type {
   AcceptInvitationRequest,
   AcceptInvitationResultDto,
+  ChangeStaffBranchRequest,
   ChangeStaffRoleRequest,
   InvitationPreviewDto,
   InviteStaffRequest,
@@ -24,6 +25,9 @@ export const staffApi = {
 
   changeRole: (id: string, body: ChangeStaffRoleRequest) =>
     apiRequest<StaffMemberDto>(`/api/staff/${id}/role`, { method: 'PUT', body }),
+
+  changeBranch: (id: string, body: ChangeStaffBranchRequest) =>
+    apiRequest<StaffMemberDto>(`/api/staff/${id}/branch`, { method: 'POST', body }),
 
   deactivate: (id: string) =>
     apiRequest<StaffMemberDto>(`/api/staff/${id}/deactivate`, { method: 'POST' }),
