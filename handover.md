@@ -1,11 +1,10 @@
 # Handover Summary
 
 > Session date: 2026-09-01 · Supersedes the "POS frontend vertical" handover.
-> **Active branch: `feature/staff-management`** — Phase 4 (Staff & Access Management),
-> built and browser-verified this session. **9 commits ahead of `master`. NOT merged —
-> waiting for your review.**
-> `master` now includes the merged `feature/retail-polish` (dashboard metrics + tax
-> settings page) from the previous session and is pushed to `origin`.
+> **Phase 4 (Staff & Access Management) is MERGED to `master` (`bcc04e1`) and pushed to
+> `origin`.** Built and browser-verified this session on `feature/staff-management`, then
+> merged on the user's go-ahead. `master` also carries the earlier `feature/retail-polish`
+> (dashboard metrics + tax settings).
 
 ---
 
@@ -204,7 +203,9 @@ Change-role and Invite modals were driven via their API endpoints rather than cl
 
 ## 7. Git State
 
-- **`feature/staff-management`** — 9 commits ahead of `master`, working tree clean:
+- **Merged:** `feature/staff-management` → `master` as `bcc04e1` (`--no-ff`), pushed to
+  `origin`. Post-merge `dotnet build` 0/0, unit tests 76/76 green.
+- The 9 feature commits, working tree clean:
 
   | | |
   |---|---|
@@ -218,9 +219,8 @@ Change-role and Invite modals were driven via their API endpoints rather than cl
   | `355170e` | test(routing): a token for a non-existent user is now rejected at auth (401) |
   | `5ba64cd` | fix(web): keep the invite password hint to one line |
 
-- **`master`** — includes the merged `feature/retail-polish`; pushed to `origin`; unchanged
-  this session.
-- **NOT merged.** Awaiting review. Do not merge without the user's word.
+- **`master`** — `bcc04e1`, includes both `feature/retail-polish` and now
+  `feature/staff-management`; pushed to `origin`.
 
 ## 8. Remaining Limitations
 
@@ -257,20 +257,19 @@ SaaS platform (modular monolith, database-per-tenant) for retail & F&B. Read han
 (repo root) first.
 
 STATE (2026-09-01):
-  - feature/staff-management has PHASE 4 (Staff & Access Management): StaffInvitation domain
-    + platform migration, StaffService / StaffInvitationService, api/staff endpoints,
-    OnTokenValidated per-request active+role check, StaffPage + InviteAcceptPage +
-    capability-gated nav. 9 commits ahead of master, NOT merged, awaiting review.
+  - PHASE 4 (Staff & Access Management) is MERGED to master (bcc04e1) and pushed to origin:
+    StaffInvitation domain + platform migration, StaffService / StaffInvitationService,
+    api/staff endpoints, OnTokenValidated per-request active+role check, StaffPage +
+    InviteAcceptPage + capability-gated nav.
   - Verified: dotnet test 76 unit + 114 integration green · npm lint+build clean ·
     headless-Chrome walkthrough of invite → accept → login → RBAC → role change → deactivate
-    → reactivate, zero console errors.
-  - master has the merged retail-polish (dashboard metrics + tax settings), pushed to origin.
+    → reactivate, zero console errors. Post-merge build 0/0, unit 76/76.
+  - master also has the earlier retail-polish (dashboard metrics + tax settings).
 
 DO NOW:
-  1. Ask the user whether to (a) review + merge feature/staff-management, or (b) start
-     Phase 5. Do NOT begin Phase 5 automatically. Do NOT merge without their word.
-  2. If reviewing: superpowers:requesting-code-review, then
-     superpowers:finishing-a-development-branch.
+  1. Ask the user what to build next. Do NOT begin Phase 5 automatically.
+  2. For any new feature: brainstorm first (superpowers:brainstorming), work on a feature
+     branch, merge only on the user's word.
 
 GUARDRAILS — do not undo:
   - NO "Co-Authored-By: Claude" / "Generated with Claude Code" trailer on commits.
@@ -295,6 +294,5 @@ dotnet test Negosio.sln                 # 76 unit + 114 integration (~7 min)
 ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Negosio.Api --launch-profile http
 cd web/negosio-web && npm run lint && npm run build
 cd web/negosio-web && npm run dev       # http://localhost:5173
-git checkout feature/staff-management
-git log --oneline master..HEAD          # the 9 commits under review
+git log --oneline -12                   # Phase 4 landed at bcc04e1
 ```
