@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Building2,
   Calculator,
   ClipboardList,
   History,
@@ -71,6 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'Reports', icon: BarChart3, enabled: false },
       { label: 'Staff', icon: Users, to: '/staff', enabled: true, capability: 'staff:manage' },
+      { label: 'Branches', icon: Building2, to: '/branches', enabled: true, capability: 'branch:manage' },
       {
         label: 'Settings',
         icon: Settings,

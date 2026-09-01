@@ -41,7 +41,7 @@ export default function PosPage() {
   const navigate = useNavigate()
   const canOperate = useCan('pos:operate')
 
-  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: branchesApi.list })
+  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: () => branchesApi.list() })
   const branch = branchesQuery.data?.[0]
 
   const registersQuery = useQuery({

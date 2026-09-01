@@ -12,6 +12,7 @@ export type Capability =
   | 'refund:manage'
   | 'settings:write'
   | 'staff:manage'
+  | 'branch:manage'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
 // 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
@@ -34,6 +35,7 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   'refund:manage': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
   'settings:write': new Set<UserRole>(['Owner', 'Admin']),
   'staff:manage': new Set<UserRole>(['Owner', 'Admin']),
+  'branch:manage': new Set<UserRole>(['Owner', 'Admin']),
 }
 
 /**

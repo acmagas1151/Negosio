@@ -205,8 +205,26 @@ export interface BranchDto {
   id: string
   name: string
   code: string
+  addressLine1: string
+  addressLine2: string | null
+  city: string
+  province: string
+  postalCode: string | null
   isActive: boolean
+  createdAtUtc: string
 }
+
+export interface CreateBranchRequest {
+  name: string
+  code: string
+  addressLine1: string
+  addressLine2: string | null
+  city: string
+  province: string
+  postalCode: string | null
+}
+
+export type UpdateBranchRequest = Omit<CreateBranchRequest, 'code'>
 
 // ---- Inventory ----
 

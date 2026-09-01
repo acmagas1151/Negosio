@@ -42,7 +42,7 @@ export default function RegistersPage() {
   const [editing, setEditing] = useState<RegisterDto | null>(null)
   const [confirmTarget, setConfirmTarget] = useState<RegisterDto | null>(null)
 
-  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: branchesApi.list })
+  const branchesQuery = useQuery({ queryKey: ['branches'], queryFn: () => branchesApi.list() })
   const branches = branchesQuery.data ?? []
   const multiBranch = branches.length > 1
 
