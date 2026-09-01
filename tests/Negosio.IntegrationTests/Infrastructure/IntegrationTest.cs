@@ -178,6 +178,16 @@ public abstract class IntegrationTest : IAsyncLifetime
     protected Task<Guid> GetMainBranchIdAsync(LoginResponse login) =>
         InTenantScopeAsync(login.User.TenantId, db => db.Branches.Select(b => b.Id).FirstAsync());
 
+    /// <summary>Create an extra branch in the current tenant via the API (Owner/Admin token required).</summary>
+    protected async Task<Negosio.Application.Branches.BranchDto> CreateBranchAsync(
+        string name = "BGC", string code = "BGC", string city = "Taguig", string province = "Metro Manila")
+    {
+        var response = await Client.PostAsJsonAsync("/api/branches",
+            new Negosio.Application.Branches.CreateBranchRequest(name, code, "5th Ave", null, city, province, "1634"));
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<Negosio.Application.Branches.BranchDto>(TestJson.Options))!;
+    }
+
     protected async Task<RegisterDto> CreateRegisterAsync(Guid branchId, string name = "Main Counter", string code = "R1")
     {
         var response = await Client.PostAsJsonAsync("/api/registers", new CreateRegisterRequest(branchId, name, code));

@@ -37,6 +37,14 @@ public static class AuthorizationPolicies
     /// <summary>Invite staff, assign roles, deactivate/reactivate staff.</summary>
     public const string StaffManage = "StaffManage";
 
+    // ---- Phase 5: Branch management ----
+
+    /// <summary>Create / update / activate / deactivate branches.</summary>
+    public const string BranchManage = "BranchManage";
+
+    /// <summary>Force-close another user's register session (administrative override).</summary>
+    public const string RegisterForceClose = "RegisterForceClose";
+
     private static readonly UserRole[] OwnerAdmin = [UserRole.Owner, UserRole.Admin];
     private static readonly UserRole[] ManagementRoles = [UserRole.Owner, UserRole.Admin, UserRole.Manager];
     private static readonly UserRole[] PosRoles = [UserRole.Owner, UserRole.Admin, UserRole.Manager, UserRole.Cashier];
@@ -81,6 +89,14 @@ public static class AuthorizationPolicies
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(OwnerAdmin)));
 
         options.AddPolicy(StaffManage, policy =>
+            policy.RequireAuthenticatedUser()
+                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(OwnerAdmin)));
+
+        options.AddPolicy(BranchManage, policy =>
+            policy.RequireAuthenticatedUser()
+                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(OwnerAdmin)));
+
+        options.AddPolicy(RegisterForceClose, policy =>
             policy.RequireAuthenticatedUser()
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(OwnerAdmin)));
 
