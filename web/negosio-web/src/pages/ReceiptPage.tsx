@@ -79,7 +79,7 @@ export default function ReceiptPage() {
         <hr />
         <div className="row">
           <span>Receipt</span>
-          <span className="r bold">{r.saleNumber}</span>
+          <span className="r bold">#{r.saleNumber}</span>
         </div>
         <div className="row">
           <span>Register</span>

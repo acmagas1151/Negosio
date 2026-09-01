@@ -50,7 +50,7 @@ public class CheckoutTests : IntegrationTest
 
         result.GrandTotal.Should().Be(150m);
         result.ChangeDue.Should().Be(50m);
-        result.SaleNumber.Should().MatchRegex(@"^\d{8}$");
+        result.SaleNumber.Should().MatchRegex(@"^\d{7}$");
 
         await InScopeAsync(async db =>
         {

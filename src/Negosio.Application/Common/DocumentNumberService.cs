@@ -9,8 +9,8 @@ public interface IDocumentNumberService
     /// <summary>
     /// Atomically allocates the next number for (tenant, branch, type) and formats it.
     /// Sales and returns share one <b>branch transaction sequence</b> (both pass
-    /// <see cref="DocumentNumberType.Sale"/>) formatted as a bare zero-padded 8-digit string,
-    /// e.g. <c>00000001</c>; reserved future types keep a prefixed format. MUST be called inside
+    /// <see cref="DocumentNumberType.Sale"/>) formatted as a bare zero-padded 7-digit string,
+    /// e.g. <c>0000001</c>; reserved future types keep a prefixed format. MUST be called inside
     /// the caller's database transaction so the allocation commits or rolls back with the document.
     /// </summary>
     Task<string> NextAsync(
@@ -39,11 +39,11 @@ public sealed class DocumentNumberService : IDocumentNumberService
     {
         var value = await AllocateAsync(tenantId, branchId, type, cancellationToken);
 
-        // Sales and returns share the branch transaction sequence: a bare 8-digit running number.
+        // Sales and returns share the branch transaction sequence: a bare 7-digit running number.
         // Reserved future document types keep a prefixed, branch-scoped format.
         return type switch
         {
-            DocumentNumberType.Sale or DocumentNumberType.Return => $"{value:D8}",
+            DocumentNumberType.Sale or DocumentNumberType.Return => $"{value:D7}",
             DocumentNumberType.PurchaseOrder => $"PO-{branchCode}-{value:D6}",
             DocumentNumberType.StockTransfer => $"TRN-{branchCode}-{value:D6}",
             _ => $"DOC-{branchCode}-{value:D6}"

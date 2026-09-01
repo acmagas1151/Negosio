@@ -52,7 +52,7 @@ export default function SaleDetailPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <h1 className="text-2xl font-bold text-text-primary">{d.sale.saleNumber}</h1>
+                      <h1 className="text-2xl font-bold text-text-primary">Sale #{d.sale.saleNumber}</h1>
                       <StatusBadge status={d.sale.status} />
                     </div>
                     <p className="mt-1 text-[13px] text-text-muted">

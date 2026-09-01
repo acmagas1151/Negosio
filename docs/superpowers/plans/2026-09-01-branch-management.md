@@ -1643,6 +1643,27 @@ Do **not** merge `feature/branch-management`. Do not start Phase 6. Report the b
 
 ---
 
+## Addendum — locked changes (2026-09-01, mid-execution)
+
+**L1 · Visible transaction number `D8` → `D7`** (spec §8.1). Own commit after Task 7:
+`DocumentNumberService` format string `D8` → `D7`; ADR 0007; update the assertions in
+`CheckoutTests` (`^\d{8}$`→`^\d{7}$`), `ReturnTests` (`^\d{8}$`, `00000001…`→`0000001…`),
+`BranchScopedAccessTests.Each_branch_runs_its_own_sale_number_sequence`
+(`00000001…`→`0000001…`); frontend text → "Sale #0000001" (`PosCompletePage`,
+`SaleDetailPage`), "Return 0000002 · for sale 0000001" (`SaleReturnsList`); `ReceiptPage` /
+`SalesPage` render the raw number (prefix optional). Barcodes (`4800000000001`) are NOT
+transaction numbers — leave.
+
+**L2 · Cashier cannot reach `/registers`** (spec §8a). Folds into Tasks 9 + 11:
+- `nav.ts`: Registers gate `pos:operate` → `register:manage`; Reports gains
+  `capability: 'register:manage'` (absent, not greyed, for Cashier).
+- `App.tsx`: `/registers` `RequireCapability` `pos:operate` → `register:manage`.
+- Task 9 `GET /api/pos/registers` + Task 11 `RegisterPicker` become the Cashier's only
+  register-selection surface.
+- Task 11 `PosSessionGate` / opening-cash screen gains **[← Back to registers]** (→ POS
+  RegisterPicker, no session) and **[Exit POS]** (→ `/dashboard`). After a session is open,
+  Exit → `/dashboard` leaves it open; returning detects "Your open session — Continue".
+
 ## Self-review notes
 
 - **Spec coverage:** every spec section maps to a task — §3 → T4/T8, §4 → T5, §5 → T7,

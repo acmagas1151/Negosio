@@ -47,7 +47,7 @@ export default function PosCompletePage() {
         </span>
         <div>
           <p className="text-[13px] uppercase tracking-wide text-text-muted">Sale complete</p>
-          <p className="text-xl font-bold text-text-primary">{saleNumber}</p>
+          <p className="text-xl font-bold text-text-primary">Sale #{saleNumber}</p>
         </div>
         <dl className="space-y-1 text-sm">
           <div className="flex justify-between">

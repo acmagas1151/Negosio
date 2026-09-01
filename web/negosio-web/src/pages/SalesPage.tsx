@@ -137,7 +137,7 @@ export default function SalesPage() {
                         to={`/sales/${s.id}`}
                         className="font-semibold text-primary-700 hover:underline"
                       >
-                        {s.saleNumber}
+                        #{s.saleNumber}
                       </Link>
                     </Table.Cell>
                     <Table.Cell>{new Date(s.createdAtUtc).toLocaleString()}</Table.Cell>

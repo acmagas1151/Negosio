@@ -35,7 +35,7 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
   {
     path: '/registers',
     element: (
-      <RequireCapability capability="pos:operate" title="Registers">
+      <RequireCapability capability="register:manage" title="Registers">
         <RegistersPage />
       </RequireCapability>
     ),

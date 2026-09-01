@@ -151,10 +151,10 @@ public class BranchScopedAccessTests : IntegrationTest
             return r.SaleNumber;
         }
 
-        (await Sell(mainId, mainSession.Id, mainVariant)).Should().Be("00000001");
-        (await Sell(bgc.Id, bgcSession.Id, bgcVariant)).Should().Be("00000001");
-        (await Sell(mainId, mainSession.Id, mainVariant)).Should().Be("00000002");
-        (await Sell(bgc.Id, bgcSession.Id, bgcVariant)).Should().Be("00000002");
+        (await Sell(mainId, mainSession.Id, mainVariant)).Should().Be("0000001");
+        (await Sell(bgc.Id, bgcSession.Id, bgcVariant)).Should().Be("0000001");
+        (await Sell(mainId, mainSession.Id, mainVariant)).Should().Be("0000002");
+        (await Sell(bgc.Id, bgcSession.Id, bgcVariant)).Should().Be("0000002");
     }
 
     [Fact]

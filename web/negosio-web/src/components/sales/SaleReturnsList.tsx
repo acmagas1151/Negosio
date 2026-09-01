@@ -10,8 +10,8 @@ export function SaleReturnsList({ returns }: { returns: SaleReturnDto[] }) {
         <div key={r.id} className="rounded-xl border border-border bg-surface p-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className="font-semibold text-text-primary">
-              {r.returnNumber}
-              <span className="ml-1.5 font-normal text-text-muted">for sale {r.originalSaleNumber}</span>
+              Return {r.returnNumber}
+              <span className="ml-1.5 font-normal text-text-muted">· for sale {r.originalSaleNumber}</span>
             </span>
             <span className="text-[13px] text-text-muted">
               {new Date(r.createdAtUtc).toLocaleString()} · {r.createdByName}

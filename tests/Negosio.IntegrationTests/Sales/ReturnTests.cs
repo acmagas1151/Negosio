@@ -50,8 +50,8 @@ public class ReturnTests : IntegrationTest
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var body = (await response.Content.ReadFromJsonAsync<SaleReturnDto>(TestJson.Options))!;
-        body.ReturnNumber.Should().MatchRegex(@"^\d{8}$");
-        body.OriginalSaleNumber.Should().MatchRegex(@"^\d{8}$");
+        body.ReturnNumber.Should().MatchRegex(@"^\d{7}$");
+        body.OriginalSaleNumber.Should().MatchRegex(@"^\d{7}$");
         int.Parse(body.ReturnNumber).Should().BeGreaterThan(int.Parse(body.OriginalSaleNumber));
         body.TotalRefund.Should().Be(150m);
 
@@ -142,11 +142,11 @@ public class ReturnTests : IntegrationTest
         var c = await SellOneAsync();
         var r2 = await ReturnOneAsync(b.SaleId, b.ItemId, b.Number);
 
-        a.Number.Should().Be("00000001");
-        b.Number.Should().Be("00000002");
-        r1.Should().Be("00000003");
-        c.Number.Should().Be("00000004");
-        r2.Should().Be("00000005");
+        a.Number.Should().Be("0000001");
+        b.Number.Should().Be("0000002");
+        r1.Should().Be("0000003");
+        c.Number.Should().Be("0000004");
+        r2.Should().Be("0000005");
     }
 
     [Fact]

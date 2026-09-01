@@ -18,7 +18,7 @@ index), where `Type` is `DocumentNumberType { Sale, Return, PurchaseOrder, Stock
 
 **Sales and returns share one _branch transaction sequence_.** Both allocate with
 `DocumentNumberType.Sale`, so within a branch every completed sale and every return draws the next
-number in a single monotonic stream (…a sale gets `00000004`, the next return gets `00000005`, and
+number in a single monotonic stream (…a sale gets `0000004`, the next return gets `0000005`, and
 so on). The `Return` counter type is retained for enum-value stability but is no longer used for
 allocation. The `SaleNumber` / `ReturnNumber` property names are kept as-is — they now both hold a
 value from the shared sequence, and a `SaleReturn` also echoes its originating sale's number
@@ -39,26 +39,29 @@ returns the new value, and holds the lock to end of transaction. If no counter r
 service inserts one at `LastNumber = 0` (catching the unique-violation race) and retries the
 `UPDATE`.
 
-Sale and return numbers are formatted as a **bare zero-padded 8-digit** running number:
+Sale and return numbers are formatted as a **bare zero-padded 7-digit** running number
+(`D7`; Phase 5 narrowed this from `D8`):
 
 ```
-00000001    (sale)
-00000002    (sale)
-00000003    (return, references sale 00000001)
+0000001    (sale)
+0000002    (sale)
+0000003    (return, references sale 0000001)
 ```
 
 Reserved future document types keep a prefixed, branch-scoped format (`PO-MAIN-000001`,
-`TRN-MAIN-000001`). `Sale` carries a unique index `(TenantId, SaleNumber)` and `SaleReturn` a unique
-`(TenantId, ReturnNumber)` as defence-in-depth; because both tables draw from the same per-branch
-stream their strings never collide within a branch.
+`TRN-MAIN-000001`). `Sale` carries a unique index `(TenantId, BranchId, SaleNumber)` and `SaleReturn`
+a unique `(TenantId, BranchId, ReturnNumber)` (Phase 5 moved both from tenant-scoped to per-branch,
+so each branch runs its own `0000001` sequence); because sales and returns draw from the same
+per-branch stream their strings never collide within a branch.
 
 **Void is deferred.** No void numbering is implemented or reserved; a future void may keep the
 original sale number rather than consume a new one.
 
 ### Migrating an existing deployment
 
-This shared-sequence + bare-8-digit format was adopted before any production data existed, so the
-codebase carries **no data migration**. A real deployment that already allocated numbers under the
+This shared-sequence + bare-digit format was adopted before any production data existed, so the
+codebase carries **no data migration** (the D8→D7 narrowing and the per-branch unique-index move in
+Phase 5 likewise predate production data). A real deployment that already allocated numbers under the
 previous scheme (`INV-<branch>-000001` from the `Sale` counter, `RET-<branch>-000001` from a
 separate `Return` counter) would need a **one-time reconciliation**, run per tenant DB, roughly:
 

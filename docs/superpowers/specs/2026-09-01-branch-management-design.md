@@ -363,7 +363,58 @@ their branch and get `BRANCH_FORBIDDEN` (403) / `404` on a foreign target.
 `ReturnService` keeps deriving branch from the sale; it gains only the scoped-user
 sale-ownership check (Owner/Admin unrestricted).
 
+### 8.1 Visible transaction-number format — **7 digits** (locked)
+
+`DocumentNumberService` formats `Sale` / `Return` as a bare **zero-padded 7-digit** running
+number (`0000001`, not `00000001`). Only the format string changes (`D8` → `D7`); the
+architecture is unchanged — one atomic per-`(tenant, branch)` counter shared by sales and
+returns, never `COUNT(*) + 1`, numbers never reused. Property names `SaleNumber` /
+`ReturnNumber` stay; no schema column. `Sale`/`SaleReturn` unique indexes move to
+`(TenantId, BranchId, <Number>)` so each branch runs its own `0000001` sequence (its own
+tenant-DB migration). UI text: **"Sale #0000001"**, **"Return 0000002 · for sale 0000001"**.
+Update the ADR (0007), all fixtures/tests asserting `\d{8}` or `00000001…`, the POS success
+screen, receipt, Sales list, Sale detail, and the return list/reference display.
+
 ---
+
+## 8a. Cashier register access (locked)
+
+`/registers` is a **management** surface, not an operational one. Two separate surfaces:
+
+- **`/registers`** — create / edit / activate-deactivate registers, and (management view of)
+  session state. Requires `RegisterManage` (Owner / Admin / Manager, Manager within their
+  branch). **A Cashier has no access** — the route gate moves from `pos:operate` to
+  `register:manage`, `RequireCapability` renders the clean unauthorized panel, and the nav
+  item is hidden for anyone without `register:manage`.
+- **POS RegisterPicker** (`/pos`) — choose the till to operate. Requires only `pos:operate`.
+  Never requires `RegisterManage`. This is the *only* way a Cashier selects/opens a register.
+
+Cashier navigation is operational-only: Dashboard, POS, and Sales (Sales only because
+`SalesView` already grants it). **No** Registers, Reports, Branches, Staff, Settings — the
+disabled "Reports — Soon" item is **absent** for a Cashier, not shown greyed out (nav gains
+`register:manage` on the Reports entry so management roles still see the placeholder).
+
+### POS gate flow + Back/Exit semantics
+
+```
+/pos → context (branch auto-resolved for Cashier, no branch picker)
+     → RegisterPicker  (assigned branch's active registers + availability)
+          • Available            → [Select] → Opening-cash screen
+          • In use by <name>     → disabled
+          • Your open session    → [Continue] → terminal (no opening cash)
+     → Opening-cash screen  ("Open <register>" · ₱ field · [Open register])
+          • [← Back to registers] → RegisterPicker, no session created, no partial state
+          • [Exit POS]            → /dashboard, no session created
+     → terminal
+```
+
+- "Back to registers" returns to the **POS RegisterPicker**, never to `/registers`.
+- Before a session is open: Back → RegisterPicker, Exit POS → `/dashboard`.
+- After a session is open: Exit → `/dashboard`, **session stays open**; returning to `/pos`
+  detects the user's own open session → "Your open session — Continue".
+- Only **Close Session** runs cash reconciliation and releases the register.
+- A lost concurrent open → `REGISTER_SESSION_ALREADY_OPEN` surfaced as a picker callout +
+  refetch.
 
 ## 9. Register-session model (locked)
 
@@ -534,8 +585,8 @@ Baseline: **76 unit / 114 integration**. Report actual finals.
 - Owner: `GET /api/inventory` → MAIN + BGC rows; adjust either branch → ok.
 - Multi-branch inventory isolation: MAIN opening 10, BGC opening 3, sell 2 at MAIN →
   MAIN 8, BGC 3.
-- Per-branch numbering: MAIN sale `00000001`, BGC sale `00000001`, MAIN return `00000002`,
-  BGC sale `00000002`.
+- Per-branch numbering: MAIN sale `0000001`, BGC sale `0000001`, MAIN return `0000002`,
+  BGC sale `0000002`.
 - Returns/restock: sale at MAIN → return → MAIN restock only, BGC unchanged; still works
   after MAIN is deactivated (Owner acting).
 
@@ -604,8 +655,8 @@ registers. Sales branch filter shows the right sales; sale detail names its bran
 **POS (Owner, 2 branches)** — `/pos` → branch picker → register picker → opening cash →
 terminal against the chosen branch; exit and re-enter → "Your open session — Continue".
 
-**Per-branch numbering** — MAIN sale `00000001`, BGC sale `00000001`, MAIN return
-`00000002`, BGC sale `00000002`. Inventory: MAIN sale drops MAIN stock only; MAIN return
+**Per-branch numbering** — a bare **7-digit** running number; MAIN sale `0000001`, BGC sale
+`0000001`, MAIN return `0000002`, BGC sale `0000002`. Inventory: MAIN sale drops MAIN stock only; MAIN return
 restocks MAIN only.
 
 **Cashier lock (the locked walkthrough)**
