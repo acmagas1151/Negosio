@@ -32,6 +32,7 @@ public static class DependencyInjection
 
         // Phase 5: Branch management & branch-scoped access
         services.AddScoped<IBranchManagementService, BranchManagementService>();
+        services.AddScoped<IBranchAccessResolver, BranchAccessResolver>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IProductVariantService, ProductVariantService>();

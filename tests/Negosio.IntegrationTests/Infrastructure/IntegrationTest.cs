@@ -119,13 +119,15 @@ public abstract class IntegrationTest : IAsyncLifetime
     /// Create an extra user in the current tenant — both the tenant profile and the platform login
     /// (so the per-request account-state check in ConfigureJwtBearerOptions passes) — and mint a token.
     /// </summary>
-    protected async Task<string> AddTenantUserTokenAsync(string email, Negosio.Domain.Enums.UserRole role)
+    protected async Task<string> AddTenantUserTokenAsync(
+        string email, Negosio.Domain.Enums.UserRole role, Guid? branchId = null)
     {
         var userId = Guid.NewGuid();
 
         await InScopeAsync(async db =>
         {
-            db.Users.Add(Negosio.Domain.Entities.User.Create(userId, CurrentTenantId, email, "Test", "User", role));
+            db.Users.Add(Negosio.Domain.Entities.User.Create(
+                userId, CurrentTenantId, email, "Test", "User", role, branchId));
             await db.SaveChangesAsync();
             return true;
         });
