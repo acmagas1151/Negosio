@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Negosio.Domain.Entities;
+using Negosio.Domain.Enums;
 
 namespace Negosio.UnitTests.Branches;
 
@@ -45,5 +46,19 @@ public class BranchDomainTests
 
         b.Reactivate();
         b.IsActive.Should().BeTrue();
+    }
+
+    [Fact]
+    public void User_AssignBranch_then_ClearBranch()
+    {
+        var u = User.Create(Guid.NewGuid(), Guid.NewGuid(), "a@b.com", "A", "B", UserRole.Cashier);
+        u.BranchId.Should().BeNull();
+
+        var branchId = Guid.NewGuid();
+        u.AssignBranch(branchId);
+        u.BranchId.Should().Be(branchId);
+
+        u.ClearBranch();
+        u.BranchId.Should().BeNull();
     }
 }

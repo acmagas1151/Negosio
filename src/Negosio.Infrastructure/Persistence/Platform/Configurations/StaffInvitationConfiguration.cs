@@ -21,6 +21,7 @@ public sealed class StaffInvitationConfiguration : IEntityTypeConfiguration<Staf
         builder.Property(i => i.AcceptedAtUtc);
         builder.Property(i => i.RevokedAtUtc);
         builder.Property(i => i.InvitedByUserId).IsRequired();
+        builder.Property(i => i.BranchId); // tenant-DB branch id; no FK (cross-database)
         builder.Property(i => i.CreatedAtUtc).IsRequired();
         builder.Property(i => i.UpdatedAtUtc).IsRequired();
 

@@ -27,7 +27,8 @@ public class StaffInvitation : Entity
     }
 
     private StaffInvitation(
-        Guid tenantId, string emailNormalized, UserRole role, string tokenHash, DateTime expiresAtUtc, Guid invitedByUserId)
+        Guid tenantId, string emailNormalized, UserRole role, string tokenHash, DateTime expiresAtUtc,
+        Guid invitedByUserId, Guid? branchId)
     {
         TenantId = tenantId;
         EmailNormalized = emailNormalized;
@@ -35,6 +36,7 @@ public class StaffInvitation : Entity
         TokenHash = tokenHash;
         ExpiresAtUtc = expiresAtUtc;
         InvitedByUserId = invitedByUserId;
+        BranchId = branchId;
     }
 
     public Guid TenantId { get; private set; }
@@ -55,8 +57,12 @@ public class StaffInvitation : Entity
 
     public Guid InvitedByUserId { get; private set; }
 
+    /// <summary>Target branch for a branch-scoped role; null for Owner/Admin. Validated by the caller.</summary>
+    public Guid? BranchId { get; private set; }
+
     public static StaffInvitation Create(
-        Guid tenantId, string emailNormalized, UserRole role, string tokenHash, DateTime expiresAtUtc, Guid invitedByUserId)
+        Guid tenantId, string emailNormalized, UserRole role, string tokenHash, DateTime expiresAtUtc,
+        Guid invitedByUserId, Guid? branchId = null)
     {
         if (string.IsNullOrWhiteSpace(emailNormalized))
         {
@@ -73,7 +79,7 @@ public class StaffInvitation : Entity
             throw new InvalidOperationException("Staff cannot be invited as Owner.");
         }
 
-        return new StaffInvitation(tenantId, emailNormalized, role, tokenHash, expiresAtUtc, invitedByUserId);
+        return new StaffInvitation(tenantId, emailNormalized, role, tokenHash, expiresAtUtc, invitedByUserId, branchId);
     }
 
     public StaffInvitationStatus StatusAt(DateTime nowUtc) =>

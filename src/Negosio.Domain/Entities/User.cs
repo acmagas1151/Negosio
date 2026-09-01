@@ -16,7 +16,7 @@ public class User : Entity
         LastName = string.Empty;
     }
 
-    private User(Guid id, Guid tenantId, string email, string firstName, string lastName, UserRole role)
+    private User(Guid id, Guid tenantId, string email, string firstName, string lastName, UserRole role, Guid? branchId)
     {
         Id = id;
         TenantId = tenantId;
@@ -24,6 +24,7 @@ public class User : Entity
         FirstName = firstName;
         LastName = lastName;
         Role = role;
+        BranchId = branchId;
         IsActive = true;
     }
 
@@ -38,6 +39,11 @@ public class User : Entity
 
     public UserRole Role { get; private set; }
 
+    /// <summary>
+    /// The branch this user is bound to. Non-null for branch-scoped roles, null for Owner/Admin.
+    /// </summary>
+    public Guid? BranchId { get; private set; }
+
     public bool IsActive { get; private set; }
 
     public static User Create(
@@ -46,7 +52,8 @@ public class User : Entity
         string normalizedEmail,
         string firstName,
         string lastName,
-        UserRole role)
+        UserRole role,
+        Guid? branchId = null)
     {
         if (string.IsNullOrWhiteSpace(normalizedEmail))
         {
@@ -63,7 +70,21 @@ public class User : Entity
             throw new ArgumentException("Last name is required.", nameof(lastName));
         }
 
-        return new User(id, tenantId, NormalizeEmail(normalizedEmail), firstName.Trim(), lastName.Trim(), role);
+        return new User(id, tenantId, NormalizeEmail(normalizedEmail), firstName.Trim(), lastName.Trim(), role, branchId);
+    }
+
+    /// <summary>Bind this user to a branch (branch-scoped roles).</summary>
+    public void AssignBranch(Guid branchId)
+    {
+        BranchId = branchId;
+        Touch();
+    }
+
+    /// <summary>Clear the branch assignment (when a user becomes Owner/Admin).</summary>
+    public void ClearBranch()
+    {
+        BranchId = null;
+        Touch();
     }
 
     /// <summary>Change this user's role. The Owner role is never assignable through this path.</summary>
