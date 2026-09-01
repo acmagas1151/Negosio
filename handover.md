@@ -1,298 +1,255 @@
 # Handover Summary
 
-> Session date: 2026-09-01 · Supersedes the "POS frontend vertical" handover.
-> **Phase 4 (Staff & Access Management) is MERGED to `master` (`bcc04e1`) and pushed to
-> `origin`.** Built and browser-verified this session on `feature/staff-management`, then
-> merged on the user's go-ahead. `master` also carries the earlier `feature/retail-polish`
-> (dashboard metrics + tax settings).
-
----
+> Session date: 2026-09-01 · Supersedes the Phase 4 handover. Phase 5 is complete and merged.
 
 ## Project Context
 
-- **Project:** **Negosio** — a multi-tenant SaaS platform for retail and food & beverage
-  businesses. Database-per-tenant. Owner signs up → picks a business type → describes a
+- **Project:** Negosio — a multi-tenant SaaS platform for retail and food & beverage
+  businesses, database-per-tenant. Owner registers → picks a business type → describes a
   first branch → creates an owner account → lands in a tenant-scoped dashboard. Commercial
   surface: product catalog, inventory, retail POS (registers, sessions, sales, payments,
-  returns), and now **staff & access management**.
+  returns), staff & access management, and now branch management.
 - **Tech stack:**
-  - **Backend:** C# / .NET 9, ASP.NET Core Web API, EF Core 9, SQL Server (LocalDB dev,
-    Testcontainers/LocalDB tests). JWT bearer auth, ASP.NET Core `PasswordHasher` (PBKDF2),
-    FluentValidation, Serilog. Modular monolith: `Api → Infrastructure → Application → Domain`.
+  - **Backend:** C# / .NET 9, ASP.NET Core Web API, EF Core 9, SQL Server (LocalDB dev),
+    JWT bearer auth, ASP.NET Core `PasswordHasher` (PBKDF2), FluentValidation, Serilog.
+    Modular monolith: `Api → Infrastructure → Application → Domain`.
   - **Frontend:** React 19, TypeScript (strict), Vite 8, React Router 7, TanStack Query v5,
     Tailwind v4, lucide-react. Lint = `oxlint`. Path: `web/negosio-web/`. No frontend test
     runner — verified via `npm run lint` + `npm run build` + headless-Chrome/CDP walkthroughs.
   - **Tests:** xUnit, FluentAssertions, `WebApplicationFactory`.
-- **Roadmap:** Phase 1 (SaaS foundation) ✅ · Phase 2 (Catalog + Inventory) ✅ · Phase 2.5
-  (Database-per-Tenant) ✅ · Phase 3 (Retail POS) ✅ · Phase 3.1 (retail polish — dashboard
-  metrics + tax settings) ✅ merged · **Phase 4 (Staff & Access Management) — this session,
-  on `feature/staff-management`, unmerged** · Phase 5+ future.
+- **Main goal of this session:** implement **Phase 5 — Branch Management & Branch-Scoped
+  Access**, i.e. make the pre-existing multi-branch architecture reachable through the API
+  and UI, and lock every non-Owner/Admin staff member to exactly one branch.
 
----
+## Current Task
 
-# Phase 4 Final Report
+Phase 5 is **done and merged**. There is no open task right now — the session ended with a
+merge to `master` and an explicit instruction not to start Phase 6 automatically. The next
+session's job is to **pick the next feature with the user**, not to continue Phase 5 work.
 
-## 1. Architecture
+- **Feature implemented:** Branch Management v1 (CRUD, lifecycle) + a branch-scoped access
+  model applied across the whole backend and the POS/Staff frontend.
+- **User requirements (locked rules, verbatim intent):**
+  - Role = *what* a user may do; branch assignment = *where*; branch active-status =
+    *whether* a branch-scoped user may use Negosio at all.
+  - All-branch roles: `Owner`, `Admin` (no `BranchId`). Branch-scoped: `Manager`, `Cashier`,
+    `InventoryStaff`, `KitchenStaff`, `Viewer` (exactly one `BranchId`).
+  - A branch-scoped user whose branch is deactivated is locked out **immediately** — at
+    login and on the very next request with an already-issued JWT (no waiting for expiry).
+  - A Cashier selects/opens a register **only from the POS flow**, never via `/registers`
+    (management page — Owner/Admin/Manager only).
+  - Register-session model: one open session per register **and** per user (DB-enforced);
+    checkout/close require session ownership; **Owner/Admin-only** force-close (not Manager)
+    with the same cash reconciliation.
+  - Visible Sale/Return numbers are exactly **7 digits** (`0000001`), one shared
+    atomic per-`(tenant, branch)` sequence — narrowed from 8 digits mid-phase.
+  - `DO NOT MERGE` was in force for most of the session; the user explicitly approved the
+    merge in the final message of this session.
 
-**Goal:** make Negosio usable by a real business team by *activating* the RBAC model that
-already existed — not redesigning it.
+## Completed Work
 
-- **Identity model — unchanged and deliberately single-tenant.** One email = one platform
-  login = one tenant. Authentication credentials stay in `Negosio_Platform`
-  (`PlatformUserLogin`), which remains the sole auth authority. A staff member has exactly
-  **one** role, drawn from the existing `UserRole` enum, mapped to the existing
-  `AuthorizationPolicies`. No custom roles, no permission matrices, no multiple roles, no
-  cross-tenant memberships. A future `PlatformUser` / `TenantMembership` split is explicitly
-  *not* this task.
-- **The app user is the POS cashier.** No separate POS-PIN identity, no cashier switching.
-- **Invitations live in the platform DB.** `StaffInvitation` is a platform entity because
-  invitation acceptance happens **pre-auth** (the token, not a JWT, resolves the tenant) and
-  because the "one email globally" check spans all tenants.
-- **Cross-DB write pattern (mirrors `TenantProvisioningService`).** On acceptance the
-  platform `PlatformUserLogin` row is written first (it is the source of truth for "this
-  account is real"), then the tenant `User` row. A recovery branch re-runs the tenant-row
-  step if the process died between the two writes. No distributed transaction.
-- **Staff list is a merged read across both DBs** (tenant `Users` for names + platform
-  `PlatformUserLogins` for the authoritative role/active flag + open platform
-  `StaffInvitations`). It is a flat, non-paged array — a deliberate simplification for a
-  bounded admin dataset.
+**Backend — new/changed (all now on `master`, merge commit `621aa8e`):**
 
-## 2. Backend
+- 4 EF Core migrations: `AddUserBranch` (tenant — `User.BranchId` + backfill),
+  `AddStaffInvitationBranch` (platform), `PerBranchDocumentNumberUniqueness` (tenant —
+  `Sale`/`SaleReturn` unique indexes moved to `(TenantId, BranchId, Number)`),
+  `SessionOwnerOpenIndex` (tenant — one open session per user).
+- `Branch` domain: `UpdateDetails`, `Deactivate`, `Reactivate` (code stays immutable).
+- New `BranchManagementService`, `BranchAccessResolver`, `BranchValidators`,
+  `PosContextService`.
+- `BranchAccessResolver` wired into `DashboardService`, `InventoryService`,
+  `RegisterService`, `PosCatalogService`, `CheckoutService`, `SaleQueryService`,
+  `ReceiptService`, `ReturnService`.
+- `AuthService.LoginAsync` — branch-active login gate. New
+  `Negosio.Api/Middleware/BranchAccessMiddleware.cs` — per-request branch-active gate.
+- `RegisterSessionService` — `CASHIER_SESSION_OPEN`, ownership checks, `ForceCloseAsync`.
+  `RegisterService.ListAsync/GetAsync` now include each register's open-session state.
+- `StaffService` — branch on invite, role↔branch reconciliation, new `ChangeBranchAsync`.
+- `DocumentNumberService` — `D8` → `D7` format.
+- New policies: `BranchManage`, `RegisterForceClose` (both Owner/Admin).
+- New endpoints: full `/api/branches` CRUD, `GET /api/pos/context`,
+  `GET /api/pos/registers`, `POST /api/register-sessions/{id}/force-close`,
+  `POST /api/staff/{id}/branch`.
+- New error codes: `LAST_ACTIVE_BRANCH`, `BRANCH_INACTIVE`, `BRANCH_FORBIDDEN`,
+  `SESSION_NOT_OWNED`, `CASHIER_SESSION_OPEN`, `STAFF_HAS_OPEN_REGISTER_SESSION`.
 
-**New / changed files** (all on `feature/staff-management`):
+**Frontend — new/changed:**
 
-- **Domain:** `Entities/Platform/StaffInvitation.cs` (+ `StaffInvitationStatus`); `User.cs`
-  gains `ChangeRole` / `Deactivate` / `Reactivate` with Owner guards; `PlatformUserLogin.cs`
-  gains `ChangeRole` / `Reactivate`.
-- **Application:** `Staff/` (`StaffContracts`, `StaffValidators`, `StaffRoles`,
-  `StaffService`, `StaffInvitationService`); `Common/PasswordRules.cs` (extracted from the
-  registration validator — one shared FluentValidation `.Password()` rule);
-  `Common/InvitationToken.cs` (32 random bytes → base64url raw, SHA-256 hex hash stored);
-  `Common/ErrorCodes.cs` Phase 4 codes; `ForbiddenAppException`; `Abstractions/IAppEnvironment.cs`.
-- **Infrastructure:** `StaffInvitationConfiguration` + migration
-  `20260831163220_AddStaffInvitations` (`PlatformDbContext`). Unique index on `TokenHash`;
-  filtered unique index on `(TenantId, EmailNormalized)` while pending.
-- **API:** `Controllers/StaffController.cs` (`[Authorize(Policy = StaffManage)]`, `api/staff`
-  — list / get / invite / resend / revoke / role / deactivate / reactivate);
-  `AuthController` gains `[AllowAnonymous]` `GET`/`POST api/auth/invitations/{token}[/accept]`;
-  `AuthorizationPolicies.StaffManage` (Owner + Admin); `Authentication/HostAppEnvironment.cs`;
-  `Authentication/ConfigureJwtBearerOptions.cs` gains `OnTokenValidated`.
+- `pages/BranchesPage.tsx`, `components/branches/BranchFormModal.tsx` /
+  `BranchStatusBadge.tsx`, `api/branches.ts` — `/branches` management screen.
+- `pages/PosPage.tsx` rewritten around `GET /api/pos/context`; new
+  `components/pos/BranchPicker.tsx`; `components/pos/RegisterPicker.tsx` reworked for
+  Available / "In use by \<name\>" / "Your open session — Continue"; `PosSessionGate.tsx`
+  gained "← Back to registers" + "Exit POS".
+- `components/registers/RegisterSessionCell.tsx` + `CloseSessionModal.tsx` — Owner/Admin
+  force-close UI on `/registers`.
+- Staff: `ChangeBranchModal.tsx` (new), `InviteStaffModal.tsx` / `ChangeRoleModal.tsx`
+  gained a branch field, `StaffPage.tsx` gained a Branch column.
+- `lib/nav.ts` / `App.tsx` — `/registers` route + nav gated on `register:manage` (was
+  `pos:operate`) so a Cashier can no longer reach it; Reports placeholder and the Dashboard
+  "Manage registers" quick action gated the same way.
+- `pages/SalesPage.tsx` / `SaleDetailPage.tsx` — branch filter/column, conditional on
+  `branches.length > 1`; transaction numbers render as `#0000001` / "Sale #0000001" /
+  "Return 0000002 · for sale 0000001".
 
-**Domain errors, not 500s:** `STAFF_SELF_ACTION`, `OWNER_PROTECTED`, `OWNER_ROLE_FORBIDDEN`,
-`ROLE_NOT_ASSIGNABLE`, `LAST_OWNER`, `STAFF_EMAIL_IN_USE`, `STAFF_ALREADY_INVITED`,
-`INVITATION_INVALID`, `INVITATION_NOT_FOUND`, `INVITATION_ALREADY_ACCEPTED`,
-`STAFF_ALREADY_ACTIVE`, `STAFF_ALREADY_DEACTIVATED` — all surfaced through the existing
-`ExceptionHandlingMiddleware` with their HTTP status.
+**Tests:** 88 unit / 162 integration, all green (was 76 / 114 before this phase). New test
+files under `tests/Negosio.IntegrationTests/Branches/`:
+`BranchManagementTests`, `BranchAuthTests`, `BranchScopedAccessTests`,
+`RegisterSessionModelTests`, `StaffBranchTests`, `PosContextTests`; unit
+`BranchDomainTests`, `BranchRolesTests`.
 
-## 3. Frontend
+**Docs:** `docs/superpowers/specs/2026-09-01-branch-management-design.md`,
+`docs/superpowers/plans/2026-09-01-branch-management.md`, `docs/phase-5-status.md` (the
+full 9-section final report), `docs/adr/0007-sale-numbering-strategy.md` updated.
 
-**New / changed files** (all under `web/negosio-web/src/`):
+## Current State
 
-- **API/lib:** `api/staff.ts` (`staffApi` + public `invitationsApi`), Phase 4 section in
-  `api/types.ts`, `lib/roles.ts` (labels + `assignableRoles` mirroring `StaffRoles`),
-  `lib/useCan.ts` gains `staff:manage` + a `useCapabilities()` predicate hook,
-  `lib/nav.ts` fully rewritten — `NavItem.capability`, and the old `TODO(staff-management)`
-  is **resolved**.
-- **Guards / layout:** `auth/RequireCapability.tsx` (page-level guard → clean "You don't
-  have access to this page" panel, never raw JSON); `Sidebar.tsx` filters nav groups by
-  capability and hides empty groups.
-- **Staff UI:** `pages/StaffPage.tsx` (search + role/status filters, invitation rows vs
-  member rows, self / Owner-row action hiding), `components/staff/` (`InviteStaffModal`,
-  `ChangeRoleModal`, `StaffBadges`).
-- **Public invite acceptance:** `pages/InviteAcceptPage.tsx` (`/invite/:token` — preview,
-  set name + password, redirect to `/login` prefilled). `App.tsx` adds the public route and
-  wraps `/staff` in `RequireCapability`.
+- **Working:** everything listed above, verified on `master` post-merge:
+  `dotnet build` 0/0, `dotnet test Negosio.sln` = **88 unit / 162 integration, 0 failed**,
+  `npm run lint` clean, `npm run build` clean (474.67 kB js / 132.29 kB gz).
+- **Merged & pushed:** `feature/branch-management` → `master` via `--no-ff` merge
+  (`621aa8e`), pushed to `origin/master`. Working tree clean. The feature branch was **not**
+  deleted.
+- **Partially working / not fully polished:** register/session availability on the POS
+  picker is a snapshot per fetch, not live-pushed (acceptable per the phase's scope; refetch
+  on conflict covers it). No dedicated UI to see "N staff currently locked out" beyond the
+  deactivate-confirmation staff count.
+- **Dev data residue:** the "Inv UI Test" tenant DB now also contains disposable
+  `Verify A / Verify B` branches and `ca.*@ex.com` / `mgr.*@ex.com` test accounts created by
+  the verification scripts — harmless, not cleaned up. **Needs verification** whether the
+  user wants these purged before further manual testing.
 
-**Capability-aware navigation:** Staff and Settings appear only for Owner/Admin; POS /
-Registers / Sales gate on `pos:operate` / `sales:view`; Catalog / Inventory / Dashboard
-stay ungated (their backends are read-open and their write controls self-gate).
+## Known Issues / Bugs
 
-## 4. Security
+None outstanding that were left unresolved — every scenario the phase's spec asked for was
+implemented and verified (either via the API/browser walkthrough or an integration test).
+Two soft notes carried into the final report as deliberate, not bugs:
 
-- **Invitation tokens:** 32 cryptographically-random bytes, base64url. Only the SHA-256 hex
-  **hash** is stored. Single-use (`AcceptedAtUtc`), expiring (7 days), tenant-bound,
-  email-bound. Invalid immediately after accept or revoke. Raw token is returned in the API
-  response and structured log **only outside Production** (`IAppEnvironment.IsProduction`);
-  in Production `acceptPath` is `null`. Email delivery is the documented next integration
-  step — no provider is wired in.
-- **JWT freshness / revocation:** the role is a `role` claim in a 60-minute JWT.
-  `OnTokenValidated` runs one indexed `PlatformUserLogins` lookup on **every authenticated
-  request** and calls `context.Fail(...)` if the login is missing, inactive, or its role no
-  longer matches the token's `role` claim. Net effect: **deactivation takes effect within
-  one request**; a **role change forces re-login**. No blacklist, no Redis, no shortened
-  lifetime.
-- **Owner protection:** Admin cannot create/promote to Owner, cannot change or deactivate an
-  Owner. Nobody can deactivate or re-role themselves. The last active Owner cannot be
-  removed (`LAST_OWNER`). No ownership transfer.
-- **Manager gets no staff administration** — `StaffManage` is Owner + Admin only.
-- **Passwords:** the exact registration rules, now the shared `PasswordRules.Password()`
-  FluentValidation extension. Hashed with the existing `IPasswordHasher`. No plaintext.
-- **Defence in depth:** navigation hiding is cosmetic; every route's backend policy still
-  returns 403/401, and `RequireCapability` renders a clean unauthorized panel for a manually
-  typed URL.
-- **History preserved:** deactivation never deletes. `Sale.CreatedByUserId` /
-  session / return references survive; no cascade.
+- Force-close is intentionally Owner/Admin only, not exposed to Manager — confirmed
+  behavior, not a gap.
+- The concurrent double-open register race and the Manager-hides-force-close-button UI path
+  were verified via integration tests / API status codes rather than a live two-browser
+  session — noted explicitly in the final report as "not run in a live browser session".
 
-## 5. Tests
+No screenshots are attached to this handover; the verification screenshots
+(`p5-01`…`p5-10`, plus earlier `b*`/staff/POS screenshots) live only in this session's local
+scratchpad directory (not committed to the repo) and are not guaranteed to exist for the
+next session.
 
-`dotnet test Negosio.sln` → **76 unit + 114 integration, 0 failed** (unit ~0.2 s,
-integration ~6m47s, shared `(localdb)\MSSQLLocalDB`).
+## Important Decisions
 
-- **New unit** — `tests/Negosio.UnitTests/Staff/StaffDomainTests.cs`: `StaffInvitation`
-  lifecycle (create rejects Owner, `StatusAt`, `Accept`/`Revoke`/`Reissue` guards),
-  `User` / `PlatformUserLogin` role-change + Owner guards, `StaffRoles.AssignableBy`
-  (Owner → all non-Owner; Admin → non-Owner minus Admin; others → none), `PasswordRules`
-  (four character classes + length as a separate rule), `InvitationToken` (raw ≠ hash,
-  stable hash, unique).
-- **New integration** — `tests/Negosio.IntegrationTests/Staff/StaffTests.cs` (13):
-  Owner invites Cashier who accepts and logs in · token is single-use (409
-  `INVITATION_ALREADY_ACCEPTED`) · revoked invitation cannot be previewed/accepted ·
-  unknown token → clean 404 · an email that already has an account cannot be invited into
-  another tenant (409 `STAFF_EMAIL_IN_USE`) · Owner and Admin may list staff, others 403 ·
-  Admin never creates an Admin/Owner (`ROLE_NOT_ASSIGNABLE` / `OWNER_ROLE_FORBIDDEN`) ·
-  Admin cannot change or deactivate the Owner (`OWNER_PROTECTED`) · Owner cannot
-  self-deactivate / self-re-role (`STAFF_SELF_ACTION`) · role change takes effect only after
-  re-login (old token → 401) · deactivation stops access immediately (old token → 401,
-  re-login → `ACCOUNT_INACTIVE`) and preserves `Sale.CreatedByUserId`; reactivation
-  restores · deactivated Cashier cannot obtain cost prices · one tenant cannot see or touch
-  another tenant's staff.
-- **Changed** — `IntegrationTest.AddTenantUserTokenAsync` now also seeds a
-  `PlatformUserLogin` (so `OnTokenValidated` passes); `ResetDatabaseAsync` clears
-  `StaffInvitations`. `TenantRoutingTests`: the old "unknown tenant → 404" test split into
-  **"a token for a non-existent user → 401"** (the new per-request check rejects it before
-  routing — this is more correct) and a new **"valid login, unroutable tenant → 404
-  `TENANT_NOT_FOUND`"** that seeds a login so the 404 path stays covered.
+- **Branch code is immutable after creation** — chosen over editable because it seeds the
+  (frozen, one-time) tenant-DB-name suffix and reserved future PO/transfer number prefixes;
+  name/address remain editable.
+- **Branch-scoped role set is fixed:** `Manager, Cashier, InventoryStaff, KitchenStaff,
+  Viewer`. `Owner, Admin` are the only all-branch roles. This mirrors backend
+  (`BranchRoles.cs`) and frontend (`lib/roles.ts`) — keep them in sync if ever revisited.
+  Do not invent additional all-branch or branch-scoped roles.
+- **Branch is enforced everywhere, not just POS** — inventory, movements, registers,
+  catalog, checkout, sales, sale detail/receipt, returns, dashboard all go through the same
+  `BranchAccessResolver`. Do not bypass it with ad-hoc branch checks in a new feature.
+- **No operate-through-another's-session override** — only force-close (Owner/Admin) exists.
+  An explicit "manager can operate a subordinate's session" feature was considered and
+  rejected for this phase; do not add it without a fresh design discussion.
+- **JWT does not carry branch** — branch is resolved fresh from the tenant DB on every
+  request (`BranchAccessResolver`, `BranchAccessMiddleware`). This is why a branch
+  reassignment or a branch deactivation take effect immediately without forcing re-login (a
+  role change still needs re-login, since role *is* in the JWT — that's an older, separate
+  decision from Phase 4, left unchanged).
+- **Transaction number format was changed mid-phase** from 8 digits to 7 digits
+  (`0000001`) by explicit user instruction after the numbering architecture already
+  shipped. The architecture (atomic per-branch counter, shared sale/return sequence, never
+  `COUNT(*)+1`) was **not** re-litigated — only the `D8`→`D7` format string and the
+  now-per-branch unique index.
+- **Do not weaken tests/lint/TypeScript/authorization to make things pass** — repeated
+  instruction throughout the phase; every fix in this session was a real fix, never a
+  weakened assertion.
 
-`npm run lint` (oxlint) + `npm run build` (`tsc -b && vite build`) → **clean**. Bundle
-≈ 459.6 kB js / 129.4 kB gz.
+## Files to Review
 
-## 6. Browser Verification
+Start with these, in order:
 
-Headless Chrome + CDP against the real API (`ASPNETCORE_ENVIRONMENT=Development`) and
-`npm run dev`. Script: this session's scratchpad `verify-staff.mjs`; screenshots `90-…`–`96-…`.
-**Zero console errors on every screen.** Scenarios actually executed:
+1. `handover.md` (this file, repo root).
+2. `docs/phase-5-status.md` — the full 9-section final report (architecture, backend,
+   frontend, correctness matrix, security, tests, browser verification, git state,
+   remaining limitations).
+3. `docs/superpowers/specs/2026-09-01-branch-management-design.md` — the approved design.
+4. `docs/superpowers/plans/2026-09-01-branch-management.md` — the 12-task implementation
+   plan that was executed (plus its "Addendum — locked changes" section for the mid-phase
+   D7/cashier-lockout changes).
+5. `src/Negosio.Application/Branches/BranchAccessResolver.cs` — the enforcement core; any
+   new branch-aware feature should call through this.
+6. `src/Negosio.Application/Branches/BranchRoles.cs` and
+   `web/negosio-web/src/lib/roles.ts` — the role↔branch-scope mapping (keep in sync).
+7. `src/Negosio.Api/Middleware/BranchAccessMiddleware.cs` and
+   `src/Negosio.Application/Auth/AuthService.cs` — the branch-active authentication gate.
+8. `web/negosio-web/src/pages/PosPage.tsx` — the branch/register resolution flow, if
+   touching POS again.
 
-1. Owner invites a Cashier via the API → `201`, `acceptPath` returned (dev), staff list
-   shows the pending `Invited` row.
-2. `/invite/:token` in the browser → preview shows business name, invited role and the
-   locked email → set first/last name + password → **redirected to `/login`** with a "Your
-   business is ready" callout and the email prefilled.
-3. Re-previewing the used token → `400 INVITATION_INVALID` (single-use confirmed).
-4. New Cashier logs in → lands on `/dashboard`; sidebar shows Dashboard / Products /
-   Categories / Stock levels / Stock movements / POS / Registers / Sales — **no Staff, no
-   Settings**.
-5. Cashier manually navigates to `/staff` → clean "You don't have access to this page"
-   panel (no raw JSON). To `/settings` → read-only notice, Save hidden.
-6. Cost redaction: Cashier `GET /api/products/{id}` → every variant `costPrice: null`;
-   Owner sees real cost.
-7. Owner changes the Cashier → Manager. The **old Cashier token → 401** on the next call;
-   re-login → role `Manager`, can `GET /api/sales` (`200`), still `403` on `/api/staff`;
-   sidebar still has no Staff.
-8. Owner deactivates the member. The **existing Manager token → 401** immediately; a fresh
-   login → `400 ACCOUNT_INACTIVE`; the member still appears in the list as `Deactivated`
-   with a Reactivate action.
-9. Owner reactivates → the member can log in again, role still `Manager`.
-10. Owner cannot self-deactivate (`403 STAFF_SELF_ACTION`); cannot invite an Owner
-    (`403`).
-11. RBAC regression sweep — Owner across all nine dashboard routes, Cashier across the two
-    gated routes: correct render, no console errors, no raw error JSON.
+## Next Steps
 
-**Not exercised in-browser** (covered by integration tests): the Admin-role limits from an
-actual Admin browser session; `LAST_OWNER`; invitation resend from the UI button. The
-Change-role and Invite modals were driven via their API endpoints rather than clicked.
-
-## 7. Git State
-
-- **Merged:** `feature/staff-management` → `master` as `bcc04e1` (`--no-ff`), pushed to
-  `origin`. Post-merge `dotnet build` 0/0, unit tests 76/76 green.
-- The 9 feature commits, working tree clean:
-
-  | | |
-  |---|---|
-  | `feb870b` | feat(staff): invitation domain + platform persistence + migration |
-  | `b0e3da5` | feat(staff): staff management + invitation application services |
-  | `67e8db1` | feat(auth): enforce active user + fresh role on every authenticated request |
-  | `422ebef` | feat(staff): staff & invitation API endpoints |
-  | `33cfe51` | test(infra): AddTenantUserTokenAsync seeds a platform login; reset clears StaffInvitations |
-  | `c314f4a` | test(staff): unit + integration coverage; invite link exposed outside Production |
-  | `192f41c` | feat(staff): staff management + invite-acceptance frontend; capability-gated nav |
-  | `355170e` | test(routing): a token for a non-existent user is now rejected at auth (401) |
-  | `5ba64cd` | fix(web): keep the invite password hint to one line |
-
-- **`master`** — `bcc04e1`, includes both `feature/retail-polish` and now
-  `feature/staff-management`; pushed to `origin`.
-
-## 8. Remaining Limitations
-
-- **One email = one tenant.** A staff email can belong to only one Negosio tenant. No
-  cross-tenant memberships (a future `PlatformUser` / `TenantMembership` split).
-- **No ownership transfer.**
-- **No separate cashier PIN** — the app user *is* the POS cashier.
-- **No Branch Management** (no add-branch, no branch assignments, no inventory transfers).
-- **No Void, no Reporting.**
-- **No offline selling.**
-- **No F&B.**
-- **No tenant timezone** — server UTC throughout.
-- **PHP currency is fixed.**
-- **No production email provider** — invitations are not emailed. Outside Production the
-  accept URL is in the API response and the structured log; in Production it is withheld and
-  a real provider (SendGrid / SES / Azure — none chosen) is the next integration step.
-
----
-
-## Working dev login & data
-
-- **Owner:** `invui@example.com` / `SecurePassword123!` — tenant "Inv UI Test", one branch
-  "Main Branch" / MAIN, products Widget A + Widget B, a register, and prior POS sales.
-- Verification this session left a throwaway staff account
-  (`staffv+<timestamp>@example.com`, "Casey Register") in the tenant, currently
-  **Deactivated**, plus a couple of spent/pending `staffv+…` / `reshot+…` invitations.
-  Harmless.
+1. **Ask the user what to build next** — do not start a new phase automatically. Phase 5's
+   own final report suggested candidates: Void/refund-without-return, Reporting v1 (X/Z,
+   sales by day/branch/cashier), Purchasing & supplier receiving (the
+   `DocumentNumberCounter` table already reserves a `PurchaseOrder` type), stock transfers
+   between branches, or the F&B vertical (tables, KDS, `KitchenStaff` becomes real).
+2. If the user wants to keep testing Phase 5 manually first: decide whether to purge the
+   disposable `Verify A/B` branches and `ca.*@ex.com`/`mgr.*@ex.com` test accounts from the
+   dev tenant DB, or leave them (harmless either way).
+3. For whatever comes next: if it's a new feature area, run it through
+   `superpowers:brainstorming` before writing code (per this repo's established workflow —
+   see the skill listing), work on a fresh feature branch off `master`, and do not merge
+   without the user's explicit go-ahead (this session's merge was explicitly requested by
+   the user in their final message — that approval does not carry forward to future work).
+4. Before any `dotnet build`/`dotnet test`, kill stale `Negosio.Api`/`vite` processes first
+   (repo convention — LocalDB file locks otherwise).
 
 ## Prompt for Next Claude Session
 
 ```
 You are continuing work on Negosio — a multi-tenant .NET 9 / EF Core / SQL Server + React 19
 SaaS platform (modular monolith, database-per-tenant) for retail & F&B. Read handover.md
-(repo root) first.
+(repo root) first, then docs/phase-5-status.md for full detail if needed.
 
 STATE (2026-09-01):
-  - PHASE 4 (Staff & Access Management) is MERGED to master (bcc04e1) and pushed to origin:
-    StaffInvitation domain + platform migration, StaffService / StaffInvitationService,
-    api/staff endpoints, OnTokenValidated per-request active+role check, StaffPage +
-    InviteAcceptPage + capability-gated nav.
-  - Verified: dotnet test 76 unit + 114 integration green · npm lint+build clean ·
-    headless-Chrome walkthrough of invite → accept → login → RBAC → role change → deactivate
-    → reactivate, zero console errors. Post-merge build 0/0, unit 76/76.
-  - master also has the earlier retail-polish (dashboard metrics + tax settings).
+  - Phase 5 (Branch Management & Branch-Scoped Access) is COMPLETE and MERGED to master
+    (merge commit 621aa8e, pushed to origin/master). feature/branch-management still exists
+    locally (not deleted) but master is now ahead-equivalent — work from master.
+  - Verified on master: dotnet build 0/0, dotnet test Negosio.sln = 88 unit + 162
+    integration (0 failed), npm run lint clean, npm run build clean.
+  - Every non-Owner/Admin role is now bound to exactly one branch (User.BranchId); every
+    branch-aware endpoint goes through BranchAccessResolver; branch-scoped users are locked
+    out immediately (login + per-request) when their branch is deactivated; POS register
+    sessions are ownership-enforced with Owner/Admin-only force-close; Sale/Return numbers
+    are 7 digits (0000001), one shared per-branch sequence.
 
 DO NOW:
-  1. Ask the user what to build next. Do NOT begin Phase 5 automatically.
-  2. For any new feature: brainstorm first (superpowers:brainstorming), work on a feature
-     branch, merge only on the user's word.
+  1. Ask the user what to build next — do NOT start a new phase automatically. Candidates
+     from the Phase 5 report: Void, Reporting v1, Purchasing & receiving, stock transfers,
+     F&B vertical.
+  2. For any new feature: use superpowers:brainstorming first, work on a fresh feature
+     branch off master, and do not merge without the user's explicit go-ahead in that
+     conversation (do not assume a prior merge approval carries forward).
 
 GUARDRAILS — do not undo:
-  - NO "Co-Authored-By: Claude" / "Generated with Claude Code" trailer on commits.
-    Commit on feature branches; merge only on the user's word.
-  - One email = one platform login = one tenant. Do NOT redesign into cross-tenant
-    memberships. Auth credentials stay in Negosio_Platform.
-  - The app user IS the POS cashier — no separate PIN identity.
-  - Do NOT recreate/rename roles or the policy matrix without a confirmed defect.
-  - Invitation raw token: never in a Production response; store only the SHA-256 hash.
-  - Never compute authoritative money/stock client-side.
+  - Branch-scoped roles are fixed: Manager, Cashier, InventoryStaff, KitchenStaff, Viewer.
+    All-branch: Owner, Admin only. Don't invent new categories without a design discussion.
+  - Every branch-aware read/write must go through BranchAccessResolver
+    (src/Negosio.Application/Branches/BranchAccessResolver.cs) — don't hand-roll new
+    branch-filtering logic.
+  - Branch code is immutable after creation; only name/address are editable.
+  - JWT does not carry branch (resolved fresh per request) — role changes still require
+    re-login (Phase 4 decision, unchanged); branch changes/deactivations do not.
+  - Force-close is Owner/Admin only, never Manager, even though Manager has RegisterManage.
+  - Sale/Return numbers are exactly 7 digits (0000001) — do not change the format again
+    without an explicit new instruction.
+  - No "Co-Authored-By: Claude" / "Generated with Claude Code" trailer on commits.
   - Run the API: ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Negosio.Api
     --launch-profile http
-  - Kill any stale Negosio.Api / vite process before building or dotnet test.
+  - Kill any stale Negosio.Api / vite process before building or running dotnet test.
 
-If something is uncertain, verify against the repo — it is the source of truth.
-```
-
-### Useful commands
-
-```bash
-dotnet test Negosio.sln                 # 76 unit + 114 integration (~7 min)
-ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Negosio.Api --launch-profile http
-cd web/negosio-web && npm run lint && npm run build
-cd web/negosio-web && npm run dev       # http://localhost:5173
-git log --oneline -12                   # Phase 4 landed at bcc04e1
+If something is uncertain, verify against the repo — it is the source of truth. Do not
+assume dev-data (e.g. the "Verify A/B" branches or test cashier accounts left in the
+Inv UI Test tenant) is meaningful; it is disposable verification residue unless the user
+says otherwise.
 ```
