@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { dashboardApi } from '../api/endpoints'
 import { useAuth } from '../auth/AuthContext'
+import { useCan } from '../lib/useCan'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
 import { Button, Card, ErrorState, MetricCard, SkeletonCard } from '../components/ui'
 import { businessTypeLabel } from '../lib/businessTypes'
@@ -23,6 +24,7 @@ import { formatMoney } from '../lib/format'
 
 export default function DashboardPage() {
   const { user } = useAuth()
+  const canManageRegisters = useCan('register:manage')
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ['dashboard'],
     queryFn: dashboardApi.get,
@@ -120,15 +122,17 @@ export default function DashboardPage() {
                     View inventory
                   </Button>
                 </Link>
-                <Link to="/registers">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    leadingIcon={<Calculator className="size-4" aria-hidden="true" />}
-                  >
-                    Manage registers
-                  </Button>
-                </Link>
+                {canManageRegisters && (
+                  <Link to="/registers">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      leadingIcon={<Calculator className="size-4" aria-hidden="true" />}
+                    >
+                      Manage registers
+                    </Button>
+                  </Link>
+                )}
               </Card>
             </section>
 
