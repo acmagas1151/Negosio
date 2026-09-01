@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Negosio.Application.Auth;
 using Negosio.Application.Branches;
 using Negosio.Application.Common;
@@ -174,15 +175,37 @@ public class BranchScopedAccessTests : IntegrationTest
     }
 
     [Fact]
-    public async Task An_unassigned_branch_scoped_user_is_forbidden()
+    public async Task A_branch_scoped_user_with_no_branch_assignment_is_locked_out()
     {
-        await RegisterLoginAndAuthorizeAsync();
-        var token = await AddTenantUserTokenAsync("noassign@example.com", UserRole.Cashier);
+        var owner = await RegisterLoginAndAuthorizeAsync();
+
+        // Force the invalid state directly (backfill + invite always assign a branch in practice).
+        var userId = Guid.NewGuid();
+        await InScopeAsync(async db =>
+        {
+            db.Users.Add(Negosio.Domain.Entities.User.Create(userId, owner.User.TenantId, "noassign@example.com", "No", "Branch", UserRole.Cashier));
+            await db.SaveChangesAsync();
+            return true;
+        });
+        var token = await AddTenantUserTokenViaExistingUserAsync(userId, "noassign@example.com", UserRole.Cashier);
 
         Authorize(token);
         var response = await Client.GetAsync("/api/branches");
 
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await response.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be("BRANCH_FORBIDDEN");
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await response.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be("BRANCH_INACTIVE");
+    }
+
+    private async Task<string> AddTenantUserTokenViaExistingUserAsync(Guid userId, string email, UserRole role)
+    {
+        await InPlatformScopeAsync(async platform =>
+        {
+            platform.PlatformUserLogins.Add(Negosio.Domain.Entities.PlatformUserLogin.Create(
+                userId, CurrentTenantId, email, "not-a-real-hash", role));
+            await platform.SaveChangesAsync();
+            return true;
+        });
+        var generator = Factory.Services.GetRequiredService<Negosio.Application.Abstractions.IJwtTokenGenerator>();
+        return generator.Generate(new Negosio.Application.Abstractions.TokenSubject(userId, CurrentTenantId, role, email)).Value;
     }
 }

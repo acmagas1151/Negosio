@@ -2,6 +2,7 @@ using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Application.Platform;
 using Negosio.Domain.Entities;
@@ -101,9 +102,30 @@ public sealed class AuthService : IAuthService
             throw new BusinessRuleException(ErrorCodes.AccountInactive, "This account is not active.");
         }
 
+        await using var tenantDb = await _tenantFactory.CreateAsync(login.TenantId, cancellationToken);
+
+        // A branch-scoped user can only sign in while their assigned branch is active.
+        if (!BranchRoles.IsAllBranch(login.Role))
+        {
+            var assignedBranchId = await tenantDb.Users.AsNoTracking()
+                .Where(u => u.Id == login.Id)
+                .Select(u => u.BranchId)
+                .SingleAsync(cancellationToken);
+
+            var branchActive = assignedBranchId is { } branchId
+                && await tenantDb.Branches.AsNoTracking()
+                    .AnyAsync(b => b.Id == branchId && b.IsActive, cancellationToken);
+
+            if (!branchActive)
+            {
+                throw new BusinessRuleException(
+                    ErrorCodes.BranchInactive,
+                    "Your assigned branch is currently inactive. Please contact your administrator.");
+            }
+        }
+
         var token = _tokenGenerator.Generate(new TokenSubject(login.Id, login.TenantId, login.Role, login.EmailNormalized));
 
-        await using var tenantDb = await _tenantFactory.CreateAsync(login.TenantId, cancellationToken);
         var dto = await BuildAuthUserDtoAsync(tenantDb, login.Id, cancellationToken);
 
         _logger.LogInformation("User {UserId} of tenant {TenantId} logged in", login.Id, login.TenantId);

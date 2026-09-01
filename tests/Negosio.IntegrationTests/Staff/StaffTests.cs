@@ -29,9 +29,29 @@ public class StaffTests : IntegrationTest
 
     private static string TokenFromPath(string acceptPath) => acceptPath.Split('/').Last();
 
-    private async Task<HttpResponseMessage> AcceptAsync(string token, string first = "Sam", string last = "Staff", string password = "SecurePassword123!") =>
-        await Client.PostAsJsonAsync($"/api/auth/invitations/{token}/accept",
+    private async Task<HttpResponseMessage> AcceptAsync(string token, string first = "Sam", string last = "Staff", string password = "SecurePassword123!")
+    {
+        var response = await Client.PostAsJsonAsync($"/api/auth/invitations/{token}/accept",
             new AcceptInvitationRequest(first, last, password));
+
+        // Phase 5 interim: invitations don't carry a branch yet (Task 10). Bind any newly-accepted
+        // branch-scoped user to the tenant's sole branch so they can authenticate.
+        if (response.IsSuccessStatusCode)
+        {
+            await InScopeAsync(async db =>
+            {
+                var branchId = await db.Branches.Select(b => b.Id).FirstAsync();
+                foreach (var u in await db.Users.Where(u => u.BranchId == null && u.Role != UserRole.Owner && u.Role != UserRole.Admin).ToListAsync())
+                {
+                    u.AssignBranch(branchId);
+                }
+                await db.SaveChangesAsync();
+                return true;
+            });
+        }
+
+        return response;
+    }
 
     private async Task<LoginResponse> LoginAsync(string email, string password = "SecurePassword123!")
     {

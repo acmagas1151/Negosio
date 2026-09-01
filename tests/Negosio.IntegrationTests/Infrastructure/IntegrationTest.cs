@@ -126,8 +126,15 @@ public abstract class IntegrationTest : IAsyncLifetime
 
         await InScopeAsync(async db =>
         {
+            // Branch-scoped roles must have an active branch (Phase 5). Default to the tenant's first.
+            var resolvedBranchId = branchId;
+            if (resolvedBranchId is null && role is not (Negosio.Domain.Enums.UserRole.Owner or Negosio.Domain.Enums.UserRole.Admin))
+            {
+                resolvedBranchId = await db.Branches.Select(b => b.Id).FirstAsync();
+            }
+
             db.Users.Add(Negosio.Domain.Entities.User.Create(
-                userId, CurrentTenantId, email, "Test", "User", role, branchId));
+                userId, CurrentTenantId, email, "Test", "User", role, resolvedBranchId));
             await db.SaveChangesAsync();
             return true;
         });
@@ -143,6 +150,39 @@ public abstract class IntegrationTest : IAsyncLifetime
         var generator = Factory.Services.GetRequiredService<IJwtTokenGenerator>();
         return generator.Generate(new TokenSubject(userId, CurrentTenantId, role, email)).Value;
     }
+
+    /// <summary>
+    /// Add a user who can actually log in: a real password hash on the platform login plus a tenant
+    /// User (optionally branch-assigned). Returns the user id.
+    /// </summary>
+    protected async Task<Guid> AddLoginableTenantUserAsync(
+        string email, string password, Negosio.Domain.Enums.UserRole role, Guid? branchId = null)
+    {
+        var userId = Guid.NewGuid();
+        var hasher = Factory.Services.GetRequiredService<Negosio.Application.Abstractions.IPasswordHasher>();
+        var hash = hasher.Hash(password);
+
+        await InScopeAsync(async db =>
+        {
+            db.Users.Add(Negosio.Domain.Entities.User.Create(
+                userId, CurrentTenantId, email, "Test", "User", role, branchId));
+            await db.SaveChangesAsync();
+            return true;
+        });
+
+        await InPlatformScopeAsync(async platform =>
+        {
+            platform.PlatformUserLogins.Add(Negosio.Domain.Entities.PlatformUserLogin.Create(
+                userId, CurrentTenantId, email, hash, role));
+            await platform.SaveChangesAsync();
+            return true;
+        });
+
+        return userId;
+    }
+
+    protected async Task<HttpResponseMessage> RawLoginAsync(string email, string password) =>
+        await Client.PostAsJsonAsync("/api/auth/login", new LoginRequest(email, password));
 
     protected async Task<CategoryDto> CreateCategoryAsync(string name = "Beverages", string? description = null)
     {
