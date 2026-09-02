@@ -81,7 +81,9 @@ public sealed class VoidSaleService : IVoidSaleService
         // to RegisterSessions, so there's no natural optimistic-concurrency collision to detect
         // against a concurrent close. This lock instead fully serializes the two operations: whoever
         // acquires it first runs their entire read-then-write to completion before the other can even
-        // begin reading. RegisterSessionService.ReconcileAndCloseAsync takes the identical lock.
+        // begin reading — but only once RegisterSessionService.ReconcileAndCloseAsync also takes the
+        // matching lock, which it does not yet at this commit (Task B5 adds it). Until then, this lock
+        // alone does not close the void-vs-close race; see the plan's Global Constraints.
         await _db.Database.SqlQuery<int>(
             $"SELECT 1 AS Value FROM RegisterSessions WITH (UPDLOCK, HOLDLOCK) WHERE Id = {sale.RegisterSessionId}")
             .ToListAsync(cancellationToken);

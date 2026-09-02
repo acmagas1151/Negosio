@@ -112,9 +112,15 @@ public sealed class ReturnService : IReturnService
         }
         catch (DbUpdateConcurrencyException)
         {
-            // Sale.RowVersion caught a race against a concurrent void that committed first — the
-            // `await using` transaction above rolls back on this exception path before we get here
-            // (we never called CommitAsync), so there is no explicit RollbackAsync needed.
+            // Sale.RowVersion caught a race against a concurrent void that committed first. Roll back
+            // explicitly, first, before anything else — the `await using` transaction only disposes
+            // (and rolls back) once the exception propagates out of this method, which is *after* the
+            // catch body below has already run; without an explicit rollback here, the re-fetch just
+            // below would run inside a transaction still holding this call's own uncommitted writes
+            // (the restock, the SaleReturn insert). Matches the same explicit-rollback-before-anything-
+            // else pattern used in VoidSaleService.cs, InventoryService.cs and CheckoutService.cs.
+            await transaction.RollbackAsync(cancellationToken);
+
             var fresh = await _db.Sales.AsNoTracking()
                 .SingleAsync(s => s.TenantId == tenantId && s.Id == sale.Id, cancellationToken);
             throw new BusinessRuleException(ErrorCodes.ReturnNotAllowed,
