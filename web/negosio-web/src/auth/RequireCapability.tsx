@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ShieldAlert } from 'lucide-react'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
-import { useCan, type Capability } from '../lib/useCan'
+import { useCapabilities, type Capability } from '../lib/useCan'
 
 /**
  * Page-level guard for routes whose backend policy would 403 the current role. Navigation already
@@ -13,11 +13,14 @@ export function RequireCapability({
   title = 'Page',
   children,
 }: {
-  capability: Capability
+  /** A single capability, or an array meaning "any of these" — mirrors `nav.ts`/`Sidebar.tsx`. */
+  capability: Capability | Capability[]
   title?: string
   children: ReactNode
 }) {
-  if (useCan(capability)) return <>{children}</>
+  const can = useCapabilities()
+  const capabilities = Array.isArray(capability) ? capability : [capability]
+  if (capabilities.some(can)) return <>{children}</>
 
   return (
     <DashboardLayout title={title}>

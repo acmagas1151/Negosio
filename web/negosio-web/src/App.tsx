@@ -61,7 +61,7 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
   {
     path: '/staff',
     element: (
-      <RequireCapability capability="staff:manage" title="Staff">
+      <RequireCapability capability={['staff:manage', 'staff:permissions']} title="Staff">
         <StaffPage />
       </RequireCapability>
     ),
