@@ -22,6 +22,10 @@
 - `RegisterCashMovement` amount is always `> 0`; direction comes from `Type`, never a signed amount. Creatable only by the session's own owner (`session.OpenedByUserId == currentUser`), on an Open session.
 - No line-level/partial void, no Reporting, no stock transfers, no purchasing, no F&B, no multi-currency, no tenant timezone, no closed-session cash correction of any kind — do not build any of these even incidentally.
 - Branch-scoped users get 404 (not 403) on a sale/session outside their branch, matching `ReturnService.GuardSaleBranchAsync`'s existing pattern — do not switch this to 403.
+- **Concurrency (required, not optional):** the void eligibility checks must be re-verified inside the same transaction as inventory reversal + `Sale.Void()` + `SaveChanges`. `Sale` gets a `RowVersion` concurrency token (protects double-void and void-vs-return — both `VoidSaleService` and `ReturnService` must catch `DbUpdateConcurrencyException`, re-fetch, and throw the sale's *accurate current-state* error, not a generic conflict). Void-vs-register-session-close is a cross-entity race `RowVersion` cannot catch (Void never writes to `RegisterSessions`) — both `VoidSaleService.VoidAsync` and `RegisterSessionService.ReconcileAndCloseAsync` must take a pessimistic `WITH (UPDLOCK, HOLDLOCK)` read-lock on the session row as the very first statement inside their transaction, before any other read, to fully serialize the two operations against each other.
+- Capture exactly one `nowUtc` (from `TimeProvider`) per void attempt and reuse it for both the same-UTC-day eligibility check and `Sale.VoidedAtUtc` — `Sale.Void(...)` takes `nowUtc` as a parameter, it never calls `DateTime.UtcNow` itself.
+- `VoidSaleService` must explicitly check the actor's role is one of exactly Owner/Admin/Manager/Cashier and reject anything else with a generic forbidden error — never rely solely on the controller's `SalesView` policy, and never treat "not Owner/Admin/Manager" as an implicit synonym for "is Cashier."
+- A non-all-branch Staff-list caller (Manager) sees only rows where `BranchId` equals their own assigned branch — **not** `BranchId == assigned || BranchId == null`. A null `BranchId` always means Owner/Admin; a Manager must never see those rows.
 - Do not weaken tests, lint, TypeScript, or authorization to make something pass — every fix must be a real fix.
 - **Do NOT merge `feature/void-cash-operations` into `master`** at the end of this plan — stop after full verification and the final report.
 
@@ -36,7 +40,7 @@
 - Test: `tests/Negosio.UnitTests/Sales/SaleVoidTests.cs`
 
 **Interfaces:**
-- Produces: `Sale.Void(Guid voidedByUserId, string reason, Guid? approvedByUserId)`, `Sale.VoidedByUserId` (`Guid?`), `Sale.ApprovedByUserId` (`Guid?`). Later tasks (B4) call `sale.Void(...)` after their own eligibility checks pass — this method's own guard is defense in depth (throws `InvalidOperationException`, not an `AppException` — the service layer is what turns eligibility failures into typed errors).
+- Produces: `Sale.Void(Guid voidedByUserId, string reason, Guid? approvedByUserId, DateTime nowUtc)`, `Sale.VoidedByUserId` (`Guid?`), `Sale.ApprovedByUserId` (`Guid?`), `Sale.RowVersion` (`byte[]`, EF concurrency token). Later tasks (B4) call `sale.Void(...)` after their own eligibility checks pass, passing one `TimeProvider`-sourced `nowUtc` they've already captured for the same-day eligibility comparison — this method's own status guard is defense in depth (throws `InvalidOperationException`, not an `AppException` — the service layer is what turns eligibility failures into typed errors). `RowVersion` requires no application code to set — SQL Server auto-increments it on every UPDATE to the row; EF just needs it mapped `IsRowVersion()` so every tracked write to a `Sale` (from `VoidSaleService` *and* the existing `ReturnService`) automatically gets an optimistic-concurrency check, without either service's code changing beyond catching the resulting exception (B4 does this for `VoidSaleService`; B4 also adds the matching catch to `ReturnService`, since it's the other writer that needs to react correctly to losing a race against a void).
 
 - [ ] **Step 1: Write the failing unit tests**
 
@@ -65,14 +69,26 @@ public class SaleVoidTests
         var sale = CompletedSale();
         var voidedBy = Guid.NewGuid();
         var approvedBy = Guid.NewGuid();
+        var nowUtc = new DateTime(2026, 9, 2, 10, 30, 0, DateTimeKind.Utc);
 
-        sale.Void(voidedBy, "Wrong payment method", approvedBy);
+        sale.Void(voidedBy, "Wrong payment method", approvedBy, nowUtc);
 
         sale.Status.Should().Be(SaleStatus.Voided);
         sale.VoidedByUserId.Should().Be(voidedBy);
         sale.ApprovedByUserId.Should().Be(approvedBy);
         sale.VoidReason.Should().Be("Wrong payment method");
-        sale.VoidedAtUtc.Should().NotBeNull();
+        sale.VoidedAtUtc.Should().Be(nowUtc);
+    }
+
+    [Fact]
+    public void Void_uses_the_passed_timestamp_not_wall_clock()
+    {
+        var sale = CompletedSale();
+        var farFuture = new DateTime(2099, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        sale.Void(Guid.NewGuid(), "Timestamp check", null, farFuture);
+
+        sale.VoidedAtUtc.Should().Be(farFuture); // proves Void() never calls DateTime.UtcNow itself
     }
 
     [Fact]
@@ -80,7 +96,7 @@ public class SaleVoidTests
     {
         var sale = CompletedSale();
 
-        sale.Void(Guid.NewGuid(), "Duplicate transaction", approvedByUserId: null);
+        sale.Void(Guid.NewGuid(), "Duplicate transaction", approvedByUserId: null, DateTime.UtcNow);
 
         sale.ApprovedByUserId.Should().BeNull();
     }
@@ -89,9 +105,9 @@ public class SaleVoidTests
     public void Void_twice_throws()
     {
         var sale = CompletedSale();
-        sale.Void(Guid.NewGuid(), "Wrong payment method", null);
+        sale.Void(Guid.NewGuid(), "Wrong payment method", null, DateTime.UtcNow);
 
-        var act = () => sale.Void(Guid.NewGuid(), "Second attempt", null);
+        var act = () => sale.Void(Guid.NewGuid(), "Second attempt", null, DateTime.UtcNow);
 
         act.Should().Throw<InvalidOperationException>();
     }
@@ -101,7 +117,7 @@ public class SaleVoidTests
     {
         var sale = CompletedSale();
 
-        var act = () => sale.Void(Guid.NewGuid(), "   ", null);
+        var act = () => sale.Void(Guid.NewGuid(), "   ", null, DateTime.UtcNow);
 
         act.Should().Throw<ArgumentException>();
     }
@@ -111,7 +127,7 @@ public class SaleVoidTests
     {
         var sale = Sale.Begin(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "0000001", Guid.NewGuid(), Guid.NewGuid());
 
-        var act = () => sale.Void(Guid.NewGuid(), "Never completed", null);
+        var act = () => sale.Void(Guid.NewGuid(), "Never completed", null, DateTime.UtcNow);
 
         act.Should().Throw<InvalidOperationException>();
     }
@@ -125,12 +141,17 @@ Expected: build error — `Sale` has no `Void` method, no `VoidedByUserId`/`Appr
 
 - [ ] **Step 3: Implement `Sale.Void()` and the new properties**
 
-In `src/Negosio.Domain/Entities/Sales/Sale.cs`, add two properties next to the existing `VoidedAtUtc`/`VoidReason` (after line 68):
+In `src/Negosio.Domain/Entities/Sales/Sale.cs`, add three properties next to the existing `VoidedAtUtc`/`VoidReason` (after line 68):
 
 ```csharp
 public Guid? VoidedByUserId { get; private set; }
 
 public Guid? ApprovedByUserId { get; private set; }
+
+/// <summary>SQL Server `rowversion` — EF-managed optimistic concurrency token, never set by
+/// application code. Protects any two competing writes to this row (double-void, void racing a
+/// concurrent Return) — see the plan's Global Constraints and Task B4.</summary>
+public byte[] RowVersion { get; private set; } = Array.Empty<byte>();
 ```
 
 Add a new method after `MarkReturned()`:
@@ -141,8 +162,11 @@ Add a new method after `MarkReturned()`:
 /// (<c>VoidSaleService</c>) is responsible for the full eligibility check (status, returns,
 /// session-open, same-day cutoff) and for restoring inventory in the same transaction — this
 /// guard is defense in depth, re-asserting the one invariant the domain itself must never allow.
+/// <paramref name="nowUtc"/> is required, not read from the clock here — the caller captures one
+/// TimeProvider-sourced timestamp per void attempt and reuses it for both the same-day eligibility
+/// check and this stamp, so the two can never disagree.
 /// </summary>
-public void Void(Guid voidedByUserId, string reason, Guid? approvedByUserId)
+public void Void(Guid voidedByUserId, string reason, Guid? approvedByUserId, DateTime nowUtc)
 {
     if (Status != SaleStatus.Completed)
     {
@@ -155,7 +179,7 @@ public void Void(Guid voidedByUserId, string reason, Guid? approvedByUserId)
     }
 
     Status = SaleStatus.Voided;
-    VoidedAtUtc = DateTime.UtcNow;
+    VoidedAtUtc = nowUtc;
     VoidReason = reason.Trim();
     VoidedByUserId = voidedByUserId;
     ApprovedByUserId = approvedByUserId;
@@ -166,7 +190,7 @@ public void Void(Guid voidedByUserId, string reason, Guid? approvedByUserId)
 - [ ] **Step 4: Run to verify the unit tests pass**
 
 Run: `dotnet test tests/Negosio.UnitTests --filter SaleVoidTests`
-Expected: 5 passed.
+Expected: 6 passed.
 
 - [ ] **Step 5: Map the new columns and generate the migration**
 
@@ -175,6 +199,7 @@ In `src/Negosio.Infrastructure/Persistence/Configurations/SaleConfiguration.cs`,
 ```csharp
 builder.Property(s => s.VoidedByUserId);
 builder.Property(s => s.ApprovedByUserId);
+builder.Property(s => s.RowVersion).IsRowVersion();
 ```
 
 Kill any stale `Negosio.Api`/vite process first (repo convention — LocalDB file locks), then run:
@@ -316,7 +341,9 @@ public class SalesVoidPermissionTests : IntegrationTest
         Authorize(managerToken);
         var list = await Client.GetFromJsonAsync<List<StaffMemberDto>>("/api/staff", TestJson.Options);
 
-        list!.Should().OnlyContain(m => m.BranchId == null || m.BranchId == bgc.Id);
+        // Strictly BGC only — not Owner/Admin (whose BranchId is null) and not MAIN.
+        list!.Should().OnlyContain(m => m.BranchId == bgc.Id);
+        list!.Should().NotContain(m => m.Role is UserRole.Owner or UserRole.Admin);
     }
 
     [Fact]
@@ -606,8 +633,11 @@ Pass `SalesVoid: grantedUserIds.Contains(u.Id) && role == UserRole.Cashier` into
 var assigned = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
 if (assigned is { } branchId)
 {
-    return members.Where(m => m.BranchId == null || m.BranchId == branchId)
-        .Concat(invitationRows.Where(i => i.BranchId == null || i.BranchId == branchId))
+    // Strictly BranchId == branchId — NOT `|| BranchId == null`. A null BranchId always means
+    // Owner/Admin (Phase 5 invariant); a Manager must never see those rows, so they're excluded
+    // outright rather than treated as "visible to everyone."
+    return members.Where(m => m.BranchId == branchId)
+        .Concat(invitationRows.Where(i => i.BranchId == branchId))
         .OrderBy(m => m.Kind == StaffMemberKind.Invitation)
         .ThenBy(m => (m.FirstName + m.LastName + m.Email).ToLowerInvariant())
         .ToList();
@@ -1131,14 +1161,18 @@ This is the core of the phase. Build it as one task since the Cashier-without-gr
 - Create: `src/Negosio.Application/Sales/VoidSaleValidator.cs`
 - Modify: `src/Negosio.Application/Sales/SaleContracts.cs` (add `VoidSaleRequest`/`VoidSaleApprovalInput`, void + eligibility fields on `SaleDetailDto`/`SaleSummaryDto`)
 - Modify: `src/Negosio.Application/Sales/SaleQueryService.cs` (populate the new fields — locate via `grep -rn "class SaleQueryService" src/Negosio.Application/Sales/`)
+- Modify: `src/Negosio.Application/Sales/ReturnService.cs` (catch `DbUpdateConcurrencyException` — the other writer that can lose a race against a void)
 - Modify: `src/Negosio.Application/Inventory/InventoryPosting.cs` (`ReverseForVoidAsync`, refactor shared restock logic)
 - Modify: `src/Negosio.Domain/Enums/StockMovementType.cs` (append `SaleVoid = 10`)
 - Modify: `src/Negosio.Api/Controllers/SalesController.cs` (`POST /api/sales/{id}/void`)
 - Test: `tests/Negosio.IntegrationTests/Sales/VoidSaleTests.cs`
+- Test: `tests/Negosio.IntegrationTests/Sales/VoidConcurrencyTests.cs`
 
 **Interfaces:**
-- Consumes: `ISalesVoidPermissionService.HasGrantAsync` (B2), `IBranchAccessResolver.AssignedBranchIdAsync`/`ResolveTargetBranchAsync` (existing), `IInventoryPosting` (extended here), `TimeProvider` (existing DI registration), `IPasswordHasher`/`IPlatformDbContext` (existing, same as `AuthService`).
-- Produces: `IVoidSaleService.VoidAsync(Guid saleId, VoidSaleRequest request, CancellationToken) -> Task<SaleDetailDto>`; `IApproverVerificationService.VerifyAsync(string email, string password, Guid saleBranchId, CancellationToken) -> Task<Guid>` (returns the approver's tenant `User.Id`); `VoidEligibility.Evaluate(Sale sale, bool sessionOpen, bool sameUtcDay, bool hasReturns) -> VoidEligibilityResult` (a pure static helper — **Task B4 only**, but its result shape, `VoidEligibilityResult(bool CanVoid, string? IneligibilityCode)`, is what `SaleDetailDto.CanVoid`/`VoidIneligibilityCode` surface to the frontend).
+- Consumes: `ISalesVoidPermissionService.HasGrantAsync` (B2), `IBranchAccessResolver.AssignedBranchIdAsync`/`ResolveTargetBranchAsync` (existing), `IInventoryPosting` (extended here), `TimeProvider` (existing DI registration), `IPasswordHasher`/`IPlatformDbContext` (existing, same as `AuthService`), `Sale.RowVersion` (B1).
+- Produces: `IVoidSaleService.VoidAsync(Guid saleId, VoidSaleRequest request, CancellationToken) -> Task<SaleDetailDto>`; `IApproverVerificationService.VerifyAsync(string email, string password, Guid saleBranchId, CancellationToken) -> Task<Guid>` (returns the approver's tenant `User.Id`); `VoidEligibility.Evaluate(Sale sale, bool sessionOpen, bool sameUtcDay, bool hasReturns) -> VoidEligibilityResult` (a pure static helper — **Task B4 only**, but its result shape, `VoidEligibilityResult(bool CanVoid, string? IneligibilityCode)`, is what `SaleDetailDto.CanVoid`/`VoidIneligibilityCode` surface to the frontend, and what both `VoidSaleService` and its post-conflict recheck use).
+
+**Concurrency contract for this task (see the plan's Global Constraints):** `VoidAsync` captures one `nowUtc` from `TimeProvider` at the top and reuses it everywhere; opens its transaction, takes a pessimistic `WITH (UPDLOCK, HOLDLOCK)` lock on the sale's `RegisterSession` row as the very first statement inside it, *then* re-reads `hasReturns`/session-status/same-day fresh before evaluating eligibility; and wraps the final `SaveChangesAsync` in a catch for `DbUpdateConcurrencyException` that re-fetches the sale and throws its now-accurate eligibility error rather than a generic conflict.
 
 - [ ] **Step 1: Write the failing integration tests**
 
@@ -1446,9 +1480,122 @@ protected async Task BackdateSaleCompletedAtAsync(Guid saleId, DateTime complete
 
 Read `tests/Negosio.IntegrationTests/Infrastructure/IntegrationTest.cs` first — reuse whatever it already exposes (tenant id tracking, `AddTenantUserTokenAsync`'s exact provisioning code) rather than guessing; adapt the three helpers above to fit its actual shape, keeping their behavior as described.
 
+Also create `tests/Negosio.IntegrationTests/Sales/VoidConcurrencyTests.cs` — the three concurrent-race tests the plan's Global Constraints require. These fire two requests via `Task.WhenAll` rather than forcing an exact interleaving; the assertions check the *invariant* (exactly one winner, no double-reversal, no inconsistent reconciliation), which holds regardless of how the scheduler actually interleaves the two requests — a real correctness guarantee, not a timing-dependent flake:
+
+```csharp
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using FluentAssertions;
+using Negosio.Application.Common;
+using Negosio.Application.Pos;
+using Negosio.Application.Registers;
+using Negosio.Application.Sales;
+using Negosio.Domain.Enums;
+using Negosio.IntegrationTests.Infrastructure;
+
+namespace Negosio.IntegrationTests.Sales;
+
+public class VoidConcurrencyTests : IntegrationTest
+{
+    public VoidConcurrencyTests(NegosioApiFactory factory) : base(factory)
+    {
+    }
+
+    // Explicit per-request Authorization header, NOT the shared Client.DefaultRequestHeaders the
+    // Authorize(token) helper mutates — two concurrent requests as different actors must not race
+    // on that shared mutable state. Clear Client.DefaultRequestHeaders.Authorization = null before
+    // using this in a test (verify against the real Authorize() implementation first).
+    private static HttpRequestMessage AuthorizedRequest(HttpMethod method, string url, string token, object? body = null)
+    {
+        var request = new HttpRequestMessage(method, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (body is not null) request.Content = JsonContent.Create(body);
+        return request;
+    }
+
+    [Fact]
+    public async Task Two_concurrent_voids_on_the_same_sale_never_double_restore_inventory()
+    {
+        Client.DefaultRequestHeaders.Authorization = null;
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        Client.DefaultRequestHeaders.Authorization = null; // undo RegisterLoginAndAuthorizeAsync's own Authorize() side effect
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, quantity: 10m);
+
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
+        var openRes = await Client.SendAsync(AuthorizedRequest(HttpMethod.Post, "/api/register-sessions/open", cashierToken,
+            new OpenRegisterSessionRequest(register.Id, 1000m)));
+        var session = (await openRes.Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+
+        var checkoutRes = await Client.SendAsync(AuthorizedRequest(HttpMethod.Post, "/api/pos/checkout", cashierToken,
+            new CheckoutRequest(branchId, session.Id, Guid.NewGuid(),
+                new[] { new CheckoutItemInput(variantId, 3m, null) },
+                new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 300m) })));
+        var sale = (await checkoutRes.Content.ReadFromJsonAsync<SaleResultDto>(TestJson.Options))!;
+
+        var beforeVoid = await GetInventoryQuantityAsync(branchId, variantId);
+
+        HttpRequestMessage VoidRequest() => AuthorizedRequest(HttpMethod.Post, $"/api/sales/{sale.SaleId}/void", owner.AccessToken,
+            new VoidSaleRequest("Concurrent void attempt"));
+
+        var results = await Task.WhenAll(Client.SendAsync(VoidRequest()), Client.SendAsync(VoidRequest()));
+
+        results.Count(r => r.StatusCode == HttpStatusCode.OK).Should().Be(1);
+        results.Count(r => r.StatusCode == HttpStatusCode.BadRequest).Should().Be(1);
+        (await GetInventoryQuantityAsync(branchId, variantId)).Should().Be(beforeVoid + 3m); // restored exactly once
+    }
+
+    [Fact]
+    public async Task Concurrent_void_and_return_on_the_same_sale_never_both_succeed()
+    {
+        Client.DefaultRequestHeaders.Authorization = null;
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        Client.DefaultRequestHeaders.Authorization = null;
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, quantity: 10m);
+
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
+        var openRes = await Client.SendAsync(AuthorizedRequest(HttpMethod.Post, "/api/register-sessions/open", cashierToken,
+            new OpenRegisterSessionRequest(register.Id, 1000m)));
+        var session = (await openRes.Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+
+        var checkoutRes = await Client.SendAsync(AuthorizedRequest(HttpMethod.Post, "/api/pos/checkout", cashierToken,
+            new CheckoutRequest(branchId, session.Id, Guid.NewGuid(),
+                new[] { new CheckoutItemInput(variantId, 2m, null) },
+                new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 200m) })));
+        var sale = (await checkoutRes.Content.ReadFromJsonAsync<SaleResultDto>(TestJson.Options))!;
+
+        var detailRes = await Client.SendAsync(AuthorizedRequest(HttpMethod.Get, $"/api/sales/{sale.SaleId}", owner.AccessToken));
+        var detail = (await detailRes.Content.ReadFromJsonAsync<SaleDetailDto>(TestJson.Options))!;
+        var firstItemId = detail.Items[0].Id;
+
+        var voidTask = Client.SendAsync(AuthorizedRequest(HttpMethod.Post, $"/api/sales/{sale.SaleId}/void", owner.AccessToken,
+            new VoidSaleRequest("Concurrent void")));
+        var returnTask = Client.SendAsync(AuthorizedRequest(HttpMethod.Post, $"/api/sales/{sale.SaleId}/returns", owner.AccessToken,
+            new CreateReturnRequest(new[] { new ReturnLineInput(firstItemId, 1m, true) }, "Concurrent return", PaymentMethod.Cash, null)));
+
+        var results = await Task.WhenAll(voidTask, returnTask);
+
+        // Exactly one of the two can succeed — a sale can never end up both Voided and Refunded.
+        results.Count(r => r.IsSuccessStatusCode).Should().Be(1);
+
+        var finalRes = await Client.SendAsync(AuthorizedRequest(HttpMethod.Get, $"/api/sales/{sale.SaleId}", owner.AccessToken));
+        var final = (await finalRes.Content.ReadFromJsonAsync<SaleDetailDto>(TestJson.Options))!;
+        final.Sale.Status.Should().BeOneOf(SaleStatus.Voided, SaleStatus.PartiallyRefunded, SaleStatus.Refunded);
+    }
+}
+```
+
+(This file deliberately covers only the two *same-row* races — double-void and void-vs-return — since both are protected by `Sale.RowVersion` alone, landing entirely in this task. The third required race, void-vs-session-close, needs `RegisterSessionService.ReconcileAndCloseAsync` to also take the pessimistic session lock *before its own reconciliation reads* — not just before its final write — which is a change Task B5 makes to that exact method; that test is added there, in B5's own test file, immediately after B5 adds the matching lock. Landing it here instead would make this task's test suite depend on a task that hasn't run yet.)
+
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `dotnet test tests/Negosio.IntegrationTests --filter VoidSaleTests`
+Run: `dotnet test tests/Negosio.IntegrationTests --filter "VoidSaleTests|VoidConcurrencyTests"`
 Expected: compile errors — none of `VoidSaleRequest`, `VoidSaleApprovalInput`, `SaleDetailDto.VoidedByUserId`/`ApprovedByUserId`, or the void endpoint exist yet.
 
 - [ ] **Step 3: Append `SaleVoid` to `StockMovementType` and extend `IInventoryPosting`**
@@ -1731,9 +1878,9 @@ public sealed class VoidSaleRequestValidator : AbstractValidator<VoidSaleRequest
 }
 ```
 
-- [ ] **Step 7: Implement `VoidSaleService`**
+- [ ] **Step 7: Implement `VoidSaleService`, concurrency-safe**
 
-Create `src/Negosio.Application/Sales/VoidSaleService.cs`:
+Create `src/Negosio.Application/Sales/VoidSaleService.cs`. Note the structure versus a naive version: the role guard runs first (fail fast, no DB work for a role that could never void); eligibility is checked once up front only to fail fast for the *common* case (avoids resolving approver credentials for an obviously-ineligible sale), but is **re-checked fresh inside the transaction, after the pessimistic session lock**, since that first check can be stale by the time the transaction runs; the pessimistic lock is what makes the second check authoritative; and `DbUpdateConcurrencyException` on the final save is the safety net for the Sale-row races (double-void, void-vs-return) the lock doesn't cover:
 
 ```csharp
 using FluentValidation;
@@ -1780,7 +1927,19 @@ public sealed class VoidSaleService : IVoidSaleService
     public async Task<SaleDetailDto> VoidAsync(Guid saleId, VoidSaleRequest request, CancellationToken cancellationToken = default)
     {
         var tenantId = _currentUser.TenantId;
+
+        // Explicit, defense-in-depth role gate — never rely solely on the controller's SalesView
+        // policy, and never treat "not Owner/Admin/Manager" as an implicit synonym for Cashier.
+        if (_currentUser.Role is not (UserRole.Owner or UserRole.Admin or UserRole.Manager or UserRole.Cashier))
+        {
+            throw new ForbiddenAppException(ErrorCodes.Forbidden, "This role cannot void sales.");
+        }
+
         await _validator.ValidateAndThrowAppAsync(request, cancellationToken);
+
+        // One nowUtc for this entire attempt — reused for both the same-day eligibility check and
+        // the VoidedAtUtc stamp, so the two can never disagree even under a slow request.
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
 
         var sale = await _db.Sales.Include(s => s.Items)
             .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == saleId, cancellationToken)
@@ -1793,21 +1952,26 @@ public sealed class VoidSaleService : IVoidSaleService
             throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
         }
 
-        var hasReturns = await _db.SaleReturns.AnyAsync(r => r.TenantId == tenantId && r.SaleId == sale.Id, cancellationToken);
-        var session = await _db.RegisterSessions
-            .SingleAsync(s => s.TenantId == tenantId && s.Id == sale.RegisterSessionId, cancellationToken);
-        var sessionOpen = session.Status == RegisterSessionStatus.Open;
-        var sameUtcDay = sale.CompletedAtUtc is { } completedAt && completedAt.Date == _timeProvider.GetUtcNow().UtcDateTime.Date;
-
-        var eligibility = VoidEligibility.Evaluate(sale, sessionOpen, sameUtcDay, hasReturns);
-        if (!eligibility.CanVoid)
-        {
-            throw new BusinessRuleException(eligibility.IneligibilityCode!, IneligibilityMessage(eligibility.IneligibilityCode!));
-        }
+        // First-pass eligibility check — fast-fails the common case before resolving approver
+        // credentials or opening a transaction. NOT authoritative by itself; re-checked below.
+        await EnsureEligibleAsync(sale, tenantId, nowUtc, cancellationToken);
 
         var (voidedByUserId, approvedByUserId) = await ResolveActorAsync(sale.BranchId, request, cancellationToken);
 
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+
+        // Pessimistic lock on the session row — the FIRST statement inside the transaction, before
+        // any other read. RowVersion (Sale) cannot protect this cross-entity race: Void never writes
+        // to RegisterSessions, so there's no natural optimistic-concurrency collision to detect
+        // against a concurrent close. This lock instead fully serializes the two operations: whoever
+        // acquires it first runs their entire read-then-write to completion before the other can even
+        // begin reading. RegisterSessionService.ReconcileAndCloseAsync takes the identical lock.
+        await _db.Database.SqlQuery<int>(
+            $"SELECT 1 AS Value FROM RegisterSessions WITH (UPDLOCK, HOLDLOCK) WHERE Id = {sale.RegisterSessionId}")
+            .ToListAsync(cancellationToken);
+
+        // Authoritative re-check, now that the session row is locked for the rest of this transaction.
+        await EnsureEligibleAsync(sale, tenantId, nowUtc, cancellationToken);
 
         var lineVariantIds = sale.Items.Select(i => i.ProductVariantId).ToList();
         var trackedVariantIds = (await _db.ProductVariants.AsNoTracking()
@@ -1821,11 +1985,58 @@ public sealed class VoidSaleService : IVoidSaleService
                 tenantId, sale.BranchId, item.ProductVariantId, item.Quantity, sale.Id, _currentUser.UserId, cancellationToken);
         }
 
-        sale.Void(voidedByUserId, request.Reason, approvedByUserId);
-        await _db.SaveChangesAsync(cancellationToken);
+        sale.Void(voidedByUserId, request.Reason, approvedByUserId, nowUtc);
+
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Sale.RowVersion caught a race this lock doesn't cover — another void, or a Return,
+            // committed between our load and our write. Roll back (the inventory reversal above
+            // rolls back with it — it's the same DB transaction, so it's never left half-applied),
+            // then report the sale's actual current state instead of a generic conflict.
+            await transaction.RollbackAsync(cancellationToken);
+            await EnsureEligibleAsync(null, tenantId, nowUtc, cancellationToken, saleId);
+            throw new InvalidOperationException("Unreachable — EnsureEligibleAsync always throws when re-evaluating a lost race.");
+        }
+
         await transaction.CommitAsync(cancellationToken);
 
         return await _saleQuery.GetAsync(saleId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Re-derives and evaluates eligibility from a fresh read. Pass the already-loaded
+    /// <paramref name="sale"/> for the pre-lock fast-fail and the post-lock authoritative check
+    /// (same tracked instance, so `sale.Items` stays populated); pass <c>null</c> with
+    /// <paramref name="saleId"/> instead when re-evaluating after a lost `DbUpdateConcurrencyException`
+    /// race, since the tracked instance's in-memory state is no longer trustworthy at that point.
+    /// Always throws — never returns normally — since every call site only calls this when it
+    /// already needs the (possibly now-different) typed error.
+    /// </summary>
+    private async Task EnsureEligibleAsync(
+        Sale? sale, Guid tenantId, DateTime nowUtc, CancellationToken cancellationToken, Guid? saleId = null)
+    {
+        var current = sale ?? await _db.Sales.AsNoTracking()
+            .SingleAsync(s => s.TenantId == tenantId && s.Id == saleId!.Value, cancellationToken);
+
+        var hasReturns = await _db.SaleReturns.AnyAsync(r => r.TenantId == tenantId && r.SaleId == current.Id, cancellationToken);
+        var session = await _db.RegisterSessions.AsNoTracking()
+            .SingleAsync(s => s.TenantId == tenantId && s.Id == current.RegisterSessionId, cancellationToken);
+        var sessionOpen = session.Status == RegisterSessionStatus.Open;
+        var sameUtcDay = current.CompletedAtUtc is { } completedAt && completedAt.Date == nowUtc.Date;
+
+        var eligibility = VoidEligibility.Evaluate(current, sessionOpen, sameUtcDay, hasReturns);
+        if (!eligibility.CanVoid)
+        {
+            throw new BusinessRuleException(eligibility.IneligibilityCode!, IneligibilityMessage(eligibility.IneligibilityCode!));
+        }
+        // eligibility.CanVoid == true here should only happen on the two authoritative pre-write
+        // calls (which then proceed to write); if called after a lost race, CanVoid should always
+        // be false (the very state change that beat us is what makes it ineligible) — if it somehow
+        // isn't, that's a bug worth a loud failure rather than a silent no-op, hence no return path.
     }
 
     private async Task<(Guid VoidedBy, Guid? ApprovedBy)> ResolveActorAsync(
@@ -1839,7 +2050,8 @@ public sealed class VoidSaleService : IVoidSaleService
             return (_currentUser.UserId, null);
         }
 
-        // Cashier: direct if granted, otherwise a one-time approval is required.
+        // role == UserRole.Cashier, explicitly — the top-of-method guard already rejected every
+        // other role, so this is never reached as a fallback for "anything else."
         if (await _permissions.HasGrantAsync(_currentUser.UserId, cancellationToken))
         {
             return (_currentUser.UserId, null);
@@ -1867,7 +2079,32 @@ public sealed class VoidSaleService : IVoidSaleService
 }
 ```
 
+A note on the `catch (DbUpdateConcurrencyException)` block above: `EnsureEligibleAsync` always throws when eligibility is false, which it always will be immediately after losing a race (the very change that beat us — another void, or a return — is what makes the sale newly ineligible). The trailing `throw new InvalidOperationException("Unreachable...")` exists only so the method's control flow is provably exhaustive to the compiler; it should never actually execute, and its presence is a deliberate loud-failure signal if that assumption is ever wrong, rather than a silent success path.
+
 Register `services.AddScoped<IVoidSaleService, VoidSaleService>();` and `services.AddScoped<IValidator<VoidSaleRequest>, VoidSaleRequestValidator>();` alongside the other Sales services (find where `IReturnService` is registered).
+
+- [ ] **Step 7b: Make `ReturnService` react correctly to losing a race against a void**
+
+`ReturnService.CreateReturnAsync` currently does a plain `await _db.SaveChangesAsync(cancellationToken)` inside its transaction. Now that `Sale` carries a `RowVersion`, that call can throw `DbUpdateConcurrencyException` if a concurrent void committed first. Wrap it:
+
+```csharp
+try
+{
+    await _db.SaveChangesAsync(cancellationToken);
+}
+catch (DbUpdateConcurrencyException)
+{
+    var fresh = await _db.Sales.AsNoTracking()
+        .SingleAsync(s => s.TenantId == tenantId && s.Id == sale.Id, cancellationToken);
+    throw new BusinessRuleException(ErrorCodes.ReturnNotAllowed,
+        fresh.Status == SaleStatus.Voided
+            ? "This sale was voided and cannot be returned against."
+            : "This sale cannot be returned against.");
+}
+await transaction.CommitAsync(cancellationToken);
+```
+
+(the surrounding `await using var transaction = ...` already rolls back automatically on the exception path before this catch's own logic runs its re-fetch — no explicit `RollbackAsync` needed here, since we don't `CommitAsync` before the catch fires, and the `await using` disposal handles the rest.)
 
 - [ ] **Step 8: Wire `SaleQueryService.GetAsync`/`ListAsync` to populate the new fields**
 
@@ -1889,13 +2126,13 @@ public async Task<ActionResult<SaleDetailDto>> Void(
 
 - [ ] **Step 10: Run to verify the tests pass**
 
-Run: `dotnet test tests/Negosio.IntegrationTests --filter VoidSaleTests`
-Expected: 11 passed. If `BackdateSaleCompletedAtAsync`/`CreateManagerAsync`/`GetInventoryQuantityAsync` needed adjustment to fit the real `IntegrationTest` base class shape (Step 1's caveat), iterate until green — do not weaken an assertion to make a test pass.
+Run: `dotnet test tests/Negosio.IntegrationTests --filter "VoidSaleTests|VoidConcurrencyTests"`
+Expected: 13 passed (11 from `VoidSaleTests` + 2 from `VoidConcurrencyTests`). If `BackdateSaleCompletedAtAsync`/`CreateManagerAsync`/`GetInventoryQuantityAsync` needed adjustment to fit the real `IntegrationTest` base class shape (Step 1's caveat), iterate until green — do not weaken an assertion to make a test pass. If the concurrency tests are flaky (pass most runs, occasionally not), that itself is a signal the locking/optimistic-concurrency logic isn't actually correct — do not retry-until-green; debug the race, don't paper over it.
 
 Also run the full suite once to confirm nothing regressed:
 
 Run: `dotnet test tests/Negosio.IntegrationTests --filter "ReturnService|Checkout|RegisterSession"`
-Expected: all still passing (the `InventoryPosting` refactor and `SaleDetailDto` field additions must not change existing behavior).
+Expected: all still passing (the `InventoryPosting` refactor, `SaleDetailDto` field additions, and `ReturnService`'s new concurrency catch must not change existing behavior).
 
 - [ ] **Step 11: Commit**
 
@@ -1906,6 +2143,7 @@ git add src/Negosio.Domain/Enums/StockMovementType.cs \
         src/Negosio.Application/Auth/ApproverVerificationService.cs \
         src/Negosio.Api/Controllers/SalesController.cs \
         tests/Negosio.IntegrationTests/Sales/VoidSaleTests.cs \
+        tests/Negosio.IntegrationTests/Sales/VoidConcurrencyTests.cs \
         tests/Negosio.IntegrationTests/Infrastructure/
 git commit -m "feat(sales): implement direct and manager-approved void"
 ```
@@ -1923,10 +2161,13 @@ git commit -m "feat(sales): implement direct and manager-approved void"
 - Modify: `src/Negosio.Application/Registers/RegisterSessionService.cs` (`ReconcileAndCloseAsync`, `ProjectAsync`)
 - Modify: `tests/Negosio.UnitTests/Pos/RegisterSessionTests.cs` (existing `Close(...)` call sites — signature changes, this is a breaking change to fix, not a regression to ignore)
 - Test: `tests/Negosio.IntegrationTests/Registers/ReconciliationTests.cs`
+- Test: `tests/Negosio.IntegrationTests/Registers/CloseVoidConcurrencyTests.cs`
 
 **Interfaces:**
 - Consumes: `_db.RegisterCashMovements` (B3), `Sale.Status == Voided` (B1) — no new service dependency, `RegisterSessionService` already has `ITenantDbContext`.
 - Produces: `RegisterSession.Close(Guid closedByUserId, decimal closingCash, decimal expectedCash, CashReconciliationBreakdown breakdown)` — **note the signature changed** from the existing 3-arg `Close(closedByUserId, closingCash, expectedCash)`; every caller (only `RegisterSessionService.ReconcileAndCloseAsync` and the existing unit tests) must be updated in this same task.
+
+**Concurrency contract for this task (see the plan's Global Constraints and Task B4):** `ReconcileAndCloseAsync` takes the identical `WITH (UPDLOCK, HOLDLOCK)` lock on the session row that `VoidSaleService.VoidAsync` (B4) already takes, as the very first statement — **before any of its reconciliation SUM queries**, not just before its final write. Locking only around the write would still let a concurrent void's changes land *after* this method already computed its sums from a stale snapshot, even though the two writes themselves would end up correctly ordered — the read has to be inside the same serialization point as the write for the reconciliation numbers to be trustworthy.
 
 - [ ] **Step 1: Write the failing integration test**
 
@@ -2141,7 +2382,7 @@ public sealed record RegisterSessionDto(
     decimal? CashOut);
 ```
 
-In `src/Negosio.Application/Registers/RegisterSessionService.cs`, rewrite `ReconcileAndCloseAsync`:
+In `src/Negosio.Application/Registers/RegisterSessionService.cs`, rewrite `ReconcileAndCloseAsync`. **This method did not previously run inside an explicit transaction** — it needs one now, because `WITH (UPDLOCK, HOLDLOCK)` only holds the lock until the end of the *current transaction*; without one, SQL Server treats the lock-acquiring `SELECT` as its own auto-committed statement and releases the lock immediately afterward, before the reconciliation SUM queries even run — making the lock pointless. Wrap the whole body (lock through `SaveChangesAsync`) in `BeginTransactionAsync`/`CommitAsync`, matching the pattern already used in `CheckoutService`/`ReturnService`/`VoidSaleService`:
 
 ```csharp
 private async Task<RegisterSessionDto> ReconcileAndCloseAsync(
@@ -2151,6 +2392,18 @@ private async Task<RegisterSessionDto> ReconcileAndCloseAsync(
     {
         throw new BusinessRuleException(ErrorCodes.RegisterSessionNotOpen, "This register session is not open.");
     }
+
+    await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+
+    // Same pessimistic lock VoidSaleService.VoidAsync takes, taken here as the very first read too
+    // — not just before the final write. Whoever gets here first (this close, or a concurrent void)
+    // runs its entire read-then-write sequence to completion (commit or rollback, which releases the
+    // lock) before the other can even begin reading, so these SUM queries below can never be a stale
+    // snapshot relative to a void that commits moments later, or vice versa. HOLDLOCK's guarantee
+    // depends entirely on this running inside the explicit transaction above.
+    await _db.Database.SqlQuery<int>(
+        $"SELECT 1 AS Value FROM RegisterSessions WITH (UPDLOCK, HOLDLOCK) WHERE Id = {session.Id}")
+        .ToListAsync(cancellationToken);
 
     var saleIds = _db.Sales.Where(s => s.TenantId == tenantId && s.RegisterSessionId == session.Id).Select(s => s.Id);
 
@@ -2185,12 +2438,105 @@ private async Task<RegisterSessionDto> ReconcileAndCloseAsync(
     // on a force-close); OpenedByUserId is never touched.
     session.Close(_currentUser.UserId, closingCash, expected, breakdown);
     await _db.SaveChangesAsync(cancellationToken);
+    await transaction.CommitAsync(cancellationToken);
 
     return await ProjectAsync(session.Id, tenantId, cancellationToken);
 }
 ```
 
 Update `ProjectAsync`'s final `select new RegisterSessionDto(...)` to pass the five new fields (`s.GrossCashSales, s.VoidedCashSales, s.RefundCashOut, s.CashIn, s.CashOut`) after `s.CashDifference`.
+
+- [ ] **Step 6b: Write and verify the void-vs-close concurrency test**
+
+Create `tests/Negosio.IntegrationTests/Registers/CloseVoidConcurrencyTests.cs`:
+
+```csharp
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using FluentAssertions;
+using Negosio.Application.Pos;
+using Negosio.Application.Registers;
+using Negosio.Application.Sales;
+using Negosio.Domain.Enums;
+using Negosio.IntegrationTests.Infrastructure;
+
+namespace Negosio.IntegrationTests.Registers;
+
+public class CloseVoidConcurrencyTests : IntegrationTest
+{
+    public CloseVoidConcurrencyTests(NegosioApiFactory factory) : base(factory)
+    {
+    }
+
+    private static HttpRequestMessage AuthorizedRequest(HttpMethod method, string url, string token, object? body = null)
+    {
+        var request = new HttpRequestMessage(method, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (body is not null) request.Content = JsonContent.Create(body);
+        return request;
+    }
+
+    [Fact]
+    public async Task Concurrent_void_and_session_close_never_produce_an_inconsistent_reconciliation()
+    {
+        Client.DefaultRequestHeaders.Authorization = null;
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        Client.DefaultRequestHeaders.Authorization = null;
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, quantity: 10m);
+
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
+        var openRes = await Client.SendAsync(AuthorizedRequest(HttpMethod.Post, "/api/register-sessions/open", cashierToken,
+            new OpenRegisterSessionRequest(register.Id, 1000m)));
+        var session = (await openRes.Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+
+        var checkoutRes = await Client.SendAsync(AuthorizedRequest(HttpMethod.Post, "/api/pos/checkout", cashierToken,
+            new CheckoutRequest(branchId, session.Id, Guid.NewGuid(),
+                new[] { new CheckoutItemInput(variantId, 1m, null) },
+                new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 500m) })));
+        var sale = (await checkoutRes.Content.ReadFromJsonAsync<SaleResultDto>(TestJson.Options))!;
+
+        var voidTask = Client.SendAsync(AuthorizedRequest(HttpMethod.Post, $"/api/sales/{sale.SaleId}/void", owner.AccessToken,
+            new VoidSaleRequest("Concurrent with close")));
+        var closeTask = Client.SendAsync(AuthorizedRequest(HttpMethod.Post, $"/api/register-sessions/{session.Id}/close", cashierToken,
+            new CloseRegisterSessionRequest(500m)));
+
+        await Task.WhenAll(voidTask, closeTask);
+        var voidRes = await voidTask;
+        var closeRes = await closeTask;
+
+        var finalSaleRes = await Client.SendAsync(AuthorizedRequest(HttpMethod.Get, $"/api/sales/{sale.SaleId}", owner.AccessToken));
+        var finalSale = (await finalSaleRes.Content.ReadFromJsonAsync<SaleDetailDto>(TestJson.Options))!;
+
+        if (voidRes.IsSuccessStatusCode)
+        {
+            // Void won — the session must still have been Open when its transaction committed.
+            finalSale.Sale.Status.Should().Be(SaleStatus.Voided);
+            if (closeRes.IsSuccessStatusCode)
+            {
+                // Close ran after void released the lock — its own numbers must reflect the void,
+                // not a stale pre-void snapshot.
+                var closedSession = (await closeRes.Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+                closedSession.VoidedCashSales.Should().Be(500m);
+                closedSession.ExpectedCash.Should().Be(1000m); // opening only — the one sale was voided
+            }
+        }
+        else
+        {
+            // Close won — void must have been rejected because the session was already closed by
+            // the time void's own (serialized) check ran.
+            finalSale.Sale.Status.Should().Be(SaleStatus.Completed);
+            closeRes.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+    }
+}
+```
+
+Run: `dotnet test tests/Negosio.IntegrationTests --filter CloseVoidConcurrencyTests`
+Expected: 1 passed. As with B4's concurrency tests, treat any flakiness as a real bug in the locking, not something to retry past.
 
 - [ ] **Step 7: Run to verify the test passes**
 
@@ -2210,7 +2556,8 @@ git add src/Negosio.Domain/Entities/Pos/ \
         src/Negosio.Infrastructure/Persistence/Migrations/Tenant/ \
         src/Negosio.Application/Registers/ \
         tests/Negosio.UnitTests/Pos/RegisterSessionTests.cs \
-        tests/Negosio.IntegrationTests/Registers/ReconciliationTests.cs
+        tests/Negosio.IntegrationTests/Registers/ReconciliationTests.cs \
+        tests/Negosio.IntegrationTests/Registers/CloseVoidConcurrencyTests.cs
 git commit -m "feat(registers): include cash movements and voids in reconciliation"
 ```
 
@@ -2998,7 +3345,7 @@ Expected: 0 errors, 0 warnings.
 - [ ] **Step 3: Backend tests**
 
 Run: `dotnet test Negosio.sln`
-Expected: all unit + integration tests green. Record the exact final counts (unit / integration / failed / skipped) — the Phase 5 baseline was 88 unit / 162 integration, 0 failed; this phase adds roughly 5 (B1) + 5 (B2) + 4 (B3) + 11 (B4) + 1 (B5, plus the RegisterSessionTests fix) = ~26 new tests across unit + integration, so expect the totals to rise by roughly that much — report the actual numbers, not this estimate.
+Expected: all unit + integration tests green. Record the exact final counts (unit / integration / failed / skipped) — the Phase 5 baseline was 88 unit / 162 integration, 0 failed; this phase adds roughly 6 (B1, unit) + 5 (B2) + 4 (B3) + 13 (B4: 11 `VoidSaleTests` + 2 `VoidConcurrencyTests`) + 2 (B5: 1 `ReconciliationTests` + 1 `CloseVoidConcurrencyTests`, plus a new unit test in the existing `RegisterSessionTests`) = ~30 new tests across unit + integration, so expect the totals to rise by roughly that much — report the actual numbers, not this estimate.
 
 - [ ] **Step 4: Frontend lint**
 
