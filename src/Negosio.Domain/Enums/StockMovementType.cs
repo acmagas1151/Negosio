@@ -15,5 +15,6 @@ public enum StockMovementType
     TransferIn = 6,
     TransferOut = 7,
     Purchase = 8,
-    Waste = 9
+    Waste = 9,
+    SaleVoid = 10
 }

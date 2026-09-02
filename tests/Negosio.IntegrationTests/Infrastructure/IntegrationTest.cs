@@ -118,34 +118,51 @@ public abstract class IntegrationTest : IAsyncLifetime
     /// <summary>
     /// Create an extra user in the current tenant — both the tenant profile and the platform login
     /// (so the per-request account-state check in ConfigureJwtBearerOptions passes) — and mint a token.
+    /// Idempotent by email: a second call for an email already provisioned in this tenant reuses that
+    /// user's id (no duplicate insert, which would violate the unique email index) and just mints a
+    /// fresh token — some void tests need to re-obtain a token for the same actor mid-test (e.g. after
+    /// a permission change) without changing who that actor is.
     /// </summary>
     protected async Task<string> AddTenantUserTokenAsync(
         string email, Negosio.Domain.Enums.UserRole role, Guid? branchId = null)
     {
-        var userId = Guid.NewGuid();
+        var existingUserId = await InScopeAsync(db => db.Users.AsNoTracking()
+            .Where(u => u.TenantId == CurrentTenantId && u.Email == email)
+            .Select(u => (Guid?)u.Id)
+            .FirstOrDefaultAsync());
 
-        await InScopeAsync(async db =>
+        Guid userId;
+        if (existingUserId is { } reusedId)
         {
-            // Branch-scoped roles must have an active branch (Phase 5). Default to the tenant's first.
-            var resolvedBranchId = branchId;
-            if (resolvedBranchId is null && role is not (Negosio.Domain.Enums.UserRole.Owner or Negosio.Domain.Enums.UserRole.Admin))
+            userId = reusedId;
+        }
+        else
+        {
+            userId = Guid.NewGuid();
+
+            await InScopeAsync(async db =>
             {
-                resolvedBranchId = await db.Branches.Select(b => b.Id).FirstAsync();
-            }
+                // Branch-scoped roles must have an active branch (Phase 5). Default to the tenant's first.
+                var resolvedBranchId = branchId;
+                if (resolvedBranchId is null && role is not (Negosio.Domain.Enums.UserRole.Owner or Negosio.Domain.Enums.UserRole.Admin))
+                {
+                    resolvedBranchId = await db.Branches.Select(b => b.Id).FirstAsync();
+                }
 
-            db.Users.Add(Negosio.Domain.Entities.User.Create(
-                userId, CurrentTenantId, email, "Test", "User", role, resolvedBranchId));
-            await db.SaveChangesAsync();
-            return true;
-        });
+                db.Users.Add(Negosio.Domain.Entities.User.Create(
+                    userId, CurrentTenantId, email, "Test", "User", role, resolvedBranchId));
+                await db.SaveChangesAsync();
+                return true;
+            });
 
-        await InPlatformScopeAsync(async platform =>
-        {
-            platform.PlatformUserLogins.Add(Negosio.Domain.Entities.PlatformUserLogin.Create(
-                userId, CurrentTenantId, email, "not-a-real-hash", role));
-            await platform.SaveChangesAsync();
-            return true;
-        });
+            await InPlatformScopeAsync(async platform =>
+            {
+                platform.PlatformUserLogins.Add(Negosio.Domain.Entities.PlatformUserLogin.Create(
+                    userId, CurrentTenantId, email, "not-a-real-hash", role));
+                await platform.SaveChangesAsync();
+                return true;
+            });
+        }
 
         var generator = Factory.Services.GetRequiredService<IJwtTokenGenerator>();
         return generator.Generate(new TokenSubject(userId, CurrentTenantId, role, email)).Value;
@@ -289,4 +306,27 @@ public abstract class IntegrationTest : IAsyncLifetime
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<SaleResultDto>(TestJson.Options))!;
     }
+
+    /// <summary>Creates an active Manager in the given branch with a known password, returns their user id.
+    /// A thin wrapper over <see cref="AddLoginableTenantUserAsync"/>, which already provisions both the
+    /// tenant profile and a real password-hashed platform login — exactly what a void-approval test needs.</summary>
+    protected Task<Guid> CreateManagerAsync(string email, string password, Guid branchId) =>
+        AddLoginableTenantUserAsync(email, password, Negosio.Domain.Enums.UserRole.Manager, branchId);
+
+    /// <summary>Reads a variant's current on-hand quantity in a branch, via the existing inventory endpoint.</summary>
+    protected async Task<decimal> GetInventoryQuantityAsync(Guid branchId, Guid variantId)
+    {
+        var page = await Client.GetFromJsonAsync<Negosio.Application.Common.PagedResult<InventoryRowDto>>(
+            $"/api/inventory?branchId={branchId}&pageSize=200", TestJson.Options);
+        return page!.Items.Single(i => i.ProductVariantId == variantId).QuantityOnHand;
+    }
+
+    /// <summary>Test-only backdate of a sale's CompletedAtUtc, for cutoff testing — raw SQL, bypasses the domain.</summary>
+    protected Task BackdateSaleCompletedAtAsync(Guid saleId, DateTime completedAtUtc) =>
+        InScopeAsync(async db =>
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE Sales SET CompletedAtUtc = {completedAtUtc} WHERE Id = {saleId}");
+            return true;
+        });
 }

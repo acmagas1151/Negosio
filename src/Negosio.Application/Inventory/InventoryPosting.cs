@@ -27,6 +27,11 @@ public interface IInventoryPosting
     Task RestockForReturnAsync(
         Guid tenantId, Guid branchId, Guid productVariantId, decimal quantity,
         Guid saleReturnId, Guid userId, CancellationToken cancellationToken = default);
+
+    /// <summary>Restore stock for a voided sale line (never fails, mirrors RestockForReturnAsync).</summary>
+    Task ReverseForVoidAsync(
+        Guid tenantId, Guid branchId, Guid productVariantId, decimal quantity,
+        Guid saleId, Guid userId, CancellationToken cancellationToken = default);
 }
 
 public sealed class InventoryPosting : IInventoryPosting
@@ -71,9 +76,21 @@ public sealed class InventoryPosting : IInventoryPosting
             referenceType: "Sale", referenceId: saleId));
     }
 
-    public async Task RestockForReturnAsync(
+    public Task RestockForReturnAsync(
         Guid tenantId, Guid branchId, Guid productVariantId, decimal quantity,
-        Guid saleReturnId, Guid userId, CancellationToken cancellationToken = default)
+        Guid saleReturnId, Guid userId, CancellationToken cancellationToken = default) =>
+        RestockAsync(tenantId, branchId, productVariantId, quantity, userId,
+            StockMovementType.Return, referenceType: "Return", referenceId: saleReturnId, cancellationToken);
+
+    public Task ReverseForVoidAsync(
+        Guid tenantId, Guid branchId, Guid productVariantId, decimal quantity,
+        Guid saleId, Guid userId, CancellationToken cancellationToken = default) =>
+        RestockAsync(tenantId, branchId, productVariantId, quantity, userId,
+            StockMovementType.SaleVoid, referenceType: "Sale", referenceId: saleId, cancellationToken);
+
+    private async Task RestockAsync(
+        Guid tenantId, Guid branchId, Guid productVariantId, decimal quantity, Guid userId,
+        StockMovementType type, string referenceType, Guid referenceId, CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
 
@@ -105,8 +122,7 @@ public sealed class InventoryPosting : IInventoryPosting
         }
 
         _db.StockMovements.Add(StockMovement.Create(
-            tenantId, branchId, productVariantId, StockMovementType.Return,
-            quantity, before, after, reason: null, userId,
-            referenceType: "Return", referenceId: saleReturnId));
+            tenantId, branchId, productVariantId, type, quantity, before, after, reason: null, userId,
+            referenceType, referenceId));
     }
 }

@@ -3,6 +3,7 @@ using Negosio.Application.Abstractions;
 using Negosio.Application.Branches;
 using Negosio.Application.Catalog;
 using Negosio.Application.Common;
+using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Sales;
 
@@ -11,12 +12,14 @@ public sealed class SaleQueryService : ISaleQueryService
     private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IBranchAccessResolver _branchAccess;
+    private readonly TimeProvider _timeProvider;
 
-    public SaleQueryService(ITenantDbContext db, ICurrentUser currentUser, IBranchAccessResolver branchAccess)
+    public SaleQueryService(ITenantDbContext db, ICurrentUser currentUser, IBranchAccessResolver branchAccess, TimeProvider timeProvider)
     {
         _db = db;
         _currentUser = currentUser;
         _branchAccess = branchAccess;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<SaleSummaryDto>> ListAsync(SaleListQuery query, CancellationToken cancellationToken = default)
@@ -125,10 +128,33 @@ public sealed class SaleQueryService : ISaleQueryService
             .ToList();
 
         var returns = await LoadReturnsAsync(tenantId, sale.Id, cancellationToken);
+        var hasReturns = returns.Count > 0;
+
+        var sessionStatus = await _db.RegisterSessions.AsNoTracking()
+            .Where(s => s.Id == sale.RegisterSessionId)
+            .Select(s => s.Status)
+            .FirstOrDefaultAsync(cancellationToken);
+        var sessionOpen = sessionStatus == RegisterSessionStatus.Open;
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var sameUtcDay = sale.CompletedAtUtc is { } completedAt && completedAt.Date == nowUtc.Date;
+
+        var eligibility = VoidEligibility.Evaluate(sale, sessionOpen, sameUtcDay, hasReturns);
+
+        var voidedByName = sale.VoidedByUserId is { } voidedByUserId
+            ? await _db.Users.AsNoTracking().Where(u => u.Id == voidedByUserId)
+                .Select(u => u.FirstName + " " + u.LastName).FirstOrDefaultAsync(cancellationToken)
+            : null;
+        var approvedByName = sale.ApprovedByUserId is { } approvedByUserId
+            ? await _db.Users.AsNoTracking().Where(u => u.Id == approvedByUserId)
+                .Select(u => u.FirstName + " " + u.LastName).FirstOrDefaultAsync(cancellationToken)
+            : null;
 
         return new SaleDetailDto(
             summary, sale.RegisterSessionId, sale.Subtotal, sale.DiscountTotal, sale.TaxTotal,
-            sale.AmountPaid, sale.ChangeDue, sale.CompletedAtUtc, items, payments, returns);
+            sale.AmountPaid, sale.ChangeDue, sale.CompletedAtUtc, items, payments, returns,
+            sale.VoidedByUserId, voidedByName, sale.ApprovedByUserId, approvedByName,
+            sale.VoidReason, sale.VoidedAtUtc, eligibility.CanVoid, eligibility.IneligibilityCode);
     }
 
     internal async Task<IReadOnlyList<SaleReturnDto>> LoadReturnsAsync(Guid tenantId, Guid saleId, CancellationToken cancellationToken)

@@ -105,7 +105,24 @@ public sealed class ReturnService : IReturnService
         sale.MarkReturned();
 
         _db.SaleReturns.Add(saleReturn);
-        await _db.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Sale.RowVersion caught a race against a concurrent void that committed first — the
+            // `await using` transaction above rolls back on this exception path before we get here
+            // (we never called CommitAsync), so there is no explicit RollbackAsync needed.
+            var fresh = await _db.Sales.AsNoTracking()
+                .SingleAsync(s => s.TenantId == tenantId && s.Id == sale.Id, cancellationToken);
+            throw new BusinessRuleException(ErrorCodes.ReturnNotAllowed,
+                fresh.Status == SaleStatus.Voided
+                    ? "This sale was voided and cannot be returned against."
+                    : "This sale cannot be returned against.");
+        }
+
         await transaction.CommitAsync(cancellationToken);
 
         var returns = await _saleQuery.LoadReturnsAsync(tenantId, sale.Id, cancellationToken);

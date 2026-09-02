@@ -51,7 +51,24 @@ public sealed record SaleDetailDto(
     DateTime? CompletedAtUtc,
     IReadOnlyList<SaleItemDto> Items,
     IReadOnlyList<SalePaymentDto> Payments,
-    IReadOnlyList<SaleReturnDto> Returns);
+    IReadOnlyList<SaleReturnDto> Returns,
+    Guid? VoidedByUserId,
+    string? VoidedByName,
+    Guid? ApprovedByUserId,
+    string? ApprovedByName,
+    string? VoidReason,
+    DateTime? VoidedAtUtc,
+    bool CanVoid,
+    string? VoidIneligibilityCode);
+
+public sealed record VoidSaleApprovalInput(string ApproverEmail, string ApproverPassword);
+
+public sealed record VoidSaleRequest(string Reason, VoidSaleApprovalInput? Approval = null);
+
+public interface IVoidSaleService
+{
+    Task<SaleDetailDto> VoidAsync(Guid saleId, VoidSaleRequest request, CancellationToken cancellationToken = default);
+}
 
 public sealed record SaleListQuery(
     Guid? BranchId = null,

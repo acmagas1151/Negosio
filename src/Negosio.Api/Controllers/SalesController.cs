@@ -14,12 +14,14 @@ public sealed class SalesController : ControllerBase
     private readonly ISaleQueryService _sales;
     private readonly IReceiptService _receipts;
     private readonly IReturnService _returns;
+    private readonly IVoidSaleService _voidSale;
 
-    public SalesController(ISaleQueryService sales, IReceiptService receipts, IReturnService returns)
+    public SalesController(ISaleQueryService sales, IReceiptService receipts, IReturnService returns, IVoidSaleService voidSale)
     {
         _sales = sales;
         _receipts = receipts;
         _returns = returns;
+        _voidSale = voidSale;
     }
 
     [HttpGet]
@@ -55,4 +57,13 @@ public sealed class SalesController : ControllerBase
         var created = await _returns.CreateReturnAsync(id, request, cancellationToken);
         return CreatedAtAction(nameof(Returns), new { id }, created);
     }
+
+    // No policy override — the controller's class-level SalesView already restricts this to
+    // Owner/Admin/Manager/Cashier, which is exactly the void-participating role set;
+    // InventoryStaff/Viewer/KitchenStaff never reach the action method at all.
+    [HttpPost("{id:guid}/void")]
+    [ProducesResponseType(typeof(SaleDetailDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<SaleDetailDto>> Void(
+        Guid id, [FromBody] VoidSaleRequest request, CancellationToken cancellationToken)
+        => Ok(await _voidSale.VoidAsync(id, request, cancellationToken));
 }

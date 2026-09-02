@@ -22,6 +22,7 @@ public static class DependencyInjection
         services.AddValidatorsFromAssemblyContaining<RegisterRequestValidator>(ServiceLifetime.Scoped);
 
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IApproverVerificationService, ApproverVerificationService>();
         services.AddScoped<IDashboardService, DashboardService>();
 
         // Phase 2.5: platform / tenant provisioning
@@ -59,6 +60,7 @@ public static class DependencyInjection
 
         // Phase 6: Void sales & cash operations
         services.AddScoped<ISalesVoidPermissionService, SalesVoidPermissionService>();
+        services.AddScoped<IVoidSaleService, VoidSaleService>();
 
         return services;
     }
