@@ -16,6 +16,7 @@ export type Capability =
   | 'register:force-close'
   | 'sales:void'
   | 'staff:permissions'
+  | 'register:cash-movement'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
 // 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
@@ -47,6 +48,9 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   // Mirrors StaffController's new StaffView/StaffPermissionManage overrides (Owner/Admin/Manager) —
   // distinct from 'staff:manage' (Owner/Admin only), which still gates every other staff action.
   'staff:permissions': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
+  // Mirrors RegisterSessionsController's class-level PosOperate policy — ownership of the specific
+  // session (not just role) is enforced server-side by RegisterCashMovementService.
+  'register:cash-movement': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
 }
 
 /**

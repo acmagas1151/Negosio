@@ -3,10 +3,12 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { posApi, sessionsApi } from '../api/pos'
+import type { CashMovementType } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useCan } from '../lib/useCan'
 import { posStorage } from '../lib/posStorage'
 import { BranchPicker } from '../components/pos/BranchPicker'
+import { CashMovementModal } from '../components/pos/CashMovementModal'
 import { CloseSessionModal } from '../components/pos/CloseSessionModal'
 import { PosSessionGate } from '../components/pos/PosSessionGate'
 import { PosShell } from '../components/pos/PosShell'
@@ -47,6 +49,7 @@ export default function PosPage() {
   const [registerId, setRegisterId] = useState<string | null>(null)
   const [skipGate, setSkipGate] = useState(false)
   const [closeOpen, setCloseOpen] = useState(false)
+  const [cashMovementType, setCashMovementType] = useState<CashMovementType | null>(null)
   const [pickerNotice, setPickerNotice] = useState<string | null>(null)
 
   const ctx = contextQuery.data
@@ -191,7 +194,13 @@ export default function PosPage() {
 
   return (
     <>
-      <PosShell session={session} register={chosen} onCloseSession={() => setCloseOpen(true)}>
+      <PosShell
+        session={session}
+        register={chosen}
+        onCloseSession={() => setCloseOpen(true)}
+        onCashIn={() => setCashMovementType('CashIn')}
+        onCashOut={() => setCashMovementType('CashOut')}
+      >
         <PosTerminal
           tenantId={user!.tenantId}
           branchId={branchId}
@@ -212,6 +221,14 @@ export default function PosPage() {
           setCloseOpen(false)
           backToRegisters()
         }}
+      />
+
+      <CashMovementModal
+        open={cashMovementType !== null}
+        onClose={() => setCashMovementType(null)}
+        sessionId={session.id}
+        type={cashMovementType ?? 'CashIn'}
+        onDone={() => sessionQuery.refetch()}
       />
     </>
   )

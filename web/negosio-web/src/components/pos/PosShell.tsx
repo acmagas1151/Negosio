@@ -4,18 +4,22 @@ import { LogOut } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import type { RegisterSessionDto } from '../../api/types'
 import { formatMoney } from '../../lib/format'
+import { useCan } from '../../lib/useCan'
 import { Button } from '../ui'
 
 interface Props {
   session: RegisterSessionDto
   register: { id: string; name: string }
   onCloseSession: () => void
+  onCashIn: () => void
+  onCashOut: () => void
   children: ReactNode
 }
 
 /** Full-screen POS chrome — no dashboard sidebar. Slim top bar + body. */
-export function PosShell({ session, register, onCloseSession, children }: Props) {
+export function PosShell({ session, register, onCloseSession, onCashIn, onCashOut, children }: Props) {
   const { user } = useAuth()
+  const canRecordCashMovement = useCan('register:cash-movement')
 
   return (
     <div className="flex h-screen flex-col bg-background">
@@ -30,6 +34,16 @@ export function PosShell({ session, register, onCloseSession, children }: Props)
             Open · {formatMoney(session.openingCash)}
             {user?.firstName ? ` · ${user.firstName}` : ''}
           </span>
+          {canRecordCashMovement && (
+            <>
+              <Button variant="ghost" size="sm" onClick={onCashIn}>
+                Cash in
+              </Button>
+              <Button variant="ghost" size="sm" onClick={onCashOut}>
+                Cash out
+              </Button>
+            </>
+          )}
           <Button variant="ghost" size="sm" onClick={onCloseSession}>
             Close session
           </Button>
