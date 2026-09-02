@@ -87,6 +87,12 @@ written; Void never needs to revisit a closed session.
 The Void button is visible to Owner/Admin/Manager/Cashier regardless of the Cashier's grant
 — the grant only decides which sub-flow (direct-reason vs approval-form) they see.
 
+`VoidSaleService` itself must explicitly check the actor's role against exactly this four-role
+set and reject anything else with a generic forbidden error — it must not rely solely on the
+controller's `SalesView` policy (today Owner/Admin/Manager/Cashier, but a future policy change
+elsewhere should not silently widen who this service treats as an authorized void actor), and it
+must not treat "not Owner/Admin/Manager" as an implicit synonym for "Cashier."
+
 ### Audit identity (locked)
 
 ```
@@ -146,11 +152,12 @@ no route to reach staff data at all, so "Manager can grant/revoke for their own-
 Cashiers" has no UI to hang off without a visibility change. Resolution, kept minimal:
 
 - `GET /api/staff` and `GET /api/staff/{id}` get a new `StaffView` policy override
-  (Owner/Admin/Manager) in place of the controller-level `StaffManage`. `StaffService`'s
-  list/get methods run their result through `BranchAccessResolver.ResolveListFilterAsync`
-  (the same pattern already used for inventory/sales/etc.) so a Manager's request is
-  server-side scoped to their own branch — they can never see or discover another branch's
-  staff, not even read-only.
+  (Owner/Admin/Manager) in place of the controller-level `StaffManage`. For a non-all-branch
+  caller (Manager), `StaffService.ListAsync` filters strictly to `m.BranchId == assignedBranchId`
+  — **not** `m.BranchId == assignedBranchId || m.BranchId == null`. A null `BranchId` always
+  means Owner/Admin (Section 2 of the Phase 5 design), and a Manager must never see Owner/Admin
+  rows, so the null-branch case is excluded outright rather than treated as "visible to
+  everyone." Owner/Admin keep the unfiltered, tenant-wide roster.
 - All other staff endpoints (`invitations`, `role`, `branch`, `deactivate`, `reactivate`)
   keep the existing `StaffManage` (Owner/Admin-only) policy, unchanged from Phase 4/5.
 - Only the new `PUT /api/staff/{id}/permissions` (Section 10) is Manager-reachable among
@@ -188,6 +195,30 @@ the one void request it was submitted with; nothing is cached or reusable for a 
 void.
 
 ---
+
+## 6.5. Concurrency safety (locked)
+
+Void's eligibility checks (status, returns, session-open, cutoff) must be re-verified inside the
+same database transaction as inventory reversal and `Sale.Void(...)` + `SaveChanges` — not just
+once before the transaction opens. Two mechanisms, both required:
+
+- **`Sale.RowVersion`** — a new SQL Server `rowversion` concurrency token column. Protects any two
+  competing writes to the *same Sale row* (double-void, or void racing a concurrent Return):
+  whichever transaction's `SaveChangesAsync` commits first wins; the loser gets
+  `DbUpdateConcurrencyException`, which both `VoidSaleService` and `ReturnService` catch by
+  re-fetching the sale's now-current state and throwing the *accurate* error for that state (e.g.
+  `SALE_NOT_VOIDABLE` if it's now Voided, `SALE_HAS_RETURNS` if a return landed first) rather than
+  a generic conflict. Transactional rollback on that exception also undoes any inventory movement
+  already written earlier in the same (losing) transaction — inventory is never left double-applied.
+- **A pessimistic lock on the `RegisterSession` row** (`SELECT ... WITH (UPDLOCK, HOLDLOCK)`),
+  taken as the very first statement inside both `VoidSaleService.VoidAsync`'s transaction (before
+  reading session-open status) and `RegisterSessionService.ReconcileAndCloseAsync` (before its
+  reconciliation sums). `RowVersion` alone cannot protect void-vs-close: Void never *writes* to
+  `RegisterSessions`, so there is no natural optimistic-concurrency collision between the two to
+  detect. The pessimistic lock instead fully serializes the two operations against the same
+  session — whichever acquires the lock first runs its entire read-then-write sequence to
+  completion (commit or rollback) before the other can even begin reading, so a session can never
+  close with a reconciliation that's stale relative to a void that just committed, or vice versa.
 
 ## 7. Inventory reversal
 
@@ -288,12 +319,22 @@ Validation order for create: authenticated → branch access → session exists 
 ## 9. Sale status & data model changes
 
 `SaleStatus.Voided` (already defined, previously unused — `Completed=1, Voided=2,
-Refunded=3, PartiallyRefunded=4`) becomes active. New `Sale.Void(voidedByUserId, reason,
-approvedByUserId?)` domain method, guarded the same way `RegisterSession.Close()` guards
-against re-entry (throws if `Status != Completed`, mirroring the eligibility check that also
-runs one layer up in the service for the typed error code). Reuses existing
-`VoidedAtUtc`/`VoidReason` columns (present since the tenant baseline migration, previously
-unset). One new column: `Sale.ApprovedByUserId` (nullable FK to `User`).
+Refunded=3, PartiallyRefunded=4`) becomes active. New
+`Sale.Void(Guid voidedByUserId, string reason, Guid? approvedByUserId, DateTime nowUtc)` domain
+method, guarded the same way `RegisterSession.Close()` guards against re-entry (throws if
+`Status != Completed`; the service layer runs the same check first and throws the typed
+`AppException` — the domain guard is defense in depth, not the primary error path, matching how
+`RegisterSessionService` layers its own checks in front of `RegisterSession.Close()`'s guard).
+**`nowUtc` is a required parameter, not `DateTime.UtcNow` called inside the method** — the caller
+(`VoidSaleService`) captures one `TimeProvider`-sourced timestamp per void attempt and reuses it
+for both the same-UTC-day eligibility comparison and `VoidedAtUtc`, so the two can never disagree
+even under a slow request that straddles midnight. Reuses the existing `VoidedAtUtc`/`VoidReason`
+columns (present since the tenant baseline migration, previously unset — confirmed via
+`SaleConfiguration.cs`, which already has a `VoidReason` mapping). **Three** new columns, since
+`Sale` currently has no actor field for the void at all and no concurrency token:
+`Sale.VoidedByUserId` (nullable `Guid`, set whenever `Status == Voided`),
+`Sale.ApprovedByUserId` (nullable `Guid`, set only when the approval sub-flow ran), and
+`Sale.RowVersion` (SQL Server `rowversion`, EF `IsRowVersion()` — see Section 6.5).
 
 Allowed transition: `Completed → Voided` only. `PartiallyRefunded → Voided`,
 `Refunded → Voided`, `Voided → *` all remain impossible (guarded by eligibility check #1
