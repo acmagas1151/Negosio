@@ -11,7 +11,9 @@ import { ChangeBranchModal } from '../components/staff/ChangeBranchModal'
 import { ChangeRoleModal } from '../components/staff/ChangeRoleModal'
 import { InviteStaffModal } from '../components/staff/InviteStaffModal'
 import { RoleBadge, StaffStatusBadge } from '../components/staff/StaffBadges'
+import { SalesVoidPermissionToggle } from '../components/staff/SalesVoidPermissionToggle'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
+import { useCan } from '../lib/useCan'
 import {
   Button,
   ConfirmDialog,
@@ -36,6 +38,8 @@ export default function StaffPage() {
   const qc = useQueryClient()
   const { toast } = useToast()
   const { user } = useAuth()
+  const canManageFull = useCan('staff:manage')
+  const canManagePermissions = useCan('staff:permissions')
 
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState('')
@@ -114,9 +118,11 @@ export default function StaffPage() {
       <div className="space-y-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-2xl font-bold text-text-primary">Staff</h1>
-          <Button size="sm" onClick={() => setInviteOpen(true)}>
-            Invite staff
-          </Button>
+          {canManageFull && (
+            <Button size="sm" onClick={() => setInviteOpen(true)}>
+              Invite staff
+            </Button>
+          )}
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
@@ -181,7 +187,7 @@ export default function StaffPage() {
                 : 'Invite your team so they can use Negosio with their own accounts.'
             }
             action={
-              !filtered ? (
+              !filtered && canManageFull ? (
                 <Button size="sm" onClick={() => setInviteOpen(true)}>
                   Invite staff
                 </Button>
@@ -228,31 +234,38 @@ export default function StaffPage() {
                         </>
                       ) : canManage(m) ? (
                         <>
-                          <Button variant="ghost" size="sm" onClick={() => setRoleTarget(m)}>
-                            Change role
-                          </Button>
-                          {isBranchScoped(m.role) && (
-                            <Button variant="ghost" size="sm" onClick={() => setBranchTarget(m)}>
-                              Change branch
-                            </Button>
+                          {m.kind === 'Member' && m.role === 'Cashier' && canManagePermissions && (
+                            <SalesVoidPermissionToggle member={m} />
                           )}
-                          {m.status === 'Deactivated' ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setConfirm({ member: m, action: 'reactivate' })}
-                            >
-                              Reactivate
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setConfirm({ member: m, action: 'deactivate' })}
-                            >
-                              Deactivate
-                            </Button>
-                          )}
+                          {canManageFull ? (
+                            <>
+                              <Button variant="ghost" size="sm" onClick={() => setRoleTarget(m)}>
+                                Change role
+                              </Button>
+                              {isBranchScoped(m.role) && (
+                                <Button variant="ghost" size="sm" onClick={() => setBranchTarget(m)}>
+                                  Change branch
+                                </Button>
+                              )}
+                              {m.status === 'Deactivated' ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setConfirm({ member: m, action: 'reactivate' })}
+                                >
+                                  Reactivate
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setConfirm({ member: m, action: 'deactivate' })}
+                                >
+                                  Deactivate
+                                </Button>
+                              )}
+                            </>
+                          ) : null}
                         </>
                       ) : (
                         <span className="text-[13px] text-text-muted">—</span>

@@ -15,6 +15,7 @@ export type Capability =
   | 'branch:manage'
   | 'register:force-close'
   | 'sales:void'
+  | 'staff:permissions'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
 // 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
@@ -43,6 +44,9 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   // Mirrors SalesController's class-level SalesView policy (Owner/Admin/Manager/Cashier) — the
   // Cashier direct-vs-approval split is resolved server-side per sale, not by this capability.
   'sales:void': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
+  // Mirrors StaffController's new StaffView/StaffPermissionManage overrides (Owner/Admin/Manager) —
+  // distinct from 'staff:manage' (Owner/Admin only), which still gates every other staff action.
+  'staff:permissions': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
 }
 
 /**

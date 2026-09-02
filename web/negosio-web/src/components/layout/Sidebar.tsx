@@ -16,7 +16,10 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   // Drop items the current role can't use, then drop any group that empties out.
   const groups = NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => !item.capability || can(item.capability)),
+    items: group.items.filter(
+      (item) =>
+        !item.capability || (Array.isArray(item.capability) ? item.capability.some(can) : can(item.capability)),
+    ),
   })).filter((group) => group.items.length > 0)
 
   return (
