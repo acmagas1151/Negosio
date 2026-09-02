@@ -109,17 +109,52 @@ export function CloseSessionModal({
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 rounded-lg bg-surface-subtle px-3 py-3 text-sm">
           <dt className="text-text-muted">Opening cash</dt>
           <dd className="text-right text-text-secondary">{formatMoney(result.openingCash)}</dd>
-          <dt className="text-text-muted">Expected in drawer</dt>
-          <dd className="text-right text-text-secondary">{formatMoney(result.expectedCash ?? 0)}</dd>
+
+          {result.grossCashSales != null && (
+            <>
+              <dt className="text-text-muted">Gross cash sales</dt>
+              <dd className="text-right text-text-secondary">{formatMoney(result.grossCashSales)}</dd>
+            </>
+          )}
+          {result.voidedCashSales != null && result.voidedCashSales > 0 && (
+            <>
+              <dt className="text-text-muted">Voided cash sales</dt>
+              <dd className="text-right text-danger-strong">−{formatMoney(result.voidedCashSales)}</dd>
+            </>
+          )}
+          {result.grossCashSales != null && result.voidedCashSales != null && (
+            <>
+              <dt className="font-medium text-text-secondary">Net cash sales</dt>
+              <dd className="text-right font-medium text-text-secondary">
+                {formatMoney(result.grossCashSales - result.voidedCashSales)}
+              </dd>
+            </>
+          )}
+          {result.refundCashOut != null && result.refundCashOut > 0 && (
+            <>
+              <dt className="text-text-muted">Refund cash out</dt>
+              <dd className="text-right text-danger-strong">−{formatMoney(result.refundCashOut)}</dd>
+            </>
+          )}
+          {result.cashIn != null && result.cashIn > 0 && (
+            <>
+              <dt className="text-text-muted">Cash in</dt>
+              <dd className="text-right text-text-secondary">{formatMoney(result.cashIn)}</dd>
+            </>
+          )}
+          {result.cashOut != null && result.cashOut > 0 && (
+            <>
+              <dt className="text-text-muted">Cash out</dt>
+              <dd className="text-right text-danger-strong">−{formatMoney(result.cashOut)}</dd>
+            </>
+          )}
+
+          <dt className="pt-1 font-semibold text-text-primary">Expected cash</dt>
+          <dd className="pt-1 text-right font-semibold text-text-primary">{formatMoney(result.expectedCash ?? 0)}</dd>
           <dt className="text-text-muted">Counted</dt>
           <dd className="text-right text-text-secondary">{formatMoney(result.closingCash ?? 0)}</dd>
           <dt className="pt-1 font-semibold text-text-primary">Difference</dt>
-          <dd
-            className={cn(
-              'pt-1 text-right font-semibold',
-              over ? 'text-success-strong' : 'text-danger-strong',
-            )}
-          >
+          <dd className={cn('pt-1 text-right font-semibold', over ? 'text-success-strong' : 'text-danger-strong')}>
             {formatMoney(difference)} {over ? 'over' : 'short'}
           </dd>
         </dl>
