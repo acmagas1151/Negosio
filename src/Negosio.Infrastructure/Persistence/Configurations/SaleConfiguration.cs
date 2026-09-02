@@ -27,6 +27,9 @@ public sealed class SaleConfiguration : IEntityTypeConfiguration<Sale>
         builder.Property(s => s.ChangeDue).HasPrecision(18, 2);
         builder.Property(s => s.CreatedByUserId).IsRequired();
         builder.Property(s => s.VoidReason).HasMaxLength(500);
+        builder.Property(s => s.VoidedByUserId);
+        builder.Property(s => s.ApprovedByUserId);
+        builder.Property(s => s.RowVersion).IsRowVersion();
         builder.Property(s => s.CreatedAtUtc).IsRequired();
         builder.Property(s => s.UpdatedAtUtc).IsRequired();
 

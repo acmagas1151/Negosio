@@ -67,6 +67,15 @@ public class Sale : Entity
 
     public string? VoidReason { get; private set; }
 
+    public Guid? VoidedByUserId { get; private set; }
+
+    public Guid? ApprovedByUserId { get; private set; }
+
+    /// <summary>SQL Server `rowversion` — EF-managed optimistic concurrency token, never set by
+    /// application code. Protects any two competing writes to this row (double-void, void racing a
+    /// concurrent Return) — see the plan's Global Constraints and Task B4.</summary>
+    public byte[] RowVersion { get; private set; } = Array.Empty<byte>();
+
     public IReadOnlyCollection<SaleItem> Items => _items.AsReadOnly();
 
     public IReadOnlyCollection<Payment> Payments => _payments.AsReadOnly();
@@ -139,6 +148,35 @@ public class Sale : Entity
         Status = _items.All(i => i.ReturnableQuantity <= 0m)
             ? SaleStatus.Refunded
             : SaleStatus.PartiallyRefunded;
+        Touch();
+    }
+
+    /// <summary>
+    /// Reverses a completed sale in full, keeping the original <see cref="SaleNumber"/>. The caller
+    /// (<c>VoidSaleService</c>) is responsible for the full eligibility check (status, returns,
+    /// session-open, same-day cutoff) and for restoring inventory in the same transaction — this
+    /// guard is defense in depth, re-asserting the one invariant the domain itself must never allow.
+    /// <paramref name="nowUtc"/> is required, not read from the clock here — the caller captures one
+    /// TimeProvider-sourced timestamp per void attempt and reuses it for both the same-day eligibility
+    /// check and this stamp, so the two can never disagree.
+    /// </summary>
+    public void Void(Guid voidedByUserId, string reason, Guid? approvedByUserId, DateTime nowUtc)
+    {
+        if (Status != SaleStatus.Completed || CompletedAtUtc == null)
+        {
+            throw new InvalidOperationException("Only a completed sale can be voided.");
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new ArgumentException("A void reason is required.", nameof(reason));
+        }
+
+        Status = SaleStatus.Voided;
+        VoidedAtUtc = nowUtc;
+        VoidReason = reason.Trim();
+        VoidedByUserId = voidedByUserId;
+        ApprovedByUserId = approvedByUserId;
         Touch();
     }
 }
