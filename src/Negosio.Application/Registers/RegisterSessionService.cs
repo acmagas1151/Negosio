@@ -116,22 +116,52 @@ public sealed class RegisterSessionService : IRegisterSessionService
             throw new BusinessRuleException(ErrorCodes.RegisterSessionNotOpen, "This register session is not open.");
         }
 
+        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+
+        // Same pessimistic lock VoidSaleService.VoidAsync takes, taken here as the very first read too
+        // — not just before the final write. Whoever gets here first (this close, or a concurrent void)
+        // runs its entire read-then-write sequence to completion (commit or rollback, which releases the
+        // lock) before the other can even begin reading, so these SUM queries below can never be a stale
+        // snapshot relative to a void that commits moments later, or vice versa. HOLDLOCK's guarantee
+        // depends entirely on this running inside the explicit transaction above.
+        await _db.Database.SqlQuery<int>(
+            $"SELECT 1 AS Value FROM RegisterSessions WITH (UPDLOCK, HOLDLOCK) WHERE Id = {session.Id}")
+            .ToListAsync(cancellationToken);
+
         var saleIds = _db.Sales.Where(s => s.TenantId == tenantId && s.RegisterSessionId == session.Id).Select(s => s.Id);
 
-        var cashIn = await _db.Payments
+        // Gross: every cash payment on this session's sales, regardless of a later void — Payment rows
+        // are never deleted. Voided: the subset of that belonging to sales now Status == Voided, so the
+        // UI can show "Gross" and "Voided" as two distinct lines rather than a pre-subtracted number.
+        var grossCashSales = await _db.Payments
             .Where(p => p.TenantId == tenantId && p.Method == PaymentMethod.Cash && saleIds.Contains(p.SaleId))
             .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
 
+        var voidedSaleIds = _db.Sales.Where(s => s.TenantId == tenantId && s.RegisterSessionId == session.Id && s.Status == SaleStatus.Voided).Select(s => s.Id);
+        var voidedCashSales = await _db.Payments
+            .Where(p => p.TenantId == tenantId && p.Method == PaymentMethod.Cash && voidedSaleIds.Contains(p.SaleId))
+            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+
         var returnIds = _db.SaleReturns.Where(r => r.TenantId == tenantId && saleIds.Contains(r.SaleId)).Select(r => r.Id);
-        var cashOut = await _db.RefundPayments
+        var refundCashOut = await _db.RefundPayments
             .Where(r => r.TenantId == tenantId && r.Method == PaymentMethod.Cash && returnIds.Contains(r.SaleReturnId))
             .SumAsync(r => (decimal?)r.Amount, cancellationToken) ?? 0m;
 
-        var expected = session.OpeningCash + cashIn - cashOut;
+        var cashIn = await _db.RegisterCashMovements
+            .Where(m => m.TenantId == tenantId && m.RegisterSessionId == session.Id && m.Type == CashMovementType.CashIn)
+            .SumAsync(m => (decimal?)m.Amount, cancellationToken) ?? 0m;
+        var cashOut = await _db.RegisterCashMovements
+            .Where(m => m.TenantId == tenantId && m.RegisterSessionId == session.Id && m.Type == CashMovementType.CashOut)
+            .SumAsync(m => (decimal?)m.Amount, cancellationToken) ?? 0m;
+
+        var expected = session.OpeningCash + grossCashSales - voidedCashSales - refundCashOut + cashIn - cashOut;
+        var breakdown = new CashReconciliationBreakdown(grossCashSales, voidedCashSales, refundCashOut, cashIn, cashOut);
+
         // ClosedByUserId = the acting user (the original cashier on a normal close, an Owner/Admin
         // on a force-close); OpenedByUserId is never touched.
-        session.Close(_currentUser.UserId, closingCash, expected);
+        session.Close(_currentUser.UserId, closingCash, expected, breakdown);
         await _db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return await ProjectAsync(session.Id, tenantId, cancellationToken);
     }
@@ -187,7 +217,8 @@ public sealed class RegisterSessionService : IRegisterSessionService
                 s.OpenedByUserId,
                 _db.Users.Where(u => u.Id == s.OpenedByUserId).Select(u => u.FirstName + " " + u.LastName).FirstOrDefault() ?? string.Empty,
                 s.OpenedAtUtc, s.ClosedAtUtc,
-                s.OpeningCash, s.ClosingCash, s.ExpectedCash, s.CashDifference))
+                s.OpeningCash, s.ClosingCash, s.ExpectedCash, s.CashDifference,
+                s.GrossCashSales, s.VoidedCashSales, s.RefundCashOut, s.CashIn, s.CashOut))
             .SingleOrDefaultAsync(cancellationToken);
 
         return dto ?? throw new NotFoundException(ErrorCodes.RegisterSessionNotFound, "Register session not found.");

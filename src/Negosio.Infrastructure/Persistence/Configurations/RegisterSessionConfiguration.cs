@@ -23,6 +23,11 @@ public sealed class RegisterSessionConfiguration : IEntityTypeConfiguration<Regi
         builder.Property(s => s.ClosingCash).HasPrecision(18, 2);
         builder.Property(s => s.ExpectedCash).HasPrecision(18, 2);
         builder.Property(s => s.CashDifference).HasPrecision(18, 2);
+        builder.Property(s => s.GrossCashSales).HasPrecision(18, 2);
+        builder.Property(s => s.VoidedCashSales).HasPrecision(18, 2);
+        builder.Property(s => s.RefundCashOut).HasPrecision(18, 2);
+        builder.Property(s => s.CashIn).HasPrecision(18, 2);
+        builder.Property(s => s.CashOut).HasPrecision(18, 2);
         builder.Property(s => s.Status).IsRequired().HasConversion<int>();
         builder.Property(s => s.CreatedAtUtc).IsRequired();
         builder.Property(s => s.UpdatedAtUtc).IsRequired();

@@ -29,7 +29,8 @@ public class RegisterSessionTests
     {
         var session = RegisterSession.Open(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 500m);
 
-        session.Close(Guid.NewGuid(), closingCash: 1180m, expectedCash: 1200m);
+        session.Close(Guid.NewGuid(), closingCash: 1180m, expectedCash: 1200m,
+            new CashReconciliationBreakdown(1200m, 0m, 0m, 0m, 0m));
 
         session.Status.Should().Be(RegisterSessionStatus.Closed);
         session.ExpectedCash.Should().Be(1200m);
@@ -41,11 +42,25 @@ public class RegisterSessionTests
     public void Close_twice_throws()
     {
         var session = RegisterSession.Open(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 0m);
-        session.Close(Guid.NewGuid(), 0m, 0m);
+        session.Close(Guid.NewGuid(), 0m, 0m, new CashReconciliationBreakdown(0m, 0m, 0m, 0m, 0m));
 
-        var act = () => session.Close(Guid.NewGuid(), 0m, 0m);
+        var act = () => session.Close(Guid.NewGuid(), 0m, 0m, new CashReconciliationBreakdown(0m, 0m, 0m, 0m, 0m));
 
         act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void Close_stores_the_reconciliation_breakdown()
+    {
+        var session = RegisterSession.Open(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 5000m);
+
+        session.Close(Guid.NewGuid(), 4700m, 4700m, new CashReconciliationBreakdown(700m, 500m, 0m, 500m, 1000m));
+
+        session.GrossCashSales.Should().Be(700m);
+        session.VoidedCashSales.Should().Be(500m);
+        session.RefundCashOut.Should().Be(0m);
+        session.CashIn.Should().Be(500m);
+        session.CashOut.Should().Be(1000m);
     }
 }
 

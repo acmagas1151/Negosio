@@ -48,6 +48,16 @@ public class RegisterSession : Entity
 
     public decimal? CashDifference { get; private set; }
 
+    public decimal? GrossCashSales { get; private set; }
+
+    public decimal? VoidedCashSales { get; private set; }
+
+    public decimal? RefundCashOut { get; private set; }
+
+    public decimal? CashIn { get; private set; }
+
+    public decimal? CashOut { get; private set; }
+
     public RegisterSessionStatus Status { get; private set; }
 
     public static RegisterSession Open(Guid tenantId, Guid branchId, Guid registerId, Guid openedByUserId, decimal openingCash)
@@ -60,7 +70,7 @@ public class RegisterSession : Entity
         return new RegisterSession(tenantId, branchId, registerId, openedByUserId, openingCash);
     }
 
-    public void Close(Guid closedByUserId, decimal closingCash, decimal expectedCash)
+    public void Close(Guid closedByUserId, decimal closingCash, decimal expectedCash, CashReconciliationBreakdown breakdown)
     {
         if (Status == RegisterSessionStatus.Closed)
         {
@@ -76,6 +86,11 @@ public class RegisterSession : Entity
         ClosingCash = closingCash;
         ExpectedCash = expectedCash;
         CashDifference = closingCash - expectedCash;
+        GrossCashSales = breakdown.GrossCashSales;
+        VoidedCashSales = breakdown.VoidedCashSales;
+        RefundCashOut = breakdown.RefundCashOut;
+        CashIn = breakdown.CashIn;
+        CashOut = breakdown.CashOut;
         ClosedAtUtc = DateTime.UtcNow;
         Status = RegisterSessionStatus.Closed;
         Touch();

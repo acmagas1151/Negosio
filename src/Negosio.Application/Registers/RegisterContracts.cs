@@ -44,7 +44,12 @@ public sealed record RegisterSessionDto(
     decimal OpeningCash,
     decimal? ClosingCash,
     decimal? ExpectedCash,
-    decimal? CashDifference);
+    decimal? CashDifference,
+    decimal? GrossCashSales,
+    decimal? VoidedCashSales,
+    decimal? RefundCashOut,
+    decimal? CashIn,
+    decimal? CashOut);
 
 public sealed record OpenRegisterSessionRequest(Guid RegisterId, decimal OpeningCash);
 
