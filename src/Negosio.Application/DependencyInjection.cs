@@ -43,6 +43,7 @@ public static class DependencyInjection
         services.AddScoped<IDocumentNumberService, DocumentNumberService>();
         services.AddScoped<IRegisterService, RegisterService>();
         services.AddScoped<IRegisterSessionService, RegisterSessionService>();
+        services.AddScoped<IRegisterCashMovementService, RegisterCashMovementService>();
         services.AddScoped<IPosCatalogService, PosCatalogService>();
         services.AddScoped<IPosContextService, PosContextService>();
         services.AddScoped<ICheckoutService, CheckoutService>();

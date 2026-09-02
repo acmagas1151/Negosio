@@ -74,3 +74,16 @@ public interface IRegisterSessionService
 
     Task<RegisterSessionDto> GetCurrentAsync(Guid? registerId, Guid? branchId, CancellationToken cancellationToken = default);
 }
+
+public sealed record RegisterCashMovementDto(
+    Guid Id, CashMovementType Type, decimal Amount, string Reason,
+    Guid CreatedByUserId, string CreatedByName, DateTime CreatedAtUtc);
+
+public sealed record CreateCashMovementRequest(CashMovementType Type, decimal Amount, string Reason);
+
+public interface IRegisterCashMovementService
+{
+    Task<RegisterCashMovementDto> CreateAsync(Guid sessionId, CreateCashMovementRequest request, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<RegisterCashMovementDto>> ListAsync(Guid sessionId, CancellationToken cancellationToken = default);
+}
