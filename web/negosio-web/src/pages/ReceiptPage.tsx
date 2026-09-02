@@ -19,6 +19,7 @@ const RECEIPT_CSS = `
 .receipt .item { margin:2px 0; }
 .receipt .bold { font-weight:700; }
 .receipt .banner { border:1px solid #000; padding:2px 4px; text-align:center; margin:6px 0; font-weight:700; }
+.receipt .banner-void { border:2px solid #b91c1c; color:#b91c1c; padding:3px 4px; text-align:center; margin:6px 0; font-weight:700; letter-spacing:0.5px; }
 .receipt-actions { margin-top:16px; display:flex; gap:8px; }
 @media print {
   .receipt-page { background:#fff; padding:0; display:block; }
@@ -69,6 +70,7 @@ export default function ReceiptPage() {
     r.status === 'Refunded' || r.status === 'PartiallyRefunded'
       ? SALE_STATUS_LABELS[r.status].toUpperCase()
       : null
+  const voidedBanner = r.status === 'Voided' ? 'VOID — SALE CANCELLED' : null
 
   return (
     <div className="receipt-page">
@@ -139,6 +141,7 @@ export default function ReceiptPage() {
           <span className="r">{formatMoney(r.changeDue)}</span>
         </div>
         {refundedBanner && <div className="banner">{refundedBanner}</div>}
+        {voidedBanner && <div className="banner-void">{voidedBanner}</div>}
         <hr />
         <p className="center muted">Thank you!</p>
       </div>
