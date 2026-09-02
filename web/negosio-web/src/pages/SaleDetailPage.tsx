@@ -12,13 +12,16 @@ import { ReturnModal } from '../components/sales/ReturnModal'
 import { SaleItemsTable } from '../components/sales/SaleItemsTable'
 import { SaleReturnsList } from '../components/sales/SaleReturnsList'
 import { StatusBadge } from '../components/sales/StatusBadge'
+import { VoidSaleModal } from '../components/sales/VoidSaleModal'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
 import { Button, ErrorState, LoadingState } from '../components/ui'
 
 export default function SaleDetailPage() {
   const { id = '' } = useParams()
   const canRefund = useCan('refund:manage')
+  const canVoidCapability = useCan('sales:void')
   const [returnOpen, setReturnOpen] = useState(false)
+  const [voidOpen, setVoidOpen] = useState(false)
 
   const query = useQuery({
     queryKey: ['sales', id],
@@ -55,6 +58,34 @@ export default function SaleDetailPage() {
               hasReturnableQty(d.items)
             return (
               <>
+                {d.sale.status === 'Voided' && (
+                  <div className="rounded-xl border border-danger/20 bg-danger-light p-4 text-sm">
+                    <p className="font-semibold text-danger-strong">Voided</p>
+                    <dl className="mt-2 space-y-1 text-text-secondary">
+                      <div>
+                        <dt className="inline font-medium text-text-primary">Voided by: </dt>
+                        <dd className="inline">{d.voidedByName}</dd>
+                      </div>
+                      {d.approvedByName && (
+                        <div>
+                          <dt className="inline font-medium text-text-primary">Approved by: </dt>
+                          <dd className="inline">{d.approvedByName}</dd>
+                        </div>
+                      )}
+                      <div>
+                        <dt className="inline font-medium text-text-primary">Reason: </dt>
+                        <dd className="inline">{d.voidReason}</dd>
+                      </div>
+                      <div>
+                        <dt className="inline font-medium text-text-primary">Voided at: </dt>
+                        <dd className="inline">
+                          {d.voidedAtUtc ? new Date(d.voidedAtUtc).toLocaleString() : ''}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                )}
+
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <div className="flex items-center gap-2">
@@ -70,6 +101,11 @@ export default function SaleDetailPage() {
                     {canStartReturn && (
                       <Button variant="secondary" size="sm" onClick={() => setReturnOpen(true)}>
                         Start return
+                      </Button>
+                    )}
+                    {canVoidCapability && d.sale.status === 'Completed' && d.canVoid && (
+                      <Button variant="destructive" size="sm" onClick={() => setVoidOpen(true)}>
+                        Void sale
                       </Button>
                     )}
                     <Link to={`/sales/${d.sale.id}/receipt`}>
@@ -144,6 +180,12 @@ export default function SaleDetailPage() {
                 )}
 
                 <ReturnModal open={returnOpen} onClose={() => setReturnOpen(false)} sale={d} />
+                <VoidSaleModal
+                  open={voidOpen}
+                  onClose={() => setVoidOpen(false)}
+                  sale={d}
+                  onVoided={() => query.refetch()}
+                />
               </>
             )
           })()
