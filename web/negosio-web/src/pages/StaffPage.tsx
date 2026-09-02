@@ -215,23 +215,27 @@ export default function StaffPage() {
                   <Table.Cell align="right">
                     <div className="flex justify-end gap-1">
                       {m.kind === 'Invitation' ? (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => resend.mutate(m.id)}
-                            loading={resend.isPending && resend.variables === m.id}
-                          >
-                            Resend
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setConfirm({ member: m, action: 'revoke' })}
-                          >
-                            Revoke
-                          </Button>
-                        </>
+                        canManageFull ? (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => resend.mutate(m.id)}
+                              loading={resend.isPending && resend.variables === m.id}
+                            >
+                              Resend
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setConfirm({ member: m, action: 'revoke' })}
+                            >
+                              Revoke
+                            </Button>
+                          </>
+                        ) : (
+                          <span className="text-[13px] text-text-muted">—</span>
+                        )
                       ) : canManage(m) ? (
                         <>
                           {m.kind === 'Member' && m.role === 'Cashier' && canManagePermissions && (
