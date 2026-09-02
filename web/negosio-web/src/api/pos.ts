@@ -2,6 +2,7 @@ import { apiRequest } from './client'
 import { qs } from './query-string'
 import type {
   CheckoutRequest,
+  CreateCashMovementRequest,
   CreateRegisterRequest,
   CreateReturnRequest,
   CloseRegisterSessionRequest,
@@ -12,6 +13,7 @@ import type {
   PosContextDto,
   PosRegisterDto,
   ReceiptDto,
+  RegisterCashMovementDto,
   RegisterDto,
   RegisterListParams,
   RegisterSessionDto,
@@ -21,6 +23,7 @@ import type {
   SaleReturnDto,
   SaleSummaryDto,
   UpdateRegisterRequest,
+  VoidSaleRequest,
 } from './types'
 
 export const registersApi = {
@@ -43,6 +46,12 @@ export const sessionsApi = {
     apiRequest<RegisterSessionDto>(`/api/register-sessions/${id}/close`, { method: 'POST', body }),
   forceClose: (id: string, body: CloseRegisterSessionRequest) =>
     apiRequest<RegisterSessionDto>(`/api/register-sessions/${id}/force-close`, { method: 'POST', body }),
+  cashMovements: {
+    create: (sessionId: string, body: CreateCashMovementRequest) =>
+      apiRequest<RegisterCashMovementDto>(`/api/register-sessions/${sessionId}/cash-movements`, { method: 'POST', body }),
+    list: (sessionId: string) =>
+      apiRequest<RegisterCashMovementDto[]>(`/api/register-sessions/${sessionId}/cash-movements`),
+  },
 }
 
 export const posApi = {
@@ -73,4 +82,6 @@ export const salesApi = {
   listReturns: (id: string) => apiRequest<SaleReturnDto[]>(`/api/sales/${id}/returns`),
   createReturn: (id: string, body: CreateReturnRequest) =>
     apiRequest<SaleReturnDto>(`/api/sales/${id}/returns`, { method: 'POST', body }),
+  void: (id: string, body: VoidSaleRequest) =>
+    apiRequest<SaleDetailDto>(`/api/sales/${id}/void`, { method: 'POST', body }),
 }

@@ -367,6 +367,29 @@ export interface RegisterSessionDto {
   closingCash: number | null
   expectedCash: number | null
   cashDifference: number | null
+  grossCashSales: number | null
+  voidedCashSales: number | null
+  refundCashOut: number | null
+  cashIn: number | null
+  cashOut: number | null
+}
+
+export type CashMovementType = 'CashIn' | 'CashOut'
+
+export interface RegisterCashMovementDto {
+  id: string
+  type: CashMovementType
+  amount: number
+  reason: string
+  createdByUserId: string
+  createdByName: string
+  createdAtUtc: string
+}
+
+export interface CreateCashMovementRequest {
+  type: CashMovementType
+  amount: number
+  reason: string
 }
 
 export interface OpenRegisterSessionRequest {
@@ -545,6 +568,16 @@ export interface SaleReturnDto {
   refunds: ReceiptPaymentDto[]
 }
 
+export interface VoidSaleApprovalInput {
+  approverEmail: string
+  approverPassword: string
+}
+
+export interface VoidSaleRequest {
+  reason: string
+  approval?: VoidSaleApprovalInput
+}
+
 export interface SaleDetailDto {
   sale: SaleSummaryDto
   registerSessionId: string
@@ -557,6 +590,14 @@ export interface SaleDetailDto {
   items: SaleItemDto[]
   payments: SalePaymentDto[]
   returns: SaleReturnDto[]
+  voidedByUserId: string | null
+  voidedByName: string | null
+  approvedByUserId: string | null
+  approvedByName: string | null
+  voidReason: string | null
+  voidedAtUtc: string | null
+  canVoid: boolean
+  voidIneligibilityCode: string | null
 }
 
 export interface SaleListParams {
@@ -650,6 +691,11 @@ export interface StaffMemberDto {
   invitedByName: string | null
   branchId: string | null
   branchName: string | null
+  salesVoid: boolean
+}
+
+export interface ChangeStaffPermissionsRequest {
+  salesVoid: boolean
 }
 
 export interface InviteStaffRequest {

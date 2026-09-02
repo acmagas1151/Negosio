@@ -3,6 +3,7 @@ import type {
   AcceptInvitationRequest,
   AcceptInvitationResultDto,
   ChangeStaffBranchRequest,
+  ChangeStaffPermissionsRequest,
   ChangeStaffRoleRequest,
   InvitationPreviewDto,
   InviteStaffRequest,
@@ -34,6 +35,9 @@ export const staffApi = {
 
   reactivate: (id: string) =>
     apiRequest<StaffMemberDto>(`/api/staff/${id}/reactivate`, { method: 'POST' }),
+
+  setSalesVoidPermission: (id: string, body: ChangeStaffPermissionsRequest) =>
+    apiRequest<StaffMemberDto>(`/api/staff/${id}/permissions`, { method: 'PUT', body }),
 }
 
 /** Public invitation acceptance — hits /api/auth/invitations/* and needs no bearer token. */
