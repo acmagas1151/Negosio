@@ -40,7 +40,35 @@ public sealed class RegisterCashMovementService : IRegisterCashMovementService
             throw new ForbiddenAppException(ErrorCodes.CashMovementNotOwner, "This register session belongs to another user.");
         }
 
+        // First-pass fast-fail before opening a transaction — not authoritative by itself; re-checked
+        // below once the session row is locked.
         if (session.Status != RegisterSessionStatus.Open)
+        {
+            throw new BusinessRuleException(ErrorCodes.CashMovementSessionClosed, "This register session is not open.");
+        }
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+
+        // Same pessimistic lock ReconcileAndCloseAsync and VoidSaleService.VoidAsync already take, as
+        // the very first statement inside the transaction. Without this, a concurrent close's
+        // reconciliation SUM queries could run either just before or just after this insert commits,
+        // with nothing serializing the two — a "successful" cash movement could then silently vanish
+        // from (or double up in) the closed session's CashIn/CashOut breakdown. Whoever gets here
+        // first — this insert, or a concurrent close — now runs its entire read-then-write sequence to
+        // completion (commit or rollback, which releases the lock) before the other can even begin.
+        await _db.Database.SqlQuery<int>(
+            $"SELECT 1 AS Value FROM RegisterSessions WITH (UPDLOCK, HOLDLOCK) WHERE Id = {session.Id}")
+            .ToListAsync(cancellationToken);
+
+        // Authoritative re-check, now that the session row is locked for the rest of this transaction.
+        // Must be a fresh AsNoTracking read — the tracked `session` loaded above is already in the
+        // change tracker's identity map, so a tracked re-query would just hand back that same stale
+        // instance instead of the current database row.
+        var currentStatus = await _db.RegisterSessions.AsNoTracking()
+            .Where(s => s.TenantId == tenantId && s.Id == sessionId)
+            .Select(s => s.Status)
+            .SingleAsync(cancellationToken);
+        if (currentStatus != RegisterSessionStatus.Open)
         {
             throw new BusinessRuleException(ErrorCodes.CashMovementSessionClosed, "This register session is not open.");
         }
@@ -49,6 +77,7 @@ public sealed class RegisterCashMovementService : IRegisterCashMovementService
             tenantId, session.BranchId, session.Id, request.Type, request.Amount, request.Reason, _currentUser.UserId);
         _db.RegisterCashMovements.Add(movement);
         await _db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return await ToDtoAsync(movement, cancellationToken);
     }
