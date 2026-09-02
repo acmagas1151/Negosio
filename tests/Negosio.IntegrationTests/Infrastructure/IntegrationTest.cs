@@ -152,6 +152,16 @@ public abstract class IntegrationTest : IAsyncLifetime
     }
 
     /// <summary>
+    /// Resolve the user id embedded in a token minted by <see cref="AddTenantUserTokenAsync"/>. Reads
+    /// the standard <c>sub</c> claim straight off the JWT (the same value <see cref="IJwtTokenGenerator"/>
+    /// wrote it from) — deliberately does not call <see cref="Authorize"/> or touch <see cref="Client"/>
+    /// via an HTTP round trip, so it can be used mid-test without disturbing whichever token the caller
+    /// currently has active on <see cref="Client"/>.
+    /// </summary>
+    protected Task<Guid> GetUserIdFromTokenAsync(string token) => Task.FromResult(
+        Guid.Parse(new JwtSecurityTokenHandler().ReadJwtToken(token).Claims.Single(c => c.Type == JwtRegisteredClaimNames.Sub).Value));
+
+    /// <summary>
     /// Add a user who can actually log in: a real password hash on the platform login plus a tenant
     /// User (optionally branch-assigned). Returns the user id.
     /// </summary>
@@ -217,8 +227,12 @@ public abstract class IntegrationTest : IAsyncLifetime
         return (await response.Content.ReadFromJsonAsync<InventoryRowDto>(TestJson.Options))!;
     }
 
+    /// <summary>The tenant's original branch created at registration — not just any branch. Ordered by
+    /// <c>CreatedAtUtc</c> rather than a bare <c>FirstAsync()</c>: a GUID primary key has no relation to
+    /// insertion order, so an unordered "first" is non-deterministic once a test creates a second branch
+    /// (e.g. via <see cref="CreateBranchAsync"/>) — it can return either branch depending on GUID value.</summary>
     protected Task<Guid> GetMainBranchIdAsync(LoginResponse login) =>
-        InTenantScopeAsync(login.User.TenantId, db => db.Branches.Select(b => b.Id).FirstAsync());
+        InTenantScopeAsync(login.User.TenantId, db => db.Branches.OrderBy(b => b.CreatedAtUtc).Select(b => b.Id).FirstAsync());
 
     /// <summary>Create an extra branch in the current tenant via the API (Owner/Admin token required).</summary>
     protected async Task<Negosio.Application.Branches.BranchDto> CreateBranchAsync(

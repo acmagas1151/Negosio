@@ -49,6 +49,8 @@ public interface ITenantDbContext : IAsyncDisposable
 
     DbSet<DocumentNumberCounter> DocumentNumberCounters { get; }
 
+    DbSet<UserPermissionGrant> UserPermissionGrants { get; }
+
     DatabaseFacade Database { get; }
 
     EntityEntry<TEntity> Entry<TEntity>(TEntity entity) where TEntity : class;

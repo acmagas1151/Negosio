@@ -21,6 +21,7 @@ public sealed class StaffService : IStaffService
     private readonly IAppEnvironment _environment;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<StaffService> _logger;
+    private readonly IBranchAccessResolver _branchAccess;
 
     private readonly IValidator<ChangeStaffBranchRequest> _branchValidator;
 
@@ -33,7 +34,8 @@ public sealed class StaffService : IStaffService
         IValidator<ChangeStaffBranchRequest> branchValidator,
         IAppEnvironment environment,
         TimeProvider timeProvider,
-        ILogger<StaffService> logger)
+        ILogger<StaffService> logger,
+        IBranchAccessResolver branchAccess)
     {
         _platform = platform;
         _tenant = tenant;
@@ -44,6 +46,7 @@ public sealed class StaffService : IStaffService
         _environment = environment;
         _timeProvider = timeProvider;
         _logger = logger;
+        _branchAccess = branchAccess;
     }
 
     private Guid TenantId => _currentUser.IsAuthenticated
@@ -72,6 +75,11 @@ public sealed class StaffService : IStaffService
 
         var names = users.ToDictionary(u => u.Id, u => $"{u.FirstName} {u.LastName}".Trim());
 
+        var grantedUserIds = (await _tenant.UserPermissionGrants.AsNoTracking()
+            .Where(g => g.TenantId == tenantId && g.Permission == UserPermission.SalesVoid)
+            .Select(g => g.UserId)
+            .ToListAsync(cancellationToken)).ToHashSet();
+
         var members = users.Select(u =>
         {
             // Platform is the authority for role + active state; fall back to the tenant row.
@@ -82,7 +90,8 @@ public sealed class StaffService : IStaffService
                 active ? StaffMemberStatus.Active : StaffMemberStatus.Deactivated,
                 JoinedAtUtc: u.CreatedAtUtc, InvitedAtUtc: null, ExpiresAtUtc: null, InvitedByName: null,
                 BranchId: u.BranchId,
-                BranchName: u.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null);
+                BranchName: u.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null,
+                SalesVoid: grantedUserIds.Contains(u.Id) && role == UserRole.Cashier);
         });
 
         var now = UtcNow;
@@ -96,7 +105,21 @@ public sealed class StaffService : IStaffService
             JoinedAtUtc: null, InvitedAtUtc: i.CreatedAtUtc, ExpiresAtUtc: i.ExpiresAtUtc,
             InvitedByName: names.GetValueOrDefault(i.InvitedByUserId),
             BranchId: i.BranchId,
-            BranchName: i.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null));
+            BranchName: i.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null,
+            SalesVoid: false));
+
+        var assigned = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
+        if (assigned is { } branchId)
+        {
+            // Strictly BranchId == branchId — NOT `|| BranchId == null`. A null BranchId always means
+            // Owner/Admin (Phase 5 invariant); a Manager must never see those rows, so they're excluded
+            // outright rather than treated as "visible to everyone."
+            return members.Where(m => m.BranchId == branchId)
+                .Concat(invitationRows.Where(i => i.BranchId == branchId))
+                .OrderBy(m => m.Kind == StaffMemberKind.Invitation)
+                .ThenBy(m => (m.FirstName + m.LastName + m.Email).ToLowerInvariant())
+                .ToList();
+        }
 
         return members.Concat(invitationRows)
             .OrderBy(m => m.Kind == StaffMemberKind.Invitation)
@@ -430,11 +453,15 @@ public sealed class StaffService : IStaffService
                 .Where(b => b.Id == branchId).Select(b => b.Name).FirstOrDefaultAsync(cancellationToken);
         }
 
+        var salesVoid = login.Role == UserRole.Cashier
+            && await _tenant.UserPermissionGrants.AsNoTracking()
+                .AnyAsync(g => g.TenantId == login.TenantId && g.UserId == user.Id && g.Permission == UserPermission.SalesVoid, cancellationToken);
+
         return new StaffMemberDto(
             user.Id, StaffMemberKind.Member, user.FirstName, user.LastName, user.Email, login.Role,
             login.IsActive ? StaffMemberStatus.Active : StaffMemberStatus.Deactivated,
             JoinedAtUtc: user.CreatedAtUtc, InvitedAtUtc: null, ExpiresAtUtc: null, InvitedByName: null,
-            BranchId: user.BranchId, BranchName: branchName);
+            BranchId: user.BranchId, BranchName: branchName, SalesVoid: salesVoid);
     }
 
     /// <summary>Branch-scoped role → an active branch id is required; Owner/Admin → must be null.</summary>

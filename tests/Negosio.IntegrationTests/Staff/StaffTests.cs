@@ -168,12 +168,18 @@ public class StaffTests : IntegrationTest
     // ---- authorization --------------------------------------------------
 
     [Fact]
-    public async Task Owner_and_Admin_may_list_staff_others_may_not()
+    public async Task Owner_Admin_and_Manager_may_list_staff_others_may_not()
     {
         await RegisterLoginAndAuthorizeAsync();
         (await Client.GetAsync("/api/staff")).StatusCode.Should().Be(HttpStatusCode.OK);
 
-        foreach (var role in new[] { UserRole.Manager, UserRole.Cashier, UserRole.InventoryStaff, UserRole.Viewer })
+        // Manager reaches the roster too (Phase 6: scoped to their own branch by StaffService) —
+        // only non-management roles are denied outright by the StaffView policy.
+        var managerToken = await AddTenantUserTokenAsync("manager@example.com", UserRole.Manager);
+        Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", managerToken);
+        (await Client.GetAsync("/api/staff")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        foreach (var role in new[] { UserRole.Cashier, UserRole.InventoryStaff, UserRole.Viewer })
         {
             var token = await AddTenantUserTokenAsync($"{role}@example.com", role);
             Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);

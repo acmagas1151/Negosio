@@ -77,4 +77,19 @@ public static class ErrorCodes
     public const string SessionNotOwned = "SESSION_NOT_OWNED";           // operating / closing another user's register session
     public const string CashierSessionOpen = "CASHIER_SESSION_OPEN";     // user already has an open register session
     public const string StaffHasOpenRegisterSession = "STAFF_HAS_OPEN_REGISTER_SESSION"; // cannot reassign while a session is open
+
+    // ---- Phase 6: Void sales & cash operations ----
+    public const string SaleNotVoidable = "SALE_NOT_VOIDABLE";
+    public const string SaleHasReturns = "SALE_HAS_RETURNS";
+    public const string VoidSessionClosed = "VOID_SESSION_CLOSED";
+    public const string VoidCutoffExpired = "VOID_CUTOFF_EXPIRED";
+    public const string VoidApprovalRequired = "VOID_APPROVAL_REQUIRED";
+    public const string InvalidApproverCredentials = "INVALID_APPROVER_CREDENTIALS";
+    public const string VoidApproverNotAuthorized = "VOID_APPROVER_NOT_AUTHORIZED";
+    public const string VoidApproverWrongBranch = "VOID_APPROVER_WRONG_BRANCH";
+    public const string SalesVoidSelfGrant = "SALES_VOID_SELF_GRANT";
+    public const string SalesVoidGrantRoleInvalid = "SALES_VOID_GRANT_ROLE_INVALID";
+    public const string CashMovementInvalidAmount = "CASH_MOVEMENT_INVALID_AMOUNT";
+    public const string CashMovementSessionClosed = "CASH_MOVEMENT_SESSION_CLOSED";
+    public const string CashMovementNotOwner = "CASH_MOVEMENT_NOT_OWNER";
 }

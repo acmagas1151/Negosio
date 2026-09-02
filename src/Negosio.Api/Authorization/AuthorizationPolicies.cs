@@ -37,6 +37,14 @@ public static class AuthorizationPolicies
     /// <summary>Invite staff, assign roles, deactivate/reactivate staff.</summary>
     public const string StaffManage = "StaffManage";
 
+    // ---- Phase 6: Void sales & cash operations ----
+
+    /// <summary>Read the staff roster — Owner/Admin see the whole tenant, Manager sees only their branch (service-enforced).</summary>
+    public const string StaffView = "StaffView";
+
+    /// <summary>Grant/revoke the SalesVoid permission — Owner/Admin any Cashier, Manager only their own branch's Cashiers (service-enforced).</summary>
+    public const string StaffPermissionManage = "StaffPermissionManage";
+
     // ---- Phase 5: Branch management ----
 
     /// <summary>Create / update / activate / deactivate branches.</summary>
@@ -91,6 +99,14 @@ public static class AuthorizationPolicies
         options.AddPolicy(StaffManage, policy =>
             policy.RequireAuthenticatedUser()
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(OwnerAdmin)));
+
+        options.AddPolicy(StaffView, policy =>
+            policy.RequireAuthenticatedUser()
+                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
+
+        options.AddPolicy(StaffPermissionManage, policy =>
+            policy.RequireAuthenticatedUser()
+                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
 
         options.AddPolicy(BranchManage, policy =>
             policy.RequireAuthenticatedUser()

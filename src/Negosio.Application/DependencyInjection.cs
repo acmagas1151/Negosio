@@ -56,6 +56,9 @@ public static class DependencyInjection
         services.AddScoped<IStaffService, StaffService>();
         services.AddScoped<IStaffInvitationService, StaffInvitationService>();
 
+        // Phase 6: Void sales & cash operations
+        services.AddScoped<ISalesVoidPermissionService, SalesVoidPermissionService>();
+
         return services;
     }
 }

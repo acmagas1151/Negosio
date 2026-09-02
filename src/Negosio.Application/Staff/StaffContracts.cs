@@ -35,7 +35,8 @@ public sealed record StaffMemberDto(
     DateTime? ExpiresAtUtc,
     string? InvitedByName,
     Guid? BranchId,
-    string? BranchName);
+    string? BranchName,
+    bool SalesVoid);
 
 /// <summary>Branch is required for a branch-scoped role, and must be absent for Owner/Admin.</summary>
 public sealed record InviteStaffRequest(string Email, string Role, string? BranchId = null);
@@ -44,6 +45,15 @@ public sealed record InviteStaffRequest(string Email, string Role, string? Branc
 public sealed record ChangeStaffRoleRequest(string Role, string? BranchId = null);
 
 public sealed record ChangeStaffBranchRequest(string BranchId);
+
+public sealed record ChangeStaffPermissionsRequest(bool SalesVoid);
+
+public interface ISalesVoidPermissionService
+{
+    Task<bool> HasGrantAsync(Guid userId, CancellationToken cancellationToken = default);
+
+    Task<StaffMemberDto> SetAsync(Guid targetUserId, bool salesVoid, CancellationToken cancellationToken = default);
+}
 
 /// <summary>
 /// Returned after creating / resending an invitation. <see cref="AcceptPath"/> is populated in

@@ -61,6 +61,8 @@ public sealed class TenantDbContext : DbContext, ITenantDbContext
 
     public DbSet<DocumentNumberCounter> DocumentNumberCounters => Set<DocumentNumberCounter>();
 
+    public DbSet<UserPermissionGrant> UserPermissionGrants => Set<UserPermissionGrant>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // Only the operational configurations (not the platform ones, which share this assembly).
