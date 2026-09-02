@@ -58,34 +58,6 @@ export default function SaleDetailPage() {
               hasReturnableQty(d.items)
             return (
               <>
-                {d.sale.status === 'Voided' && (
-                  <div className="rounded-xl border border-danger/20 bg-danger-light p-4 text-sm">
-                    <p className="font-semibold text-danger-strong">Voided</p>
-                    <dl className="mt-2 space-y-1 text-text-secondary">
-                      <div>
-                        <dt className="inline font-medium text-text-primary">Voided by: </dt>
-                        <dd className="inline">{d.voidedByName}</dd>
-                      </div>
-                      {d.approvedByName && (
-                        <div>
-                          <dt className="inline font-medium text-text-primary">Approved by: </dt>
-                          <dd className="inline">{d.approvedByName}</dd>
-                        </div>
-                      )}
-                      <div>
-                        <dt className="inline font-medium text-text-primary">Reason: </dt>
-                        <dd className="inline">{d.voidReason}</dd>
-                      </div>
-                      <div>
-                        <dt className="inline font-medium text-text-primary">Voided at: </dt>
-                        <dd className="inline">
-                          {d.voidedAtUtc ? new Date(d.voidedAtUtc).toLocaleString() : ''}
-                        </dd>
-                      </div>
-                    </dl>
-                  </div>
-                )}
-
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <div className="flex items-center gap-2">
@@ -115,6 +87,34 @@ export default function SaleDetailPage() {
                     </Link>
                   </div>
                 </div>
+
+                {d.sale.status === 'Voided' && (
+                  <div className="rounded-xl border border-danger/20 bg-danger-light p-4 text-sm">
+                    <p className="font-semibold text-danger-strong">Voided</p>
+                    <dl className="mt-2 space-y-1 text-text-secondary">
+                      <div>
+                        <dt className="inline font-medium text-text-primary">Voided by: </dt>
+                        <dd className="inline">{d.voidedByName}</dd>
+                      </div>
+                      {d.approvedByName && (
+                        <div>
+                          <dt className="inline font-medium text-text-primary">Approved by: </dt>
+                          <dd className="inline">{d.approvedByName}</dd>
+                        </div>
+                      )}
+                      <div>
+                        <dt className="inline font-medium text-text-primary">Reason: </dt>
+                        <dd className="inline">{d.voidReason}</dd>
+                      </div>
+                      <div>
+                        <dt className="inline font-medium text-text-primary">Voided at: </dt>
+                        <dd className="inline">
+                          {d.voidedAtUtc ? new Date(d.voidedAtUtc).toLocaleString() : ''}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                )}
 
                 <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
                   <div className="space-y-4">
