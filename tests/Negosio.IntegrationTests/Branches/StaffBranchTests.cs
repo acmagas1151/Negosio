@@ -154,6 +154,28 @@ public class StaffBranchTests : IntegrationTest
         (await response.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be("STAFF_HAS_OPEN_REGISTER_SESSION");
     }
 
+    [Fact]
+    public async Task Manager_can_get_own_branch_staff_but_not_another_branch_or_an_owner_admin_row()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var bgc = await CreateBranchAsync("BGC", "BGC");
+        var main = await GetMainBranchIdAsync(owner);
+        var managerToken = await AddTenantUserTokenAsync("mgr@example.com", UserRole.Manager, bgc.Id);
+        var bgcCashierToken = await AddTenantUserTokenAsync("bgc.cara@example.com", UserRole.Cashier, bgc.Id);
+        var bgcCashierId = await GetUserIdFromTokenAsync(bgcCashierToken);
+        var mainCashierToken = await AddTenantUserTokenAsync("main.cara@example.com", UserRole.Cashier, main);
+        var mainCashierId = await GetUserIdFromTokenAsync(mainCashierToken);
+
+        Authorize(managerToken);
+
+        (await Client.GetAsync($"/api/staff/{bgcCashierId}")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // A different branch's Cashier, and an Owner/Admin row (BranchId == null), are both reported
+        // as not found rather than forbidden — the Manager should never be able to confirm they exist.
+        (await Client.GetAsync($"/api/staff/{mainCashierId}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await Client.GetAsync($"/api/staff/{owner.User.Id}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
     private async Task<Guid> MakeAdminAsync(string email)
     {
         var token = await AddTenantUserTokenAsync(email, UserRole.Admin);

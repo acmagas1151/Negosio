@@ -375,6 +375,20 @@ public sealed class StaffService : IStaffService
             .SingleOrDefaultAsync(l => l.Id == userId && l.TenantId == tenantId, cancellationToken)
             ?? throw new NotFoundException(ErrorCodes.StaffNotFound, "Staff member not found.");
 
+        // Same strict scoping as ListAsync's branch filter: a non-all-branch caller (Manager) only
+        // ever sees BranchId == their own assigned branch — never a different branch, and never a null
+        // BranchId (which always means Owner/Admin, Phase 5 invariant). Reported as "not found" rather
+        // than "forbidden", matching this method's own not-found idiom above and ReturnService's
+        // GuardSaleBranchAsync pattern elsewhere in the codebase — it doesn't confirm to an
+        // unauthorized caller that a given id exists in some other branch. Every write path that
+        // reaches here is Owner/Admin-only at the controller (StaffManage), so this is a no-op for
+        // them; only the read path (StaffView, which also admits Manager) is actually constrained.
+        var assigned = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
+        if (assigned is { } branchId && user.BranchId != branchId)
+        {
+            throw new NotFoundException(ErrorCodes.StaffNotFound, "Staff member not found.");
+        }
+
         return (user, login);
     }
 
