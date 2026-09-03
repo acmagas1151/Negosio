@@ -1,3 +1,4 @@
+import { forwardRef } from 'react'
 import { Search } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { inputClass } from '../ui/TextField'
@@ -9,7 +10,10 @@ interface Props {
 }
 
 /** POS product search. Enter triggers a barcode-first lookup (see PosTerminal). */
-export function PosSearchBar({ value, onChange, onEnter }: Props) {
+export const PosSearchBar = forwardRef<HTMLInputElement, Props>(function PosSearchBar(
+  { value, onChange, onEnter },
+  ref,
+) {
   return (
     <div className="relative">
       <Search
@@ -17,6 +21,7 @@ export function PosSearchBar({ value, onChange, onEnter }: Props) {
         aria-hidden="true"
       />
       <input
+        ref={ref}
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -33,4 +38,4 @@ export function PosSearchBar({ value, onChange, onEnter }: Props) {
       />
     </div>
   )
-}
+})

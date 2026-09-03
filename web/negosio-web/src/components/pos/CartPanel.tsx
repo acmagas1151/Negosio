@@ -179,6 +179,9 @@ export function CartPanel({
     <div className="flex h-full min-h-0 flex-col border-l border-border bg-surface">
       <div className="shrink-0 border-b border-border px-4 py-3">
         <h2 className="text-sm font-bold uppercase tracking-wide text-text-muted">Cart</h2>
+        <p className="text-[12px] text-text-muted">
+          {lines.length} item{lines.length === 1 ? '' : 's'}
+        </p>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -188,9 +191,12 @@ export function CartPanel({
           </div>
         )}
         {lines.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-text-muted">
-            Scan or tap a product to start a sale.
-          </p>
+          <div className="px-4 py-10 text-center">
+            <p className="text-sm font-semibold text-text-primary">Your cart is empty</p>
+            <p className="mt-1 text-[13px] text-text-muted">
+              Scan or select a product to start a transaction.
+            </p>
+          </div>
         ) : (
           lines.map((line) => (
             <CartLineRow

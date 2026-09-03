@@ -63,6 +63,7 @@ export default function PosPage() {
       : ctx.branchId
     : null
   const branchName = ctx?.branches.find((b) => b.id === branchId)?.name ?? ctx?.branchName ?? null
+  const branchCode = ctx?.branches.find((b) => b.id === branchId)?.code ?? null
 
   const pickBranch = (id: string) => {
     if (user) posStorage.writeBranch({ tenantId: user.tenantId }, id)
@@ -197,6 +198,8 @@ export default function PosPage() {
       <PosShell
         session={session}
         register={chosen}
+        branchName={branchName}
+        branchCode={branchCode}
         onCloseSession={() => setCloseOpen(true)}
         onCashIn={() => setCashMovementType('CashIn')}
         onCashOut={() => setCashMovementType('CashOut')}
