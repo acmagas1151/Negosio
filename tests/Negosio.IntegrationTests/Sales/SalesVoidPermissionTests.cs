@@ -101,4 +101,60 @@ public class SalesVoidPermissionTests : IntegrationTest
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
+
+    /// <summary>
+    /// Regression for the gap where ChangeRoleAsync/ChangeBranchAsync left a granted SalesVoid row
+    /// untouched — a Cashier moved away from Cashier and later moved back would silently regain
+    /// direct void authority with no one having re-granted it.
+    /// </summary>
+    [Fact]
+    public async Task Grant_does_not_silently_survive_a_role_change_away_from_and_back_to_cashier()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+
+        (await Client.SendAsync(PermissionsRequest(cashierId, true))).StatusCode.Should().Be(HttpStatusCode.OK);
+        var granted = await Client.GetFromJsonAsync<List<StaffMemberDto>>("/api/staff", TestJson.Options);
+        granted!.Single(m => m.Id == cashierId).SalesVoid.Should().BeTrue();
+
+        // Away from Cashier ...
+        (await Client.PutAsJsonAsync($"/api/staff/{cashierId}/role", new ChangeStaffRoleRequest("Manager", branchId.ToString())))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // ... and back to Cashier. The grant row must NOT have survived the round trip — the next
+        // Manager to see them as a Cashier again must have to re-grant it explicitly.
+        var backToCashier = await Client.PutAsJsonAsync($"/api/staff/{cashierId}/role", new ChangeStaffRoleRequest("Cashier", branchId.ToString()));
+        backToCashier.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var list = await Client.GetFromJsonAsync<List<StaffMemberDto>>("/api/staff", TestJson.Options);
+        list!.Single(m => m.Id == cashierId).SalesVoid.Should().BeFalse("the old grant must not silently reinstate itself");
+    }
+
+    /// <summary>
+    /// Regression for the gap where a SalesVoid grant (keyed only on UserId — the model has no branch
+    /// dimension of its own) silently followed a Cashier across a branch reassignment, even though the
+    /// destination branch's Manager never approved it.
+    /// </summary>
+    [Fact]
+    public async Task Grant_does_not_silently_follow_a_cashier_across_a_branch_change()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
+        var bgc = await CreateBranchAsync("BGC", "BGC");
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, bgc.Id);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+
+        (await Client.SendAsync(PermissionsRequest(cashierId, true))).StatusCode.Should().Be(HttpStatusCode.OK);
+        var granted = await Client.GetFromJsonAsync<List<StaffMemberDto>>("/api/staff", TestJson.Options);
+        granted!.Single(m => m.Id == cashierId).SalesVoid.Should().BeTrue();
+
+        (await Client.PostAsJsonAsync($"/api/staff/{cashierId}/branch", new ChangeStaffBranchRequest(mainId.ToString())))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var list = await Client.GetFromJsonAsync<List<StaffMemberDto>>("/api/staff", TestJson.Options);
+        list!.Single(m => m.Id == cashierId).SalesVoid.Should()
+            .BeFalse("the destination branch's Manager never approved this grant and must decide fresh");
+    }
 }

@@ -229,6 +229,7 @@ public sealed class StaffService : IStaffService
 
         var wasScoped = !BranchRoles.IsAllBranch(login.Role);
         var nowScoped = !BranchRoles.IsAllBranch(newRole);
+        var originalBranchId = user.BranchId;
 
         // Reconcile the branch assignment with the new role (backend invariant).
         Guid? newBranchId = user.BranchId;
@@ -251,7 +252,8 @@ public sealed class StaffService : IStaffService
         }
 
         // Platform first — it is the authority the JWT / OnTokenValidated check reads from.
-        if (login.Role != newRole)
+        var roleChanged = login.Role != newRole;
+        if (roleChanged)
         {
             login.ChangeRole(newRole);
             await _platform.SaveChangesAsync(cancellationToken);
@@ -266,6 +268,20 @@ public sealed class StaffService : IStaffService
         {
             user.ClearBranch();
         }
+
+        // A SalesVoid grant is a direct authority the user's PREVIOUS role/branch holder earned:
+        // - moving away from Cashier must not leave it dormant to silently reinstate itself if the
+        //   role is later changed back — the next Manager to see them as a Cashier again should have
+        //   to re-grant it.
+        // - and since the grant has no branch dimension of its own (keyed on UserId, not a
+        //   user-in-a-branch), a branch reassignment made through this same endpoint (role staying
+        //   Cashier, only request.BranchId changing) must not silently carry the grant to a
+        //   destination branch whose Manager never approved it — same rule ChangeBranchAsync applies.
+        if ((roleChanged && newRole != UserRole.Cashier) || newBranchId != originalBranchId)
+        {
+            await RemoveSalesVoidGrantIfAnyAsync(userId, cancellationToken);
+        }
+
         await _tenant.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Staff {UserId} role changed to {Role} (branch {BranchId}) in tenant {TenantId} by {ActorId}",
@@ -297,7 +313,18 @@ public sealed class StaffService : IStaffService
         }
 
         var branchId = await RequireActiveBranchAsync(request.BranchId, cancellationToken);
+        var branchChanged = user.BranchId != branchId;
         user.AssignBranch(branchId);
+
+        // The grant model has no branch dimension of its own (it's keyed on UserId, not a
+        // user-in-a-branch) — a SalesVoid grant made by the origin branch's Manager must not silently
+        // follow the user to a destination branch whose Manager never approved it. That Manager
+        // should decide fresh whether to grant it.
+        if (branchChanged)
+        {
+            await RemoveSalesVoidGrantIfAnyAsync(userId, cancellationToken);
+        }
+
         await _tenant.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Staff {UserId} moved to branch {BranchId} in tenant {TenantId} by {ActorId}",
@@ -362,6 +389,27 @@ public sealed class StaffService : IStaffService
     }
 
     // ---- helpers ----
+
+    /// <summary>
+    /// System-driven cleanup for a role/branch change already authorized by the caller reaching this
+    /// point — this deliberately bypasses <see cref="ISalesVoidPermissionService.SetAsync"/>, which
+    /// checks the ACTING user's authority to grant/revoke, since that check doesn't apply here (no
+    /// new grant/revoke is being requested; an existing one is just being invalidated by the change
+    /// that already happened). Queued on the same tracked <see cref="ITenantDbContext"/> the caller
+    /// saves right after, so it commits atomically with the role/branch change itself.
+    /// </summary>
+    private async Task RemoveSalesVoidGrantIfAnyAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var tenantId = TenantId;
+        var grants = await _tenant.UserPermissionGrants
+            .Where(g => g.TenantId == tenantId && g.UserId == userId && g.Permission == UserPermission.SalesVoid)
+            .ToListAsync(cancellationToken);
+
+        if (grants.Count > 0)
+        {
+            _tenant.UserPermissionGrants.RemoveRange(grants);
+        }
+    }
 
     private async Task<(User User, PlatformUserLogin Login)> LoadMemberAsync(Guid userId, CancellationToken cancellationToken)
     {
