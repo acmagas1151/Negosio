@@ -157,4 +157,34 @@ public class SalesVoidPermissionTests : IntegrationTest
         list!.Single(m => m.Id == cashierId).SalesVoid.Should()
             .BeFalse("the destination branch's Manager never approved this grant and must decide fresh");
     }
+
+    /// <summary>
+    /// Same branch-follows-the-user gap as
+    /// <see cref="Grant_does_not_silently_follow_a_cashier_across_a_branch_change"/>, but reached
+    /// through the role-change endpoint instead: ChangeRoleAsync can itself move a scoped user's
+    /// branch while their role stays Cashier (when request.BranchId names a different active branch),
+    /// so that path needs the exact same cleanup as the dedicated branch-change endpoint.
+    /// </summary>
+    [Fact]
+    public async Task Grant_does_not_silently_follow_a_branch_change_made_through_the_role_endpoint()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
+        var bgc = await CreateBranchAsync("BGC", "BGC");
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, bgc.Id);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+
+        (await Client.SendAsync(PermissionsRequest(cashierId, true))).StatusCode.Should().Be(HttpStatusCode.OK);
+        var granted = await Client.GetFromJsonAsync<List<StaffMemberDto>>("/api/staff", TestJson.Options);
+        granted!.Single(m => m.Id == cashierId).SalesVoid.Should().BeTrue();
+
+        // Role stays "Cashier" — only the branch changes, via PUT .../role rather than POST .../branch.
+        var res = await Client.PutAsJsonAsync($"/api/staff/{cashierId}/role", new ChangeStaffRoleRequest("Cashier", mainId.ToString()));
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await res.Content.ReadFromJsonAsync<StaffMemberDto>(TestJson.Options))!.BranchId.Should().Be(mainId);
+
+        var list = await Client.GetFromJsonAsync<List<StaffMemberDto>>("/api/staff", TestJson.Options);
+        list!.Single(m => m.Id == cashierId).SalesVoid.Should()
+            .BeFalse("a branch move made through the role endpoint must be cleaned up exactly like the dedicated branch endpoint");
+    }
 }
