@@ -12,6 +12,9 @@ interface Props {
   register: { id: string; name: string; code?: string }
   branchName?: string | null
   branchCode?: string | null
+  /** The last sale completed in this terminal — a real, backend-assigned 7-digit SaleNumber, only
+   * ever set after checkout succeeds. Never a placeholder for the in-progress cart. */
+  currentSaleNumber?: string | null
   onCloseSession: () => void
   onCashIn: () => void
   onCashOut: () => void
@@ -24,6 +27,7 @@ export function PosShell({
   register,
   branchName,
   branchCode,
+  currentSaleNumber,
   onCloseSession,
   onCashIn,
   onCashOut,
@@ -41,28 +45,40 @@ export function PosShell({
             <span className="text-text-muted">·</span>
             <span className="font-semibold text-text-secondary">POS</span>
           </div>
-          {/* Session-operation actions — kept visually separate from the transaction toolbar below. */}
-          <div className="flex items-center gap-2">
-            {canRecordCashMovement && (
-              <>
-                <Button variant="secondary" size="sm" onClick={onCashIn}>
-                  Cash in
-                </Button>
-                <Button variant="secondary" size="sm" onClick={onCashOut}>
-                  Cash out
-                </Button>
-              </>
+          <div className="flex items-center gap-4">
+            {currentSaleNumber && (
+              <div className="text-right leading-tight">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                  Current sale
+                </p>
+                <p className="font-mono text-sm font-bold tabular-nums text-text-primary">
+                  #{currentSaleNumber}
+                </p>
+              </div>
             )}
-            <Button variant="secondary" size="sm" onClick={onCloseSession}>
-              Close session
-            </Button>
-            <Link
-              to="/dashboard"
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border-strong bg-white px-3 text-sm font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
-            >
-              <LogOut className="size-4" aria-hidden="true" />
-              Exit
-            </Link>
+            {/* Session-operation actions — kept visually separate from the transaction toolbar below. */}
+            <div className="flex items-center gap-2">
+              {canRecordCashMovement && (
+                <>
+                  <Button variant="secondary" size="sm" onClick={onCashIn}>
+                    Cash in
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={onCashOut}>
+                    Cash out
+                  </Button>
+                </>
+              )}
+              <Button variant="secondary" size="sm" onClick={onCloseSession}>
+                Close session
+              </Button>
+              <Link
+                to="/dashboard"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border-strong bg-white px-3 text-sm font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
+              >
+                <LogOut className="size-4" aria-hidden="true" />
+                Exit
+              </Link>
+            </div>
           </div>
         </div>
 

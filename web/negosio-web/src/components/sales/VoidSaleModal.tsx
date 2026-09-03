@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '../../api/client'
 import { salesApi } from '../../api/pos'
 import type { SaleDetailDto } from '../../api/types'
+import { formatMoney } from '../../lib/format'
 import { VOID_INELIGIBLE_MESSAGES } from '../../lib/pos'
 import { Button, Callout, Modal, TextField, useToast } from '../ui'
 
@@ -96,9 +97,19 @@ export function VoidSaleModal({ open, onClose, sale, onVoided }: Props) {
     >
       {error && <Callout tone="error">{error}</Callout>}
 
-      <p className="mb-4 text-[13px] text-text-muted">
-        This will reverse the full sale and restore inventory.
-      </p>
+      <div className="mb-4 rounded-xl border border-border bg-surface-subtle p-3 text-[13px]">
+        <p className="font-semibold text-text-primary">You are about to void:</p>
+        <p className="mt-1">
+          Sale #{sale.sale.saleNumber} · {sale.items.length} item{sale.items.length === 1 ? '' : 's'}{' '}
+          · <span className="font-semibold text-text-primary">{formatMoney(sale.sale.grandTotal)}</span>
+        </p>
+        <p className="mt-2 text-text-muted">This will:</p>
+        <ul className="ml-4 list-disc text-text-muted">
+          <li>mark the completed sale as Voided</li>
+          <li>reverse its inventory movement</li>
+          <li>reverse the financial effect</li>
+        </ul>
+      </div>
 
       {needsApproval && (
         <Callout tone="info">

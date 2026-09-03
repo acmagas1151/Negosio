@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { posApi, sessionsApi } from '../api/pos'
-import type { CashMovementType } from '../api/types'
+import type { CashMovementType, SaleResultDto } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useCan } from '../lib/useCan'
 import { posStorage } from '../lib/posStorage'
@@ -40,7 +40,6 @@ function PosDenied() {
 
 export default function PosPage() {
   const { user } = useAuth()
-  const navigate = useNavigate()
   const canOperate = useCan('pos:operate')
 
   const contextQuery = useQuery({ queryKey: ['pos', 'context'], queryFn: posApi.context })
@@ -51,6 +50,9 @@ export default function PosPage() {
   const [closeOpen, setCloseOpen] = useState(false)
   const [cashMovementType, setCashMovementType] = useState<CashMovementType | null>(null)
   const [pickerNotice, setPickerNotice] = useState<string | null>(null)
+  // The terminal's "current sale" — real only, set by a successful checkout. Cleared below
+  // whenever branch/register/session changes so it never leaks across a different session.
+  const [lastCompletedSale, setLastCompletedSale] = useState<SaleResultDto | null>(null)
 
   const ctx = contextQuery.data
   const persistedBranch =
@@ -69,11 +71,13 @@ export default function PosPage() {
     if (user) posStorage.writeBranch({ tenantId: user.tenantId }, id)
     setBranchOverride(id)
     setRegisterId(null)
+    setLastCompletedSale(null)
   }
   const switchBranch = () => {
     if (user) posStorage.clearBranch({ tenantId: user.tenantId })
     setBranchOverride(null)
     setRegisterId(null)
+    setLastCompletedSale(null)
   }
 
   const registersQuery = useQuery({
@@ -126,6 +130,7 @@ export default function PosPage() {
   const backToRegisters = () => {
     setRegisterId(null)
     setSkipGate(false)
+    setLastCompletedSale(null)
     registersQuery.refetch()
   }
 
@@ -200,6 +205,7 @@ export default function PosPage() {
         register={chosen}
         branchName={branchName}
         branchCode={branchCode}
+        currentSaleNumber={lastCompletedSale?.saleNumber ?? null}
         onCloseSession={() => setCloseOpen(true)}
         onCashIn={() => setCashMovementType('CashIn')}
         onCashOut={() => setCashMovementType('CashOut')}
@@ -209,9 +215,8 @@ export default function PosPage() {
           branchId={branchId}
           registerId={chosen.id}
           registerSessionId={session.id}
-          onCheckoutSuccess={(result) =>
-            navigate(`/pos/complete/${result.saleId}`, { state: { result } })
-          }
+          lastCompletedSale={lastCompletedSale}
+          onSaleCompleted={setLastCompletedSale}
           onSessionLost={() => sessionQuery.refetch()}
         />
       </PosShell>

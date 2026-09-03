@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { PackageSearch } from 'lucide-react'
 import { ApiError } from '../../api/client'
-import { checkoutApi, posCatalogApi } from '../../api/pos'
+import { checkoutApi, posCatalogApi, salesApi } from '../../api/pos'
 import type {
   CheckoutPaymentInput,
   CheckoutRequest,
@@ -18,6 +18,7 @@ import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { usePosShortcuts } from '../../hooks/usePosShortcuts'
 import { useTaxSettings } from '../../hooks/useTaxSettings'
 import { calcTotals } from '../../lib/saleMath'
+import { formatMoney } from '../../lib/format'
 import { VOID_INELIGIBLE_MESSAGES } from '../../lib/pos'
 import { hasReturnableQty } from '../../lib/returns'
 import { useCan } from '../../lib/useCan'
@@ -49,7 +50,11 @@ interface Props {
   branchId: string
   registerId: string
   registerSessionId: string
-  onCheckoutSuccess: (result: SaleResultDto) => void
+  /** The last sale completed in this terminal — set only by a successful checkout, cleared by the
+   * parent whenever branch/register/session changes. Independent of the active cart: Void and
+   * Reprint act on this, never on activeCart. */
+  lastCompletedSale: SaleResultDto | null
+  onSaleCompleted: (result: SaleResultDto) => void
   onSessionLost: () => void
 }
 
@@ -58,7 +63,8 @@ export function PosTerminal({
   branchId,
   registerId,
   registerSessionId,
-  onCheckoutSuccess,
+  lastCompletedSale,
+  onSaleCompleted,
   onSessionLost,
 }: Props) {
   const ctx: TerminalCtx = useMemo(
@@ -88,7 +94,7 @@ export function PosTerminal({
   const canReturn = useCan('refund:manage')
 
   const [newTxnConfirmOpen, setNewTxnConfirmOpen] = useState(false)
-  const [voidLookupOpen, setVoidLookupOpen] = useState(false)
+  const [voidChecking, setVoidChecking] = useState(false)
   const [voidTarget, setVoidTarget] = useState<SaleDetailDto | null>(null)
   const [returnLookupOpen, setReturnLookupOpen] = useState(false)
   const [returnTarget, setReturnTarget] = useState<SaleDetailDto | null>(null)
@@ -233,9 +239,41 @@ export function PosTerminal({
     return { ok: true }
   }, [])
 
+  // Void acts strictly on the last COMPLETED sale, never on the active cart — clicking Void never
+  // creates a Sale. A fresh fetch re-validates eligibility server-side (status/returns/session-open
+  // /cutoff) every time; the button is only proactively disabled when there's no completed sale at
+  // all yet, not for every possible ineligibility reason (that would need a fetch just to render).
+  const startVoid = useCallback(async () => {
+    if (!lastCompletedSale) return
+    setVoidChecking(true)
+    try {
+      const detail = await salesApi.get(lastCompletedSale.saleId)
+      const eligibility = voidEligibility(detail)
+      if (!eligibility.ok) {
+        toast('info', eligibility.message ?? 'This sale cannot be voided.')
+        return
+      }
+      setVoidTarget(detail)
+    } catch (e) {
+      toast('error', e instanceof ApiError ? e.message : 'Could not load this sale.')
+    } finally {
+      setVoidChecking(false)
+    }
+  }, [lastCompletedSale, voidEligibility, toast])
+
+  // Reprint skips the manual sale-number lookup when the terminal already knows the current sale;
+  // it falls back to the existing lookup flow only when there isn't one (e.g. right after Exit ->
+  // Continue, before any sale has completed in this terminal instance).
+  const startReprint = useCallback(() => {
+    if (lastCompletedSale) {
+      window.open(`/sales/${lastCompletedSale.saleId}/receipt?print=1`, '_blank', 'noopener')
+      return
+    }
+    setReprintOpen(true)
+  }, [lastCompletedSale])
+
   const anyPosModalOpen =
     newTxnConfirmOpen ||
-    voidLookupOpen ||
     voidTarget != null ||
     returnLookupOpen ||
     returnTarget != null ||
@@ -250,7 +288,7 @@ export function PosTerminal({
       onCheckPrice: () => setCheckPriceOpen(true),
       onDiscounts: () => !cart.isEmpty && setDiscountOpen(true),
       onReturns: () => canReturn && setReturnLookupOpen(true),
-      onReprint: () => setReprintOpen(true),
+      onReprint: startReprint,
     },
     !anyPosModalOpen,
   )
@@ -311,7 +349,8 @@ export function PosTerminal({
       qc.invalidateQueries({ queryKey: ['inventory'] })
       qc.invalidateQueries({ queryKey: ['sales'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
-      onCheckoutSuccess(result)
+      onSaleCompleted(result)
+      toast('success', `Sale #${result.saleNumber} completed — ${formatMoney(result.grandTotal)}`)
     },
     onError: (err) => {
       setStatus('failed')
@@ -363,14 +402,16 @@ export function PosTerminal({
     <div className="flex h-full min-h-0 flex-col">
       <PosActionBar
         onNewTransaction={onNewTransaction}
-        onVoid={() => setVoidLookupOpen(true)}
+        onVoid={startVoid}
         onDiscounts={() => setDiscountOpen(true)}
         onReturns={() => setReturnLookupOpen(true)}
-        onReprint={() => setReprintOpen(true)}
+        onReprint={startReprint}
         onCheckPrice={() => setCheckPriceOpen(true)}
         canVoid={canVoid}
         canReturn={canReturn}
         discountsDisabled={cart.isEmpty}
+        voidDisabled={!lastCompletedSale}
+        voidBusy={voidChecking}
       />
 
       <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[62%_38%] lg:grid-rows-1">
@@ -456,17 +497,6 @@ export function PosTerminal({
         confirmLabel="Start new transaction"
       />
 
-      <TransactionLookupModal
-        open={voidLookupOpen}
-        onClose={() => setVoidLookupOpen(false)}
-        title="Void sale"
-        actionLabel="Continue to void"
-        isEligible={voidEligibility}
-        onContinue={(sale) => {
-          setVoidLookupOpen(false)
-          setVoidTarget(sale)
-        }}
-      />
       {voidTarget && (
         <VoidSaleModal
           open

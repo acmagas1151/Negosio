@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { salesApi } from '../../api/pos'
 import type { SaleDetailDto, SaleSummaryDto } from '../../api/types'
+import { cn } from '../../lib/cn'
 import { formatMoney } from '../../lib/format'
 import { StatusBadge } from '../sales/StatusBadge'
-import { Button, Callout, Modal, TextField } from '../ui'
+import { Button, Callout, Modal } from '../ui'
 import { inputClass } from '../ui/TextField'
 
 interface Eligibility {
@@ -87,102 +88,115 @@ export function TransactionLookupModal({
 
   return (
     <Modal open={open} onClose={onClose} title={title}>
-      {helperText && <p className="mb-3 text-[13px] text-text-muted">{helperText}</p>}
+      <div className="space-y-4">
+        {helperText && <p className="text-[13px] text-text-muted">{helperText}</p>}
 
-      {!selected && (
-        <>
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
-              <TextField
-                label="Sale number"
-                name="saleNumber"
-                value={term}
-                onChange={(e) => setTerm(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    find()
-                  }
-                }}
-                autoFocus
-                placeholder="0000042"
-              />
-            </div>
-            <Button size="md" onClick={find} loading={searching} disabled={!term.trim()}>
-              Find sale
-            </Button>
-          </div>
-
-          {error && (
-            <div className="mt-3">
-              <Callout tone="error">{error}</Callout>
-            </div>
-          )}
-
-          {candidates && candidates.length > 1 && (
-            <ul className="mt-3 divide-y divide-border rounded-lg border border-border">
-              {candidates.map((s) => (
-                <li key={s.id}>
-                  <button
-                    type="button"
-                    onClick={() => loadDetail(s.id)}
-                    className={`${inputClass} flex h-auto w-full items-center justify-between gap-2 rounded-none border-none px-3 py-2 text-left hover:bg-surface-subtle`}
-                  >
-                    <span className="font-semibold text-text-primary">#{s.saleNumber}</span>
-                    <span className="text-text-muted">{new Date(s.createdAtUtc).toLocaleString()}</span>
-                    <span className="font-semibold">{formatMoney(s.grandTotal)}</span>
-                    <StatusBadge status={s.status} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
-
-      {selected && (
-        <div className="space-y-4">
-          <div className="rounded-xl border border-border bg-surface-subtle p-4">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-base font-bold text-text-primary">
-                Sale #{selected.sale.saleNumber}
-              </p>
-              <StatusBadge status={selected.sale.status} />
-            </div>
-            <dl className="mt-2 space-y-1 text-[13px] text-text-secondary">
-              <div className="flex justify-between">
-                <dt>Date/time</dt>
-                <dd>{new Date(selected.sale.createdAtUtc).toLocaleString()}</dd>
+        {!selected && (
+          <>
+            <div>
+              <label
+                htmlFor="lookup-sale-number"
+                className="mb-1.5 block text-sm font-semibold text-text-secondary"
+              >
+                Sale number
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="lookup-sale-number"
+                  name="saleNumber"
+                  value={term}
+                  onChange={(e) => setTerm(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      find()
+                    }
+                  }}
+                  autoFocus
+                  placeholder="0000042"
+                  className={cn(inputClass, 'flex-1')}
+                />
+                <Button
+                  size="md"
+                  className="shrink-0"
+                  onClick={find}
+                  loading={searching}
+                  disabled={!term.trim()}
+                >
+                  Find sale
+                </Button>
               </div>
-              <div className="flex justify-between">
-                <dt>Cashier</dt>
-                <dd>{selected.sale.cashierName}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt>Total</dt>
-                <dd className="font-semibold text-text-primary">
-                  {formatMoney(selected.sale.grandTotal)}
-                </dd>
-              </div>
-            </dl>
-          </div>
+            </div>
 
-          {eligibility && !eligibility.ok && (
-            <Callout tone="warning">{eligibility.message}</Callout>
-          )}
+            {error && <Callout tone="error">{error}</Callout>}
 
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setSelected(null)}>
-              Look up another sale
-            </Button>
-            {eligibility?.ok && (
-              <Button size="sm" onClick={() => onContinue(selected)}>
-                {actionLabel}
-              </Button>
+            {candidates && candidates.length > 1 && (
+              <ul className="divide-y divide-border rounded-lg border border-border">
+                {candidates.map((s) => (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      onClick={() => loadDetail(s.id)}
+                      className="flex h-auto w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-surface-subtle"
+                    >
+                      <span className="font-semibold text-text-primary">#{s.saleNumber}</span>
+                      <span className="text-text-muted">
+                        {new Date(s.createdAtUtc).toLocaleString()}
+                      </span>
+                      <span className="font-semibold">{formatMoney(s.grandTotal)}</span>
+                      <StatusBadge status={s.status} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
             )}
-          </div>
-        </div>
-      )}
+          </>
+        )}
+
+        {selected && (
+          <>
+            <div className="rounded-xl border border-border bg-surface-subtle p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-base font-bold text-text-primary">
+                  Sale #{selected.sale.saleNumber}
+                </p>
+                <StatusBadge status={selected.sale.status} />
+              </div>
+              <dl className="mt-2 space-y-1 text-[13px] text-text-secondary">
+                <div className="flex justify-between">
+                  <dt>Date/time</dt>
+                  <dd>{new Date(selected.sale.createdAtUtc).toLocaleString()}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt>Cashier</dt>
+                  <dd>{selected.sale.cashierName}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt>Total</dt>
+                  <dd className="font-semibold text-text-primary">
+                    {formatMoney(selected.sale.grandTotal)}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            {eligibility && !eligibility.ok && (
+              <Callout tone="warning">{eligibility.message}</Callout>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setSelected(null)}>
+                Look up another sale
+              </Button>
+              {eligibility?.ok && (
+                <Button size="sm" onClick={() => onContinue(selected)}>
+                  {actionLabel}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </Modal>
   )
 }
