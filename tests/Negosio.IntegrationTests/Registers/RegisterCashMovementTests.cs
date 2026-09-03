@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using FluentAssertions;
 using Negosio.Application.Common;
 using Negosio.Application.Registers;
@@ -55,6 +56,32 @@ public class RegisterCashMovementTests : IntegrationTest
             new CreateCashMovementRequest(CashMovementType.CashIn, 0m, "Bad amount"));
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Out_of_range_type_is_rejected_not_silently_persisted()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
+
+        Authorize(cashierToken);
+        var session = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
+            new OpenRegisterSessionRequest(register.Id, 1000m))).Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+
+        // 99 is not a defined CashMovementType member — with allowIntegerValues defaulting to true on
+        // the JsonStringEnumConverter, this deserializes successfully instead of failing the request
+        // outright, so it's the validator (not JSON parsing) that must catch it.
+        var body = new StringContent("""{"type":99,"amount":100,"reason":"bogus type"}""", Encoding.UTF8, "application/json");
+        var res = await Client.PostAsync($"/api/register-sessions/{session.Id}/cash-movements", body);
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be(ErrorCodes.ValidationFailed);
+
+        var list = await Client.GetFromJsonAsync<List<RegisterCashMovementDto>>(
+            $"/api/register-sessions/{session.Id}/cash-movements", TestJson.Options);
+        list!.Should().BeEmpty("the out-of-range type must never reach the database as a real, unaccounted-for movement");
     }
 
     [Fact]

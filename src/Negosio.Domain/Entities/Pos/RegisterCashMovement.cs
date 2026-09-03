@@ -45,6 +45,11 @@ public class RegisterCashMovement : Entity
         Guid tenantId, Guid branchId, Guid registerSessionId, CashMovementType type,
         decimal amount, string reason, Guid createdByUserId)
     {
+        if (!Enum.IsDefined(type))
+        {
+            throw new ArgumentOutOfRangeException(nameof(type), "Type is not a valid cash movement type.");
+        }
+
         if (amount <= 0m)
         {
             throw new ArgumentOutOfRangeException(nameof(amount), "Amount must be greater than zero.");
