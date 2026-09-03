@@ -128,6 +128,23 @@ public sealed class RegisterSessionService : IRegisterSessionService
             $"SELECT 1 AS Value FROM RegisterSessions WITH (UPDLOCK, HOLDLOCK) WHERE Id = {session.Id}")
             .ToListAsync(cancellationToken);
 
+        // Authoritative re-check, now that the session row is locked for the rest of this transaction.
+        // Must be a fresh AsNoTracking read — the tracked `session` loaded above (outside the
+        // transaction) is already in the change tracker's identity map, so a tracked re-query would
+        // just hand back that same stale instance instead of the current database row. Without this,
+        // two concurrent closes (e.g. a manager force-close racing the cashier's own close) can both
+        // pass the pre-lock guard above, then run one after another under the lock — the second would
+        // silently overwrite the first's ClosedByUserId/ClosingCash/CashDifference with no error, since
+        // RegisterSession has no RowVersion to catch that the way Sale does.
+        var currentStatus = await _db.RegisterSessions.AsNoTracking()
+            .Where(s => s.TenantId == tenantId && s.Id == session.Id)
+            .Select(s => s.Status)
+            .SingleAsync(cancellationToken);
+        if (currentStatus != RegisterSessionStatus.Open)
+        {
+            throw new BusinessRuleException(ErrorCodes.RegisterSessionNotOpen, "This register session is not open.");
+        }
+
         var saleIds = _db.Sales.Where(s => s.TenantId == tenantId && s.RegisterSessionId == session.Id).Select(s => s.Id);
 
         // Gross: every cash payment on this session's sales, regardless of a later void — Payment rows
