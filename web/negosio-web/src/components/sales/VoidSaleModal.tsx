@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '../../api/client'
 import { salesApi } from '../../api/pos'
 import type { SaleDetailDto } from '../../api/types'
+import { VOID_INELIGIBLE_MESSAGES } from '../../lib/pos'
 import { Button, Callout, Modal, TextField, useToast } from '../ui'
 
 interface Props {
@@ -10,14 +11,6 @@ interface Props {
   onClose: () => void
   sale: SaleDetailDto
   onVoided: (updated: SaleDetailDto) => void
-}
-
-const INELIGIBLE_MESSAGES: Record<string, string> = {
-  SALE_NOT_VOIDABLE: 'This sale cannot be voided.',
-  SALE_HAS_RETURNS: 'This sale has returns against it and cannot be voided.',
-  VOID_SESSION_CLOSED:
-    'This sale can no longer be voided because its register session has already been closed. Use the return/refund process instead.',
-  VOID_CUTOFF_EXPIRED: 'This sale is past the void cutoff. Use the return/refund process instead.',
 }
 
 export function VoidSaleModal({ open, onClose, sale, onVoided }: Props) {
@@ -69,8 +62,8 @@ export function VoidSaleModal({ open, onClose, sale, onVoided }: Props) {
         setError('This manager cannot approve voids for this branch.')
         return
       }
-      if (err instanceof ApiError && err.code in INELIGIBLE_MESSAGES) {
-        setError(INELIGIBLE_MESSAGES[err.code])
+      if (err instanceof ApiError && err.code in VOID_INELIGIBLE_MESSAGES) {
+        setError(VOID_INELIGIBLE_MESSAGES[err.code])
         return
       }
       setError(err instanceof ApiError ? err.message : 'Could not void this sale.')

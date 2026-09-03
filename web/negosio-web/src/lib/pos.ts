@@ -33,6 +33,20 @@ export function saleStatusTone(s: SaleStatus): 'neutral' | 'success' | 'warning'
 }
 
 /**
+ * Friendly explanations for `voidIneligibilityCode` / a void attempt's rejection code. Shared by
+ * SaleDetailPage (a muted hint next to where the Void button would have been) and VoidSaleModal
+ * (the error shown when a void attempt is rejected mid-flow) so both read from one map instead of
+ * two copies that can drift.
+ */
+export const VOID_INELIGIBLE_MESSAGES: Record<string, string> = {
+  SALE_NOT_VOIDABLE: 'This sale cannot be voided.',
+  SALE_HAS_RETURNS: 'This sale has returns against it and cannot be voided.',
+  VOID_SESSION_CLOSED:
+    'This sale can no longer be voided because its register session has already been closed. Use the return/refund process instead.',
+  VOID_CUTOFF_EXPIRED: 'This sale is past the void cutoff. Use the return/refund process instead.',
+}
+
+/**
  * Quick-cash suggestions for a cash payment: the exact amount, then the next round PHP note
  * above it (50 / 100 / 500 / 1000 boundaries), deduped, ascending, max 4.
  */

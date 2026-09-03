@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { branchesApi } from '../api/branches'
 import { salesApi } from '../api/pos'
-import { PAYMENT_METHOD_LABELS } from '../lib/pos'
+import { PAYMENT_METHOD_LABELS, VOID_INELIGIBLE_MESSAGES } from '../lib/pos'
 import { formatMoney } from '../lib/format'
 import { hasReturnableQty } from '../lib/returns'
 import { useCan } from '../lib/useCan'
@@ -69,22 +69,29 @@ export default function SaleDetailPage() {
                       {multiBranch ? ` · ${d.sale.branchName}` : ''}
                     </p>
                   </div>
-                  <div className="flex gap-2">
-                    {canStartReturn && (
-                      <Button variant="secondary" size="sm" onClick={() => setReturnOpen(true)}>
-                        Start return
-                      </Button>
+                  <div className="flex flex-col items-end gap-1.5">
+                    <div className="flex gap-2">
+                      {canStartReturn && (
+                        <Button variant="secondary" size="sm" onClick={() => setReturnOpen(true)}>
+                          Start return
+                        </Button>
+                      )}
+                      {canVoidCapability && d.sale.status === 'Completed' && d.canVoid && (
+                        <Button variant="destructive" size="sm" onClick={() => setVoidOpen(true)}>
+                          Void sale
+                        </Button>
+                      )}
+                      <Link to={`/sales/${d.sale.id}/receipt`}>
+                        <Button variant="secondary" size="sm">
+                          Print receipt
+                        </Button>
+                      </Link>
+                    </div>
+                    {canVoidCapability && d.sale.status === 'Completed' && !d.canVoid && d.voidIneligibilityCode && (
+                      <p className="text-[13px] text-text-muted">
+                        {VOID_INELIGIBLE_MESSAGES[d.voidIneligibilityCode] ?? 'This sale cannot be voided.'}
+                      </p>
                     )}
-                    {canVoidCapability && d.sale.status === 'Completed' && d.canVoid && (
-                      <Button variant="destructive" size="sm" onClick={() => setVoidOpen(true)}>
-                        Void sale
-                      </Button>
-                    )}
-                    <Link to={`/sales/${d.sale.id}/receipt`}>
-                      <Button variant="secondary" size="sm">
-                        Print receipt
-                      </Button>
-                    </Link>
                   </div>
                 </div>
 
