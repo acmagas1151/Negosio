@@ -28,9 +28,17 @@ public class CashMovementCloseConcurrencyTests : IntegrationTest
     /// must fully determine the other's outcome: the movement is never left inserted-but-unaccounted-for
     /// in the closed session's breakdown (a "phantom" cash movement with no trace in the reconciliation),
     /// and it is never counted in the breakdown without actually existing.
+    /// <paramref name="movementHeadStart"/>, when given, delays starting the close request so the
+    /// cash-movement request reaches the lock first — used to reliably exercise the movement-wins
+    /// branch. Unlike the void-vs-close race (see <c>CloseVoidConcurrencyTests</c>), an unbiased race
+    /// between these two on this machine is close to a coin flip (a 20-run diagnostic — removed before
+    /// finalizing, per this codebase's established technique — measured roughly a 45/55 split), since
+    /// their pre-lock work is nearly symmetric (each does one tracked session load plus an
+    /// ownership/status check before opening its transaction and requesting the lock). Close is the
+    /// slightly more frequent winner, so this head start still earns its keep: without it, a run of
+    /// the unbiased test alone has no guarantee of ever exercising the movement-wins branch.
     /// </summary>
-    [Fact]
-    public async Task Concurrent_cash_movement_and_session_close_never_silently_drop_the_movement()
+    private async Task RaceCashMovementAgainstCloseAsync(TimeSpan? movementHeadStart)
     {
         var owner = await RegisterLoginAndAuthorizeAsync();
         var branchId = await GetMainBranchIdAsync(owner);
@@ -46,6 +54,11 @@ public class CashMovementCloseConcurrencyTests : IntegrationTest
         var movementTask = Client.SendAsync(AuthorizedRequest(
             HttpMethod.Post, $"/api/register-sessions/{session.Id}/cash-movements", cashierToken,
             new CreateCashMovementRequest(CashMovementType.CashIn, 300m, "Concurrent with close")));
+        if (movementHeadStart is { } delay)
+        {
+            await Task.Delay(delay);
+        }
+
         var closeTask = Client.SendAsync(AuthorizedRequest(HttpMethod.Post, $"/api/register-sessions/{session.Id}/close", cashierToken,
             new CloseRegisterSessionRequest(1000m)));
 
@@ -57,6 +70,15 @@ public class CashMovementCloseConcurrencyTests : IntegrationTest
         // or lost) makes a session unclosable.
         closeRes.StatusCode.Should().Be(HttpStatusCode.OK);
         var closedSession = (await closeRes.Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+
+        if (movementHeadStart is not null)
+        {
+            // The head start exists specifically to exercise the movement-wins branch below — if it
+            // ever stops winning, this test would silently degrade into a duplicate of the unbiased
+            // race instead of testing what its name promises, so fail loudly instead.
+            movementRes.StatusCode.Should().Be(HttpStatusCode.Created,
+                "the cash movement was given a head start and should have reached the lock first");
+        }
 
         if (movementRes.StatusCode == HttpStatusCode.Created)
         {
@@ -75,4 +97,18 @@ public class CashMovementCloseConcurrencyTests : IntegrationTest
             closedSession.ExpectedCash.Should().Be(1000m); // opening only — the movement never landed
         }
     }
+
+    [Fact]
+    public Task Concurrent_cash_movement_and_session_close_never_silently_drop_the_movement() =>
+        RaceCashMovementAgainstCloseAsync(movementHeadStart: null);
+
+    /// <summary>
+    /// Same race as above, but with the cash movement given a head start so it deterministically
+    /// reaches the lock first — guaranteeing coverage of the movement-wins branch on every run, rather
+    /// than leaving it to the roughly-even odds the unbiased race resolves it by (see
+    /// <see cref="RaceCashMovementAgainstCloseAsync"/>'s doc comment).
+    /// </summary>
+    [Fact]
+    public Task Cash_movement_given_a_head_start_over_close_still_never_drops_the_movement() =>
+        RaceCashMovementAgainstCloseAsync(movementHeadStart: TimeSpan.FromMilliseconds(75));
 }
