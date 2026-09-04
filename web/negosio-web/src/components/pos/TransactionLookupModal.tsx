@@ -21,6 +21,10 @@ interface Props {
   actionLabel: string
   isEligible: (sale: SaleDetailDto) => Eligibility
   onContinue: (sale: SaleDetailDto) => void
+  /** Optional one-click shortcut to the terminal's current sale, shown above the manual search —
+   * feeds into the exact same loadDetail -> summary -> continue flow a search result would. */
+  quickPick?: { saleId: string; saleNumber: string } | null
+  quickPickLabel?: string
 }
 
 /**
@@ -37,6 +41,8 @@ export function TransactionLookupModal({
   actionLabel,
   isEligible,
   onContinue,
+  quickPick,
+  quickPickLabel = 'Continue',
 }: Props) {
   const [term, setTerm] = useState('')
   const [searching, setSearching] = useState(false)
@@ -93,12 +99,28 @@ export function TransactionLookupModal({
 
         {!selected && (
           <>
+            {quickPick && (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-primary-200 bg-primary-50 p-3">
+                <div>
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-primary-700">
+                    Current transaction
+                  </p>
+                  <p className="font-mono text-sm font-bold text-text-primary">
+                    #{quickPick.saleNumber}
+                  </p>
+                </div>
+                <Button size="sm" onClick={() => loadDetail(quickPick.saleId)}>
+                  {quickPickLabel}
+                </Button>
+              </div>
+            )}
+
             <div>
               <label
                 htmlFor="lookup-sale-number"
                 className="mb-1.5 block text-sm font-semibold text-text-secondary"
               >
-                Sale number
+                {quickPick ? 'Or search another sale' : 'Sale number'}
               </label>
               <div className="flex gap-2">
                 <input

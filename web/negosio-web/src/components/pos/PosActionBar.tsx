@@ -11,8 +11,6 @@ interface Props {
   canVoid: boolean
   canReturn: boolean
   discountsDisabled: boolean
-  voidDisabled: boolean
-  voidBusy: boolean
 }
 
 const icon = (I: typeof Plus) => <I className="size-4" aria-hidden="true" />
@@ -28,8 +26,6 @@ export function PosActionBar({
   canVoid,
   canReturn,
   discountsDisabled,
-  voidDisabled,
-  voidBusy,
 }: Props) {
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2.5">
@@ -37,15 +33,7 @@ export function PosActionBar({
         New transaction
       </Button>
       {canVoid && (
-        <Button
-          variant="destructive"
-          size="sm"
-          leadingIcon={icon(Ban)}
-          onClick={onVoid}
-          disabled={voidDisabled}
-          loading={voidBusy}
-          title={voidDisabled ? 'Complete a sale before it can be voided.' : undefined}
-        >
+        <Button variant="destructive" size="sm" leadingIcon={icon(Ban)} onClick={onVoid}>
           Void
         </Button>
       )}

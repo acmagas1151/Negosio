@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { PackageSearch } from 'lucide-react'
 import { ApiError } from '../../api/client'
-import { checkoutApi, posCatalogApi, salesApi } from '../../api/pos'
+import { checkoutApi, posCatalogApi } from '../../api/pos'
 import type {
   CheckoutPaymentInput,
   CheckoutRequest,
@@ -94,7 +94,7 @@ export function PosTerminal({
   const canReturn = useCan('refund:manage')
 
   const [newTxnConfirmOpen, setNewTxnConfirmOpen] = useState(false)
-  const [voidChecking, setVoidChecking] = useState(false)
+  const [voidLookupOpen, setVoidLookupOpen] = useState(false)
   const [voidTarget, setVoidTarget] = useState<SaleDetailDto | null>(null)
   const [returnLookupOpen, setReturnLookupOpen] = useState(false)
   const [returnTarget, setReturnTarget] = useState<SaleDetailDto | null>(null)
@@ -239,28 +239,6 @@ export function PosTerminal({
     return { ok: true }
   }, [])
 
-  // Void acts strictly on the last COMPLETED sale, never on the active cart — clicking Void never
-  // creates a Sale. A fresh fetch re-validates eligibility server-side (status/returns/session-open
-  // /cutoff) every time; the button is only proactively disabled when there's no completed sale at
-  // all yet, not for every possible ineligibility reason (that would need a fetch just to render).
-  const startVoid = useCallback(async () => {
-    if (!lastCompletedSale) return
-    setVoidChecking(true)
-    try {
-      const detail = await salesApi.get(lastCompletedSale.saleId)
-      const eligibility = voidEligibility(detail)
-      if (!eligibility.ok) {
-        toast('info', eligibility.message ?? 'This sale cannot be voided.')
-        return
-      }
-      setVoidTarget(detail)
-    } catch (e) {
-      toast('error', e instanceof ApiError ? e.message : 'Could not load this sale.')
-    } finally {
-      setVoidChecking(false)
-    }
-  }, [lastCompletedSale, voidEligibility, toast])
-
   // Reprint skips the manual sale-number lookup when the terminal already knows the current sale;
   // it falls back to the existing lookup flow only when there isn't one (e.g. right after Exit ->
   // Continue, before any sale has completed in this terminal instance).
@@ -274,6 +252,7 @@ export function PosTerminal({
 
   const anyPosModalOpen =
     newTxnConfirmOpen ||
+    voidLookupOpen ||
     voidTarget != null ||
     returnLookupOpen ||
     returnTarget != null ||
@@ -402,7 +381,7 @@ export function PosTerminal({
     <div className="flex h-full min-h-0 flex-col">
       <PosActionBar
         onNewTransaction={onNewTransaction}
-        onVoid={startVoid}
+        onVoid={() => setVoidLookupOpen(true)}
         onDiscounts={() => setDiscountOpen(true)}
         onReturns={() => setReturnLookupOpen(true)}
         onReprint={startReprint}
@@ -410,8 +389,6 @@ export function PosTerminal({
         canVoid={canVoid}
         canReturn={canReturn}
         discountsDisabled={cart.isEmpty}
-        voidDisabled={!lastCompletedSale}
-        voidBusy={voidChecking}
       />
 
       <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[62%_38%] lg:grid-rows-1">
@@ -497,6 +474,23 @@ export function PosTerminal({
         confirmLabel="Start new transaction"
       />
 
+      <TransactionLookupModal
+        open={voidLookupOpen}
+        onClose={() => setVoidLookupOpen(false)}
+        title="Void sale"
+        actionLabel="Continue to void"
+        quickPickLabel="Void this sale"
+        quickPick={
+          lastCompletedSale
+            ? { saleId: lastCompletedSale.saleId, saleNumber: lastCompletedSale.saleNumber }
+            : null
+        }
+        isEligible={voidEligibility}
+        onContinue={(sale) => {
+          setVoidLookupOpen(false)
+          setVoidTarget(sale)
+        }}
+      />
       {voidTarget && (
         <VoidSaleModal
           open
