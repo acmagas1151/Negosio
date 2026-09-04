@@ -19,6 +19,7 @@ import { usePosShortcuts } from '../../hooks/usePosShortcuts'
 import { useTaxSettings } from '../../hooks/useTaxSettings'
 import { calcTotals } from '../../lib/saleMath'
 import { formatMoney } from '../../lib/format'
+import type { CurrentSaleRef } from '../../lib/pos'
 import { VOID_INELIGIBLE_MESSAGES } from '../../lib/pos'
 import { hasReturnableQty } from '../../lib/returns'
 import { useCan } from '../../lib/useCan'
@@ -50,10 +51,10 @@ interface Props {
   branchId: string
   registerId: string
   registerSessionId: string
-  /** The last sale completed in this terminal — set only by a successful checkout, cleared by the
-   * parent whenever branch/register/session changes. Independent of the active cart: Void and
-   * Reprint act on this, never on activeCart. */
-  lastCompletedSale: SaleResultDto | null
+  /** The terminal's current sale — a successful checkout here, or (surviving a refresh / Exit ->
+   * Continue) the most recent sale in this register session, resolved by the parent. Independent
+   * of the active cart: Void and Reprint act on this, never on activeCart. */
+  currentSale: CurrentSaleRef | null
   onSaleCompleted: (result: SaleResultDto) => void
   onSessionLost: () => void
 }
@@ -63,7 +64,7 @@ export function PosTerminal({
   branchId,
   registerId,
   registerSessionId,
-  lastCompletedSale,
+  currentSale,
   onSaleCompleted,
   onSessionLost,
 }: Props) {
@@ -240,15 +241,15 @@ export function PosTerminal({
   }, [])
 
   // Reprint skips the manual sale-number lookup when the terminal already knows the current sale;
-  // it falls back to the existing lookup flow only when there isn't one (e.g. right after Exit ->
-  // Continue, before any sale has completed in this terminal instance).
+  // it falls back to the existing lookup flow only when there isn't one at all (a genuinely empty
+  // session — no sale has ever completed here yet).
   const startReprint = useCallback(() => {
-    if (lastCompletedSale) {
-      window.open(`/sales/${lastCompletedSale.saleId}/receipt?print=1`, '_blank', 'noopener')
+    if (currentSale) {
+      window.open(`/sales/${currentSale.saleId}/receipt?print=1`, '_blank', 'noopener')
       return
     }
     setReprintOpen(true)
-  }, [lastCompletedSale])
+  }, [currentSale])
 
   const anyPosModalOpen =
     newTxnConfirmOpen ||
@@ -480,11 +481,7 @@ export function PosTerminal({
         title="Void sale"
         actionLabel="Continue to void"
         quickPickLabel="Void this sale"
-        quickPick={
-          lastCompletedSale
-            ? { saleId: lastCompletedSale.saleId, saleNumber: lastCompletedSale.saleNumber }
-            : null
-        }
+        quickPick={currentSale}
         isEligible={voidEligibility}
         onContinue={(sale) => {
           setVoidLookupOpen(false)

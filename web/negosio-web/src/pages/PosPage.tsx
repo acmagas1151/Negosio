@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { ApiError } from '../api/client'
-import { posApi, sessionsApi } from '../api/pos'
+import { posApi, salesApi, sessionsApi } from '../api/pos'
 import type { CashMovementType, SaleResultDto } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useCan } from '../lib/useCan'
+import type { CurrentSaleRef } from '../lib/pos'
 import { posStorage } from '../lib/posStorage'
 import { BranchPicker } from '../components/pos/BranchPicker'
 import { CashMovementModal } from '../components/pos/CashMovementModal'
@@ -92,6 +93,18 @@ export default function PosPage() {
     queryFn: () => sessionsApi.current({ registerId: registerId! }),
     enabled: !!registerId,
     retry: false,
+  })
+
+  // Fallback source for "current sale": the most recent sale in THIS register session (bounded by
+  // its openedAtUtc, so a closed-then-reopened register never leaks a stale sale from a past
+  // shift). Covers refresh / Exit -> Continue, where the in-memory lastCompletedSale is gone even
+  // though the cashier really has completed sales this session. invalidateQueries(['sales']) on
+  // checkout success already covers this key too (prefix match), so it refreshes automatically.
+  const openedAtUtc = sessionQuery.data?.openedAtUtc
+  const recentSalesQuery = useQuery({
+    queryKey: ['sales', 'recent', registerId, openedAtUtc],
+    queryFn: () => salesApi.list({ registerId: registerId!, fromUtc: openedAtUtc, pageSize: 1 }),
+    enabled: !!registerId && !!openedAtUtc,
   })
 
   if (!canOperate) return <PosDenied />
@@ -198,6 +211,13 @@ export default function PosPage() {
 
   const session = sessionQuery.data
 
+  const fetchedRecent = recentSalesQuery.data?.items[0]
+  const currentSale: CurrentSaleRef | null = lastCompletedSale
+    ? { saleId: lastCompletedSale.saleId, saleNumber: lastCompletedSale.saleNumber }
+    : fetchedRecent
+      ? { saleId: fetchedRecent.id, saleNumber: fetchedRecent.saleNumber }
+      : null
+
   return (
     <>
       <PosShell
@@ -205,7 +225,7 @@ export default function PosPage() {
         register={chosen}
         branchName={branchName}
         branchCode={branchCode}
-        currentSaleNumber={lastCompletedSale?.saleNumber ?? null}
+        currentSaleNumber={currentSale?.saleNumber ?? null}
         onCloseSession={() => setCloseOpen(true)}
         onCashIn={() => setCashMovementType('CashIn')}
         onCashOut={() => setCashMovementType('CashOut')}
@@ -215,7 +235,7 @@ export default function PosPage() {
           branchId={branchId}
           registerId={chosen.id}
           registerSessionId={session.id}
-          lastCompletedSale={lastCompletedSale}
+          currentSale={currentSale}
           onSaleCompleted={setLastCompletedSale}
           onSessionLost={() => sessionQuery.refetch()}
         />

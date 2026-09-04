@@ -47,6 +47,17 @@ export const VOID_INELIGIBLE_MESSAGES: Record<string, string> = {
 }
 
 /**
+ * The POS terminal's "current sale" — just enough to label it and look it up. Sourced either from
+ * the checkout call that just ran (SaleResultDto), or as a fallback from the most recent sale in
+ * the current register session (SaleSummaryDto), so it survives a refresh or Exit -> Continue
+ * instead of only living in React state. Never a placeholder — always a real, backend-issued sale.
+ */
+export interface CurrentSaleRef {
+  saleId: string
+  saleNumber: string
+}
+
+/**
  * Quick-cash suggestions for a cash payment: the exact amount, then the next round PHP note
  * above it (50 / 100 / 500 / 1000 boundaries), deduped, ascending, max 4.
  */
