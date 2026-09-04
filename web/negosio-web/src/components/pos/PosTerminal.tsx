@@ -9,7 +9,6 @@ import type {
   DiscountType,
   PosCatalogItemDto,
   SaleDetailDto,
-  SaleResultDto,
 } from '../../api/types'
 import { posStorage, type TerminalCtx } from '../../lib/posStorage'
 import { usePosCart } from '../../hooks/usePosCart'
@@ -55,10 +54,11 @@ interface Props {
    * Continue) the most recent sale in this register session, resolved by the parent. Independent
    * of the active cart: Void and Reprint act on this, never on activeCart. */
   currentSale: CurrentSaleRef | null
-  onSaleCompleted: (result: SaleResultDto) => void
-  /** Called when a void succeeds, with the id of the sale that was voided — lets the parent drop
-   * its reference if that was the current sale, without touching the active cart. */
-  onSaleVoided: (voidedSaleId: string) => void
+  onSaleCompleted: (sale: CurrentSaleRef) => void
+  /** Called when a void succeeds, with the voided sale's updated ref (status: 'Voided') — lets the
+   * parent update its reference in place if that was the current sale, without touching the active
+   * cart. It keeps showing (now labeled voided) rather than disappearing. */
+  onSaleVoided: (voided: CurrentSaleRef) => void
   onSessionLost: () => void
 }
 
@@ -333,7 +333,7 @@ export function PosTerminal({
       qc.invalidateQueries({ queryKey: ['inventory'] })
       qc.invalidateQueries({ queryKey: ['sales'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
-      onSaleCompleted(result)
+      onSaleCompleted({ saleId: result.saleId, saleNumber: result.saleNumber, status: result.status })
       toast('success', `Sale #${result.saleNumber} completed — ${formatMoney(result.grandTotal)}`)
     },
     onError: (err) => {
@@ -486,7 +486,7 @@ export function PosTerminal({
         title="Void sale"
         actionLabel="Continue to void"
         quickPickLabel="Void this sale"
-        quickPick={currentSale}
+        quickPick={currentSale && currentSale.status !== 'Voided' ? currentSale : null}
         isEligible={voidEligibility}
         onContinue={(sale) => {
           setVoidLookupOpen(false)
@@ -499,7 +499,11 @@ export function PosTerminal({
           onClose={() => setVoidTarget(null)}
           sale={voidTarget}
           onVoided={(updated) => {
-            onSaleVoided(updated.sale.id)
+            onSaleVoided({
+              saleId: updated.sale.id,
+              saleNumber: updated.sale.saleNumber,
+              status: updated.sale.status,
+            })
             setVoidTarget(null)
             qc.invalidateQueries({ queryKey: ['pos-catalog'] })
           }}

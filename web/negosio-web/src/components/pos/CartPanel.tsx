@@ -183,11 +183,26 @@ export function CartPanel({
   return (
     <div className="flex h-full min-h-0 flex-col border-l border-border bg-surface">
       {currentSale && (
-        <div className="shrink-0 border-b border-border bg-primary-50 px-4 py-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-primary-700">
-            Current sale
+        <div
+          className={cn(
+            'shrink-0 border-b border-border px-4 py-3',
+            currentSale.status === 'Voided' ? 'bg-danger-light' : 'bg-primary-50',
+          )}
+        >
+          <p
+            className={cn(
+              'text-[11px] font-semibold uppercase tracking-wide',
+              currentSale.status === 'Voided' ? 'text-danger-strong' : 'text-primary-700',
+            )}
+          >
+            {currentSale.status === 'Voided' ? 'Last sale — voided' : 'Current sale'}
           </p>
-          <p className="font-mono text-2xl font-extrabold tabular-nums text-primary-900">
+          <p
+            className={cn(
+              'font-mono text-2xl font-extrabold tabular-nums',
+              currentSale.status === 'Voided' ? 'text-danger-strong' : 'text-primary-900',
+            )}
+          >
             #{currentSale.saleNumber}
           </p>
         </div>

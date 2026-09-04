@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { posApi, salesApi, sessionsApi } from '../api/pos'
-import type { CashMovementType, SaleResultDto } from '../api/types'
+import type { CashMovementType } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useCan } from '../lib/useCan'
 import type { CurrentSaleRef } from '../lib/pos'
@@ -51,9 +51,10 @@ export default function PosPage() {
   const [closeOpen, setCloseOpen] = useState(false)
   const [cashMovementType, setCashMovementType] = useState<CashMovementType | null>(null)
   const [pickerNotice, setPickerNotice] = useState<string | null>(null)
-  // The terminal's "current sale" — real only, set by a successful checkout. Cleared below
-  // whenever branch/register/session changes so it never leaks across a different session.
-  const [lastCompletedSale, setLastCompletedSale] = useState<SaleResultDto | null>(null)
+  // The terminal's "current sale" — real only, set by a successful checkout (and kept in sync when
+  // that same sale is later voided). Cleared below whenever branch/register/session changes so it
+  // never leaks across a different session.
+  const [lastCompletedSale, setLastCompletedSale] = useState<CurrentSaleRef | null>(null)
 
   const ctx = contextQuery.data
   const persistedBranch =
@@ -103,10 +104,10 @@ export default function PosPage() {
   const openedAtUtc = sessionQuery.data?.openedAtUtc
   const recentSalesQuery = useQuery({
     queryKey: ['sales', 'recent', registerId, openedAtUtc],
-    // status: 'Completed' so a just-voided sale drops out immediately (via the invalidation this
-    // page's Void success handler triggers) instead of continuing to show as "current".
-    queryFn: () =>
-      salesApi.list({ registerId: registerId!, fromUtc: openedAtUtc, status: 'Completed', pageSize: 1 }),
+    // No status filter — a voided sale still IS the most recent transaction in this session and
+    // should keep showing as such (labeled voided), not vanish. invalidateQueries(['sales']) on
+    // both checkout and void success already covers this key (prefix match), so it stays fresh.
+    queryFn: () => salesApi.list({ registerId: registerId!, fromUtc: openedAtUtc, pageSize: 1 }),
     enabled: !!registerId && !!openedAtUtc,
   })
 
@@ -216,17 +217,16 @@ export default function PosPage() {
 
   const fetchedRecent = recentSalesQuery.data?.items[0]
   const currentSale: CurrentSaleRef | null = lastCompletedSale
-    ? { saleId: lastCompletedSale.saleId, saleNumber: lastCompletedSale.saleNumber }
+    ? lastCompletedSale
     : fetchedRecent
-      ? { saleId: fetchedRecent.id, saleNumber: fetchedRecent.saleNumber }
+      ? { saleId: fetchedRecent.id, saleNumber: fetchedRecent.saleNumber, status: fetchedRecent.status }
       : null
 
-  // A voided sale is no longer "current" — drop the in-memory reference so the header/quick-pick
-  // stop pointing at it. recentSalesQuery (status: 'Completed', already invalidated by the void
-  // itself) then naturally resolves to whatever real completed sale is next-most-recent, if any.
+  // Keep showing the same sale once it's voided (status updates in place) rather than hiding it —
+  // it's still the most recent thing that happened in this session, just no longer voidable.
   // Never touches the active cart — that's a separate, independent decision.
-  const handleSaleVoided = (voidedSaleId: string) => {
-    setLastCompletedSale((prev) => (prev && prev.saleId === voidedSaleId ? null : prev))
+  const handleSaleVoided = (voided: CurrentSaleRef) => {
+    if (currentSale && currentSale.saleId === voided.saleId) setLastCompletedSale(voided)
   }
 
   return (

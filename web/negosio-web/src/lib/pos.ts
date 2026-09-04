@@ -55,6 +55,7 @@ export const VOID_INELIGIBLE_MESSAGES: Record<string, string> = {
 export interface CurrentSaleRef {
   saleId: string
   saleNumber: string
+  status: SaleStatus
 }
 
 /**
