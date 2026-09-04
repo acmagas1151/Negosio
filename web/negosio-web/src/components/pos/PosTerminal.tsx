@@ -56,6 +56,9 @@ interface Props {
    * of the active cart: Void and Reprint act on this, never on activeCart. */
   currentSale: CurrentSaleRef | null
   onSaleCompleted: (result: SaleResultDto) => void
+  /** Called when a void succeeds, with the id of the sale that was voided — lets the parent drop
+   * its reference if that was the current sale, without touching the active cart. */
+  onSaleVoided: (voidedSaleId: string) => void
   onSessionLost: () => void
 }
 
@@ -66,6 +69,7 @@ export function PosTerminal({
   registerSessionId,
   currentSale,
   onSaleCompleted,
+  onSaleVoided,
   onSessionLost,
 }: Props) {
   const ctx: TerminalCtx = useMemo(
@@ -434,6 +438,7 @@ export function PosTerminal({
             totals={totals}
             tax={tax.data}
             taxPending={tax.isPending}
+            currentSale={currentSale}
             onSetQty={onSetQty}
             onRemove={onRemove}
             onSetDiscount={onSetDiscount}
@@ -493,7 +498,8 @@ export function PosTerminal({
           open
           onClose={() => setVoidTarget(null)}
           sale={voidTarget}
-          onVoided={() => {
+          onVoided={(updated) => {
+            onSaleVoided(updated.sale.id)
             setVoidTarget(null)
             qc.invalidateQueries({ queryKey: ['pos-catalog'] })
           }}

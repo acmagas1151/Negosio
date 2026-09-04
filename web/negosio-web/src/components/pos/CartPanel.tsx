@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Minus, Plus, X } from 'lucide-react'
 import type { DiscountType, TaxSettingsDto } from '../../api/types'
 import type { CartLine } from '../../lib/posStorage'
+import type { CurrentSaleRef } from '../../lib/pos'
 import { calcLine } from '../../lib/saleMath'
 import { formatMoney, formatQty } from '../../lib/format'
 import { cn } from '../../lib/cn'
@@ -21,6 +22,9 @@ interface Props {
   chargeDisabled: boolean
   notice?: ReactNode
   resuming?: boolean
+  /** The terminal's current sale, shown large at the top of the cart column — a completed sale,
+   * unrelated to whatever is in the cart below it (voiding it never touches these lines). */
+  currentSale?: CurrentSaleRef | null
 }
 
 function discountLabel(d: { type: DiscountType; value: number }): string {
@@ -174,9 +178,21 @@ export function CartPanel({
   chargeDisabled,
   notice,
   resuming,
+  currentSale,
 }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col border-l border-border bg-surface">
+      {currentSale && (
+        <div className="shrink-0 border-b border-border bg-primary-50 px-4 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-primary-700">
+            Current sale
+          </p>
+          <p className="font-mono text-2xl font-extrabold tabular-nums text-primary-900">
+            #{currentSale.saleNumber}
+          </p>
+        </div>
+      )}
+
       <div className="shrink-0 border-b border-border px-4 py-3">
         <h2 className="text-sm font-bold uppercase tracking-wide text-text-muted">Cart</h2>
         <p className="text-[12px] text-text-muted">

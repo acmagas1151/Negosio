@@ -103,7 +103,10 @@ export default function PosPage() {
   const openedAtUtc = sessionQuery.data?.openedAtUtc
   const recentSalesQuery = useQuery({
     queryKey: ['sales', 'recent', registerId, openedAtUtc],
-    queryFn: () => salesApi.list({ registerId: registerId!, fromUtc: openedAtUtc, pageSize: 1 }),
+    // status: 'Completed' so a just-voided sale drops out immediately (via the invalidation this
+    // page's Void success handler triggers) instead of continuing to show as "current".
+    queryFn: () =>
+      salesApi.list({ registerId: registerId!, fromUtc: openedAtUtc, status: 'Completed', pageSize: 1 }),
     enabled: !!registerId && !!openedAtUtc,
   })
 
@@ -218,6 +221,14 @@ export default function PosPage() {
       ? { saleId: fetchedRecent.id, saleNumber: fetchedRecent.saleNumber }
       : null
 
+  // A voided sale is no longer "current" — drop the in-memory reference so the header/quick-pick
+  // stop pointing at it. recentSalesQuery (status: 'Completed', already invalidated by the void
+  // itself) then naturally resolves to whatever real completed sale is next-most-recent, if any.
+  // Never touches the active cart — that's a separate, independent decision.
+  const handleSaleVoided = (voidedSaleId: string) => {
+    setLastCompletedSale((prev) => (prev && prev.saleId === voidedSaleId ? null : prev))
+  }
+
   return (
     <>
       <PosShell
@@ -225,7 +236,6 @@ export default function PosPage() {
         register={chosen}
         branchName={branchName}
         branchCode={branchCode}
-        currentSaleNumber={currentSale?.saleNumber ?? null}
         onCloseSession={() => setCloseOpen(true)}
         onCashIn={() => setCashMovementType('CashIn')}
         onCashOut={() => setCashMovementType('CashOut')}
@@ -237,6 +247,7 @@ export default function PosPage() {
           registerSessionId={session.id}
           currentSale={currentSale}
           onSaleCompleted={setLastCompletedSale}
+          onSaleVoided={handleSaleVoided}
           onSessionLost={() => sessionQuery.refetch()}
         />
       </PosShell>
