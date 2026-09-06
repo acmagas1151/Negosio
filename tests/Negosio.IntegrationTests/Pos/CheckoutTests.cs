@@ -221,4 +221,38 @@ public class CheckoutTests : IntegrationTest
         receipt.Lines.Should().ContainSingle(l => l.Quantity == 2m && l.NetAmount == 150m);
         receipt.ChangeDue.Should().Be(50m);
     }
+
+    /// <summary>
+    /// DiscountApply is enforced by CheckoutService.EnsureDiscountAuthorizedAsync (unchanged this
+    /// pass), but until now nothing could actually grant it — StaffController's write endpoint was
+    /// hardcoded to SalesVoid. This is the first end-to-end proof the generalized
+    /// IUserPermissionGrantService.SetAsync write path actually reaches real enforcement: a Cashier
+    /// who holds the grant applies a discount directly, with no approval attached.
+    /// </summary>
+    [Fact]
+    public async Task Cashier_with_a_discount_grant_applies_a_discount_directly()
+    {
+        var scene = await ArrangeAsync(price: 100m, stock: 10m); // Client is left authorized as Owner.
+        // A Cashier needs their own register session (CheckoutService requires session ownership) —
+        // create their register now, while still authorized as Owner.
+        var cashierRegister = await CreateRegisterAsync(scene.BranchId, "R-Cashier", "R-CASH");
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, scene.BranchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+
+        (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions")
+        {
+            Content = JsonContent.Create(new Negosio.Application.Staff.ChangeStaffPermissionsRequest(
+                SalesVoid: false, SalesReturn: false, DiscountApply: true, CashDrawerOpen: false)),
+        })).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Authorize(cashierToken);
+        var session = await OpenSessionAsync(cashierRegister.Id);
+        var request = new CheckoutRequest(
+            scene.BranchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(scene.VariantId, 1m, new CheckoutDiscountInput(DiscountType.Percentage, 10m)) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 100m) });
+
+        var result = await CheckoutOkAsync(request);
+        result.DiscountTotal.Should().Be(10m);
+    }
 }

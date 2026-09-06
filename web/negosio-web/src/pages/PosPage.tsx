@@ -1,15 +1,17 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { ApiError } from '../api/client'
-import { posApi, sessionsApi } from '../api/pos'
+import { posApi, salesApi, sessionsApi } from '../api/pos'
 import type { CashMovementType } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useCan } from '../lib/useCan'
+import type { LastSaleRef } from '../lib/pos'
 import { posStorage } from '../lib/posStorage'
 import { BranchPicker } from '../components/pos/BranchPicker'
 import { CashMovementModal } from '../components/pos/CashMovementModal'
 import { CloseSessionModal } from '../components/pos/CloseSessionModal'
+import { OpenCashDrawerModal } from '../components/pos/OpenCashDrawerModal'
 import { PosSessionGate } from '../components/pos/PosSessionGate'
 import { PosShell } from '../components/pos/PosShell'
 import { PosTerminal } from '../components/pos/PosTerminal'
@@ -40,7 +42,6 @@ function PosDenied() {
 
 export default function PosPage() {
   const { user } = useAuth()
-  const navigate = useNavigate()
   const canOperate = useCan('pos:operate')
 
   const contextQuery = useQuery({ queryKey: ['pos', 'context'], queryFn: posApi.context })
@@ -50,6 +51,7 @@ export default function PosPage() {
   const [skipGate, setSkipGate] = useState(false)
   const [closeOpen, setCloseOpen] = useState(false)
   const [cashMovementType, setCashMovementType] = useState<CashMovementType | null>(null)
+  const [cashDrawerModalOpen, setCashDrawerModalOpen] = useState(false)
   const [pickerNotice, setPickerNotice] = useState<string | null>(null)
 
   const ctx = contextQuery.data
@@ -63,6 +65,7 @@ export default function PosPage() {
       : ctx.branchId
     : null
   const branchName = ctx?.branches.find((b) => b.id === branchId)?.name ?? ctx?.branchName ?? null
+  const branchCode = ctx?.branches.find((b) => b.id === branchId)?.code ?? null
 
   const pickBranch = (id: string) => {
     if (user) posStorage.writeBranch({ tenantId: user.tenantId }, id)
@@ -87,6 +90,21 @@ export default function PosPage() {
     queryFn: () => sessionsApi.current({ registerId: registerId! }),
     enabled: !!registerId,
     retry: false,
+  })
+
+  // The single source of truth for "last sale" — the most recent sale in THIS register session
+  // (bounded by its openedAtUtc, so a closed-then-reopened register never leaks a stale sale from a
+  // past shift), read straight from the backend rather than cached in React state. That's what
+  // keeps it honest: a void from anywhere (this terminal, another tab, the Sales page) is reflected
+  // as soon as this query refetches, instead of a locally-remembered ref going stale. No status
+  // filter — a voided sale still IS the most recent transaction in this session and should keep
+  // showing as such (labeled voided), not vanish. invalidateQueries(['sales']) on checkout and void
+  // success (both already fire elsewhere) covers this key too (prefix match), so it stays fresh.
+  const openedAtUtc = sessionQuery.data?.openedAtUtc
+  const recentSalesQuery = useQuery({
+    queryKey: ['sales', 'recent', registerId, openedAtUtc],
+    queryFn: () => salesApi.list({ registerId: registerId!, fromUtc: openedAtUtc, pageSize: 1 }),
+    enabled: !!registerId && !!openedAtUtc,
   })
 
   if (!canOperate) return <PosDenied />
@@ -192,23 +210,29 @@ export default function PosPage() {
 
   const session = sessionQuery.data
 
+  const fetchedRecent = recentSalesQuery.data?.items[0]
+  const lastSale: LastSaleRef | null = fetchedRecent
+    ? { saleId: fetchedRecent.id, saleNumber: fetchedRecent.saleNumber, status: fetchedRecent.status }
+    : null
+
   return (
     <>
       <PosShell
         session={session}
         register={chosen}
+        branchName={branchName}
+        branchCode={branchCode}
         onCloseSession={() => setCloseOpen(true)}
         onCashIn={() => setCashMovementType('CashIn')}
         onCashOut={() => setCashMovementType('CashOut')}
+        onOpenCashDrawer={() => setCashDrawerModalOpen(true)}
       >
         <PosTerminal
           tenantId={user!.tenantId}
           branchId={branchId}
           registerId={chosen.id}
           registerSessionId={session.id}
-          onCheckoutSuccess={(result) =>
-            navigate(`/pos/complete/${result.saleId}`, { state: { result } })
-          }
+          lastSale={lastSale}
           onSessionLost={() => sessionQuery.refetch()}
         />
       </PosShell>
@@ -229,6 +253,13 @@ export default function PosPage() {
         sessionId={session.id}
         type={cashMovementType ?? 'CashIn'}
         onDone={() => sessionQuery.refetch()}
+      />
+
+      <OpenCashDrawerModal
+        open={cashDrawerModalOpen}
+        onClose={() => setCashDrawerModalOpen(false)}
+        sessionId={session.id}
+        onOpened={() => sessionQuery.refetch()}
       />
     </>
   )

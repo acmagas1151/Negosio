@@ -33,3 +33,8 @@ export function formatSignedQty(n: number): string {
   if (n < 0) return `−${formatQty(Math.abs(n))}`
   return formatQty(0)
 }
+
+/** Local wall-clock time from an ISO/UTC timestamp, e.g. "10:15 AM". */
+export function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}

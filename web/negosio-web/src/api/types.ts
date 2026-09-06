@@ -452,6 +452,7 @@ export interface PosCatalogItemDto {
 export interface PosCatalogParams {
   branchId: string
   search?: string
+  categoryId?: string
   page?: number
   pageSize?: number
 }
@@ -480,6 +481,9 @@ export interface CheckoutRequest {
   clientRequestId: string
   items: CheckoutItemInput[]
   payments: CheckoutPaymentInput[]
+  /** Manager/Admin/Owner approval — only sent when retrying after a DISCOUNT_APPROVAL_REQUIRED
+   * rejection (the sale carries a line discount the cashier can't apply directly). */
+  approval?: VoidSaleApprovalInput
 }
 
 export interface SaleResultDto {
@@ -578,6 +582,28 @@ export interface VoidSaleRequest {
   approval?: VoidSaleApprovalInput
 }
 
+/** Authorizes cancelling the cart at the register — no sale exists yet, so there is no reason to record. */
+export interface CancelTransactionAuthorizationRequest {
+  branchId: string
+  approval?: VoidSaleApprovalInput
+}
+
+/** Authorizes + audits a no-sale cash-drawer open. No hardware/device integration exists yet — this
+ * never claims a physical drawer opened, only that the request was authorized and recorded. */
+export interface OpenCashDrawerRequest {
+  approval?: VoidSaleApprovalInput
+}
+
+export interface CashDrawerOpenDto {
+  id: string
+  registerSessionId: string
+  requestedByUserId: string
+  requestedByName: string
+  approvedByUserId: string | null
+  approvedByName: string | null
+  createdAtUtc: string
+}
+
 export interface SaleDetailDto {
   sale: SaleSummaryDto
   registerSessionId: string
@@ -652,6 +678,9 @@ export interface CreateReturnRequest {
   reason: string
   refundMethod: PaymentMethod
   refundReference: string | null
+  /** Manager/Admin/Owner approval — only sent when retrying after a RETURN_APPROVAL_REQUIRED
+   * rejection (the cashier doesn't hold a direct SalesReturn grant). */
+  approval?: VoidSaleApprovalInput
 }
 
 // ---- Tenant settings — tax ----
@@ -692,10 +721,18 @@ export interface StaffMemberDto {
   branchId: string | null
   branchName: string | null
   salesVoid: boolean
+  salesReturn: boolean
+  discountApply: boolean
+  cashDrawerOpen: boolean
 }
 
+/** One flag per grantable permission — always sent together, so "Save changes" in the permissions
+ * modal is a single request carrying every toggle's current state. */
 export interface ChangeStaffPermissionsRequest {
   salesVoid: boolean
+  salesReturn: boolean
+  discountApply: boolean
+  cashDrawerOpen: boolean
 }
 
 export interface InviteStaffRequest {

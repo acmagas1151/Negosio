@@ -12,11 +12,14 @@ public sealed class RegisterSessionsController : ControllerBase
 {
     private readonly IRegisterSessionService _sessions;
     private readonly IRegisterCashMovementService _cashMovements;
+    private readonly ICashDrawerService _cashDrawer;
 
-    public RegisterSessionsController(IRegisterSessionService sessions, IRegisterCashMovementService cashMovements)
+    public RegisterSessionsController(
+        IRegisterSessionService sessions, IRegisterCashMovementService cashMovements, ICashDrawerService cashDrawer)
     {
         _sessions = sessions;
         _cashMovements = cashMovements;
+        _cashDrawer = cashDrawer;
     }
 
     [HttpPost("open")]
@@ -66,4 +69,17 @@ public sealed class RegisterSessionsController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<RegisterCashMovementDto>>> ListCashMovements(
         Guid id, CancellationToken cancellationToken)
         => Ok(await _cashMovements.ListAsync(id, cancellationToken));
+
+    /// <summary>
+    /// No hardware/drawer-device integration exists yet — this authorizes and audits a no-sale
+    /// drawer-open request. It never claims a physical drawer was triggered.
+    /// </summary>
+    [HttpPost("{id:guid}/cash-drawer/open")]
+    [ProducesResponseType(typeof(CashDrawerOpenDto), StatusCodes.Status201Created)]
+    public async Task<ActionResult<CashDrawerOpenDto>> OpenCashDrawer(
+        Guid id, [FromBody] OpenCashDrawerRequest request, CancellationToken cancellationToken)
+    {
+        var created = await _cashDrawer.OpenAsync(id, request, cancellationToken);
+        return StatusCode(StatusCodes.Status201Created, created);
+    }
 }

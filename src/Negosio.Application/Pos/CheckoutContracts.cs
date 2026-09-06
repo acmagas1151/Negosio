@@ -1,3 +1,4 @@
+using Negosio.Application.Sales;
 using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Pos;
@@ -17,7 +18,10 @@ public sealed record CheckoutRequest(
     Guid RegisterSessionId,
     Guid ClientRequestId,
     IReadOnlyList<CheckoutItemInput> Items,
-    IReadOnlyList<CheckoutPaymentInput> Payments);
+    IReadOnlyList<CheckoutPaymentInput> Payments,
+    /// <summary>Manager/Admin/Owner approval — only used when a Cashier without the DiscountApply
+    /// grant submits a sale that carries any line discount. Reuses Void's approval shape.</summary>
+    VoidSaleApprovalInput? Approval = null);
 
 public sealed record SaleResultDto(
     Guid SaleId,

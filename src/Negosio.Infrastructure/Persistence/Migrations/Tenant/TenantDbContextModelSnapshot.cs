@@ -134,6 +134,42 @@ namespace Negosio.Infrastructure.Persistence.Migrations.Tenant
                     b.ToTable("BranchInventories", (string)null);
                 });
 
+            modelBuilder.Entity("Negosio.Domain.Entities.CashDrawerOpenEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("ApprovedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BranchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("RegisterSessionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RequestedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RegisterSessionId");
+
+                    b.HasIndex("TenantId", "RegisterSessionId", "CreatedAtUtc")
+                        .HasDatabaseName("IX_CashDrawerOpenEvents_TenantId_RegisterSessionId_CreatedAtUtc");
+
+                    b.ToTable("CashDrawerOpenEvents", (string)null);
+                });
+
             modelBuilder.Entity("Negosio.Domain.Entities.Category", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1084,6 +1120,15 @@ namespace Negosio.Infrastructure.Persistence.Migrations.Tenant
                     b.HasOne("Negosio.Domain.Entities.ProductVariant", null)
                         .WithMany()
                         .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Negosio.Domain.Entities.CashDrawerOpenEvent", b =>
+                {
+                    b.HasOne("Negosio.Domain.Entities.RegisterSession", null)
+                        .WithMany()
+                        .HasForeignKey("RegisterSessionId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { CheckoutPaymentInput, PaymentMethod } from '../../api/types'
-import { POS_PAYMENT_METHODS, PAYMENT_METHOD_LABELS, suggestCashButtons } from '../../lib/pos'
+import { POS_PAYMENT_METHODS, PAYMENT_METHOD_LABELS, REFERENCE_LABELS, suggestCashButtons } from '../../lib/pos'
 import { formatMoney } from '../../lib/format'
 import { cn } from '../../lib/cn'
 import { Button, Callout, Modal, TextField } from '../ui'
+import { PaymentMethodIcon } from './PaymentMethodIcon'
 
 interface Props {
   open: boolean
@@ -64,7 +65,7 @@ export function PaymentModal({ open, onClose, amountDue, submitting, error, onCo
         <p className="text-2xl font-bold text-text-primary">{formatMoney(amountDue)}</p>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-1.5">
+      <div className="mb-4 grid grid-cols-5 gap-2">
         {POS_PAYMENT_METHODS.map((m) => (
           <button
             key={m}
@@ -72,13 +73,25 @@ export function PaymentModal({ open, onClose, amountDue, submitting, error, onCo
             aria-pressed={method === m}
             onClick={() => setMethod(m)}
             className={cn(
-              'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+              'flex flex-col items-center gap-1.5 rounded-xl border px-1 py-3 transition-all',
+              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500',
               method === m
-                ? 'bg-primary-600 text-white'
-                : 'border border-border-strong text-text-secondary hover:bg-surface-subtle',
+                ? 'border-primary-500 bg-primary-50 shadow-sm'
+                : 'border-border-strong hover:border-primary-200 hover:bg-surface-subtle',
             )}
           >
-            {PAYMENT_METHOD_LABELS[m]}
+            <PaymentMethodIcon
+              method={m}
+              className={cn('size-6', method === m ? 'text-primary-700' : 'text-text-muted')}
+            />
+            <span
+              className={cn(
+                'text-[12px] font-semibold',
+                method === m ? 'text-primary-700' : 'text-text-secondary',
+              )}
+            >
+              {PAYMENT_METHOD_LABELS[m]}
+            </span>
           </button>
         ))}
       </div>
@@ -114,7 +127,7 @@ export function PaymentModal({ open, onClose, amountDue, submitting, error, onCo
         </div>
       ) : (
         <TextField
-          label="Reference number (optional)"
+          label={`${REFERENCE_LABELS[method] ?? 'Reference number'} (optional)`}
           name="reference"
           value={reference}
           onChange={(e) => setReference(e.target.value)}

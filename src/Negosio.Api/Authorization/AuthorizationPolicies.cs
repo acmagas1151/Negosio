@@ -26,7 +26,8 @@ public static class AuthorizationPolicies
     /// <summary>View sales history and receipts.</summary>
     public const string SalesView = "SalesView";
 
-    /// <summary>Create returns / refunds.</summary>
+    /// <summary>Create returns / refunds — every POS role may attempt one; ReturnAuthorizationResolver
+    /// (service-enforced) then requires Owner/Admin/Manager, a direct SalesReturn grant, or approval.</summary>
     public const string RefundManage = "RefundManage";
 
     /// <summary>Change tenant-wide settings (e.g. tax).</summary>
@@ -90,7 +91,7 @@ public static class AuthorizationPolicies
 
         options.AddPolicy(RefundManage, policy =>
             policy.RequireAuthenticatedUser()
-                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
+                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(PosRoles)));
 
         options.AddPolicy(TenantSettingsWrite, policy =>
             policy.RequireAuthenticatedUser()

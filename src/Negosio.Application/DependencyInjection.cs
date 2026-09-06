@@ -45,12 +45,15 @@ public static class DependencyInjection
         services.AddScoped<IRegisterService, RegisterService>();
         services.AddScoped<IRegisterSessionService, RegisterSessionService>();
         services.AddScoped<IRegisterCashMovementService, RegisterCashMovementService>();
+        services.AddScoped<ICashDrawerService, CashDrawerService>();
         services.AddScoped<IPosCatalogService, PosCatalogService>();
         services.AddScoped<IPosContextService, PosContextService>();
         services.AddScoped<ICheckoutService, CheckoutService>();
+        services.AddScoped<ITransactionCancellationService, TransactionCancellationService>();
         services.AddScoped<SaleQueryService>();
         services.AddScoped<ISaleQueryService>(sp => sp.GetRequiredService<SaleQueryService>());
         services.AddScoped<IReceiptService, ReceiptService>();
+        services.AddScoped<IReturnAuthorizationResolver, ReturnAuthorizationResolver>();
         services.AddScoped<IReturnService, ReturnService>();
         services.AddScoped<ITenantSettingsService, TenantSettingsService>();
 
@@ -59,7 +62,8 @@ public static class DependencyInjection
         services.AddScoped<IStaffInvitationService, StaffInvitationService>();
 
         // Phase 6: Void sales & cash operations
-        services.AddScoped<ISalesVoidPermissionService, SalesVoidPermissionService>();
+        services.AddScoped<IUserPermissionGrantService, UserPermissionGrantService>();
+        services.AddScoped<IVoidAuthorizationResolver, VoidAuthorizationResolver>();
         services.AddScoped<IVoidSaleService, VoidSaleService>();
 
         return services;

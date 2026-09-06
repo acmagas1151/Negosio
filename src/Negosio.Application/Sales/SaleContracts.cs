@@ -123,7 +123,8 @@ public sealed record CreateReturnRequest(
     IReadOnlyList<ReturnLineInput> Items,
     string Reason,
     PaymentMethod RefundMethod,
-    string? RefundReference);
+    string? RefundReference,
+    VoidSaleApprovalInput? Approval = null);
 
 public sealed record SaleReturnItemDto(
     Guid Id,

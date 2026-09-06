@@ -2,9 +2,12 @@ using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Auth;
 using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Application.Inventory;
+using Negosio.Application.Sales;
+using Negosio.Application.Staff;
 using Negosio.Domain.Entities;
 using Negosio.Domain.Enums;
 
@@ -18,6 +21,8 @@ public sealed class CheckoutService : ICheckoutService
     private readonly IDocumentNumberService _documentNumbers;
     private readonly IInventoryPosting _inventory;
     private readonly IBranchAccessResolver _branchAccess;
+    private readonly IUserPermissionGrantService _grants;
+    private readonly IApproverVerificationService _approverVerification;
     private readonly ILogger<CheckoutService> _logger;
 
     public CheckoutService(
@@ -27,6 +32,8 @@ public sealed class CheckoutService : ICheckoutService
         IDocumentNumberService documentNumbers,
         IInventoryPosting inventory,
         IBranchAccessResolver branchAccess,
+        IUserPermissionGrantService grants,
+        IApproverVerificationService approverVerification,
         ILogger<CheckoutService> logger)
     {
         _db = db;
@@ -35,6 +42,8 @@ public sealed class CheckoutService : ICheckoutService
         _documentNumbers = documentNumbers;
         _inventory = inventory;
         _branchAccess = branchAccess;
+        _grants = grants;
+        _approverVerification = approverVerification;
         _logger = logger;
     }
 
@@ -81,6 +90,16 @@ public sealed class CheckoutService : ICheckoutService
         }
 
         var tenant = await _db.TenantProfiles.SingleAsync(p => p.Id == tenantId, cancellationToken);
+
+        // A sale carrying any line discount needs authorization before it's allowed to complete —
+        // resolved here, before any product/inventory work or the transaction, so a rejected or
+        // cancelled approval leaves nothing behind (no Sale, no allocated SaleNumber). Applies no
+        // matter which UI path set the discount (the whole-cart tool or a per-line edit) — this
+        // checks the submitted lines themselves, not how they were produced.
+        if (request.Items.Any(i => i.Discount is { Type: not DiscountType.None }))
+        {
+            await EnsureDiscountAuthorizedAsync(branch.Id, request.Approval, cancellationToken);
+        }
 
         // 3. Merge duplicate variant lines (first non-None discount wins for the merged line).
         var merged = request.Items
@@ -241,6 +260,39 @@ public sealed class CheckoutService : ICheckoutService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Owner/Admin/Manager may apply a discount directly; a Cashier needs the DiscountApply grant
+    /// or a verified Manager/Admin/Owner approval. Structurally the same shape as
+    /// VoidAuthorizationResolver/CashDrawerService's checks, kept as its own copy here (rather than
+    /// a shared abstraction) so checkout — the most heavily-exercised path in the app — never
+    /// depends on a change made for a different action's error codes/messages.
+    /// </summary>
+    private async Task EnsureDiscountAuthorizedAsync(Guid branchId, VoidSaleApprovalInput? approval, CancellationToken cancellationToken)
+    {
+        if (_currentUser.Role is UserRole.Owner or UserRole.Admin or UserRole.Manager)
+        {
+            return;
+        }
+
+        if (_currentUser.Role != UserRole.Cashier)
+        {
+            throw new ForbiddenAppException(ErrorCodes.Forbidden, "This role cannot apply a discount.");
+        }
+
+        if (await _grants.HasGrantAsync(_currentUser.UserId, UserPermission.DiscountApply, cancellationToken))
+        {
+            return;
+        }
+
+        if (approval is null)
+        {
+            throw new BusinessRuleException(ErrorCodes.DiscountApprovalRequired,
+                "You don't have permission to apply a discount. An authorized Manager, Admin, or Owner must approve this sale.");
+        }
+
+        await _approverVerification.VerifyAsync(approval.ApproverEmail, approval.ApproverPassword, branchId, cancellationToken);
     }
 
     private static SaleResultDto ToResult(Sale sale, bool wasExisting) => new(

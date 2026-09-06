@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Negosio.Api.Authorization;
 using Negosio.Application.Staff;
+using Negosio.Domain.Enums;
 
 namespace Negosio.Api.Controllers;
 
@@ -14,9 +15,9 @@ namespace Negosio.Api.Controllers;
 public sealed class StaffController : ControllerBase
 {
     private readonly IStaffService _staff;
-    private readonly ISalesVoidPermissionService _permissions;
+    private readonly IUserPermissionGrantService _permissions;
 
-    public StaffController(IStaffService staff, ISalesVoidPermissionService permissions)
+    public StaffController(IStaffService staff, IUserPermissionGrantService permissions)
     {
         _staff = staff;
         _permissions = permissions;
@@ -98,5 +99,14 @@ public sealed class StaffController : ControllerBase
         Guid id,
         [FromBody] ChangeStaffPermissionsRequest request,
         CancellationToken cancellationToken)
-        => Ok(await _permissions.SetAsync(id, request.SalesVoid, cancellationToken));
+    {
+        var grants = new Dictionary<UserPermission, bool>
+        {
+            [UserPermission.SalesVoid] = request.SalesVoid,
+            [UserPermission.SalesReturn] = request.SalesReturn,
+            [UserPermission.DiscountApply] = request.DiscountApply,
+            [UserPermission.CashDrawerOpen] = request.CashDrawerOpen,
+        };
+        return Ok(await _permissions.SetAsync(id, grants, cancellationToken));
+    }
 }

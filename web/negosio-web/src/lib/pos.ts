@@ -5,12 +5,19 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   Card: 'Card',
   GCash: 'GCash',
   Maya: 'Maya',
-  BankTransfer: 'Bank transfer',
+  BankTransfer: 'Bank Transfer',
   Other: 'Other',
 }
 
 /** Methods offered in the POS payment modal, in display order. */
 export const POS_PAYMENT_METHODS: PaymentMethod[] = ['Cash', 'Card', 'GCash', 'Maya', 'BankTransfer']
+
+// Card carries an approval code rather than a plain reference; every other non-cash method just
+// gets the generic label. Shared by the payment modal and the success confirmation so the two
+// never drift into two different names for the same field. Cash has no reference field at all.
+export const REFERENCE_LABELS: Partial<Record<PaymentMethod, string>> = {
+  Card: 'Reference / approval code',
+}
 
 export const SALE_STATUS_LABELS: Record<SaleStatus, string> = {
   Completed: 'Completed',
@@ -47,15 +54,32 @@ export const VOID_INELIGIBLE_MESSAGES: Record<string, string> = {
 }
 
 /**
+ * The most recently completed sale in this register session — just enough to label it and look it
+ * up. This is deliberately NOT "the active transaction": the cart being worked on right now has no
+ * SaleNumber until checkout succeeds, and this reference must never be presented as if it were that
+ * cart. It's sourced from the freshest backend read (the register session's most recent sale,
+ * status included), so it reflects a void from anywhere — this terminal, another tab, the Sales
+ * page — not just one made through this component. Never a placeholder — always a real,
+ * backend-issued sale, or null if this session has no sale yet.
+ */
+export interface LastSaleRef {
+  saleId: string
+  saleNumber: string
+  status: SaleStatus
+}
+
+/**
  * Quick-cash suggestions for a cash payment: the exact amount, then the next round PHP note
- * above it (50 / 100 / 500 / 1000 boundaries), deduped, ascending, max 4.
+ * above it (50 / 100 / 500 / 1000 boundaries), deduped, ascending. Every step has its own
+ * candidate, so the cap must cover all of them — one per step plus the exact amount.
  */
 export function suggestCashButtons(total: number): number[] {
   if (!(total > 0)) return []
+  const steps = [50, 100, 500, 1000]
   const out = new Set<number>()
   out.add(Math.ceil(total * 100) / 100)
-  for (const step of [50, 100, 500, 1000]) {
+  for (const step of steps) {
     out.add(Math.ceil(total / step) * step)
   }
-  return [...out].sort((a, b) => a - b).slice(0, 4)
+  return [...out].sort((a, b) => a - b).slice(0, steps.length + 1)
 }

@@ -87,9 +87,17 @@ public static class ErrorCodes
     public const string InvalidApproverCredentials = "INVALID_APPROVER_CREDENTIALS";
     public const string VoidApproverNotAuthorized = "VOID_APPROVER_NOT_AUTHORIZED";
     public const string VoidApproverWrongBranch = "VOID_APPROVER_WRONG_BRANCH";
-    public const string SalesVoidSelfGrant = "SALES_VOID_SELF_GRANT";
-    public const string SalesVoidGrantRoleInvalid = "SALES_VOID_GRANT_ROLE_INVALID";
+    // Generic across every grantable UserPermission (SalesVoid, SalesReturn, DiscountApply,
+    // CashDrawerOpen, ...) — not void-specific despite living in this "Phase 6" block, since the
+    // write path (UserPermissionGrantService.SetAsync) is shared by all of them.
+    public const string PermissionSelfGrant = "PERMISSION_SELF_GRANT";
+    public const string PermissionGrantRoleInvalid = "PERMISSION_GRANT_ROLE_INVALID";
     public const string CashMovementInvalidAmount = "CASH_MOVEMENT_INVALID_AMOUNT";
     public const string CashMovementSessionClosed = "CASH_MOVEMENT_SESSION_CLOSED";
     public const string CashMovementNotOwner = "CASH_MOVEMENT_NOT_OWNER";
+    public const string CashDrawerSessionClosed = "CASH_DRAWER_SESSION_CLOSED";
+    public const string CashDrawerNotOwner = "CASH_DRAWER_NOT_OWNER";
+    public const string CashDrawerApprovalRequired = "CASH_DRAWER_APPROVAL_REQUIRED";
+    public const string DiscountApprovalRequired = "DISCOUNT_APPROVAL_REQUIRED";
+    public const string ReturnApprovalRequired = "RETURN_APPROVAL_REQUIRED";
 }

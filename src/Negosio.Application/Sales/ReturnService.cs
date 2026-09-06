@@ -18,6 +18,7 @@ public sealed class ReturnService : IReturnService
     private readonly IInventoryPosting _inventory;
     private readonly SaleQueryService _saleQuery;
     private readonly IBranchAccessResolver _branchAccess;
+    private readonly IReturnAuthorizationResolver _authResolver;
 
     public ReturnService(
         ITenantDbContext db,
@@ -26,7 +27,8 @@ public sealed class ReturnService : IReturnService
         IDocumentNumberService documentNumbers,
         IInventoryPosting inventory,
         SaleQueryService saleQuery,
-        IBranchAccessResolver branchAccess)
+        IBranchAccessResolver branchAccess,
+        IReturnAuthorizationResolver authResolver)
     {
         _db = db;
         _currentUser = currentUser;
@@ -35,11 +37,20 @@ public sealed class ReturnService : IReturnService
         _inventory = inventory;
         _saleQuery = saleQuery;
         _branchAccess = branchAccess;
+        _authResolver = authResolver;
     }
 
     public async Task<SaleReturnDto> CreateReturnAsync(Guid saleId, CreateReturnRequest request, CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
+
+        // Explicit, defense-in-depth role gate — never rely solely on the controller's RefundManage
+        // policy, matching VoidSaleService's own duplicate of what its resolver also checks.
+        if (_currentUser.Role is not (UserRole.Owner or UserRole.Admin or UserRole.Manager or UserRole.Cashier))
+        {
+            throw new ForbiddenAppException(ErrorCodes.Forbidden, "This role cannot process returns.");
+        }
+
         await _validator.ValidateAndThrowAppAsync(request, cancellationToken);
 
         var sale = await _db.Sales
@@ -53,6 +64,10 @@ public sealed class ReturnService : IReturnService
         {
             throw new BusinessRuleException(ErrorCodes.ReturnNotAllowed, "This sale cannot be returned against.");
         }
+
+        // Cashier direct-grant-or-approval resolution — server-authoritative; the frontend's own
+        // "should I show the approval fields" guess is UX only and never the actual security boundary.
+        await _authResolver.ResolveAsync(sale.BranchId, request.Approval, cancellationToken);
 
         var branch = await _db.Branches.SingleAsync(b => b.Id == sale.BranchId, cancellationToken);
         var tenant = await _db.TenantProfiles.SingleAsync(p => p.Id == tenantId, cancellationToken);

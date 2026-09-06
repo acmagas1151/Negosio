@@ -49,6 +49,8 @@ public sealed class TenantDbContext : DbContext, ITenantDbContext
 
     public DbSet<RegisterCashMovement> RegisterCashMovements => Set<RegisterCashMovement>();
 
+    public DbSet<CashDrawerOpenEvent> CashDrawerOpenEvents => Set<CashDrawerOpenEvent>();
+
     public DbSet<Sale> Sales => Set<Sale>();
 
     public DbSet<SaleItem> SaleItems => Set<SaleItem>();
