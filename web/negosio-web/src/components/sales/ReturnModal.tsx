@@ -33,6 +33,9 @@ export function ReturnModal({ open, onClose, sale }: Props) {
   const [refundReference, setRefundReference] = useState('')
   const [formError, setFormError] = useState('')
   const [conflict, setConflict] = useState('')
+  const [needsApproval, setNeedsApproval] = useState(false)
+  const [approverEmail, setApproverEmail] = useState('')
+  const [approverPassword, setApproverPassword] = useState('')
 
   // Reset ONLY when the modal opens — never when server data changes identity. A conflict
   // handler below refetches the sale (fresh returnable quantities), and that must not wipe what
@@ -47,6 +50,9 @@ export function ReturnModal({ open, onClose, sale }: Props) {
     setRefundReference('')
     setFormError('')
     setConflict('')
+    setNeedsApproval(false)
+    setApproverEmail('')
+    setApproverPassword('')
   }, [open])
 
   const pricesIncludeTax = tax.data?.pricesIncludeTax ?? false
@@ -73,6 +79,7 @@ export function ReturnModal({ open, onClose, sale }: Props) {
         reason: reason.trim(),
         refundMethod,
         refundReference: refundReference.trim() || null,
+        approval: needsApproval ? { approverEmail, approverPassword } : undefined,
       }
       return salesApi.createReturn(sale.sale.id, body)
     },
@@ -86,6 +93,22 @@ export function ReturnModal({ open, onClose, sale }: Props) {
     },
     onError: (err) => {
       if (err instanceof ApiError) {
+        if (err.code === 'RETURN_APPROVAL_REQUIRED') {
+          // First attempt from a Cashier without the grant: reveal the approval fields, keep
+          // everything else the cashier already entered.
+          setNeedsApproval(true)
+          setFormError('')
+          setConflict('')
+          return
+        }
+        if (err.code === 'INVALID_APPROVER_CREDENTIALS') {
+          setFormError('Invalid manager credentials.')
+          return
+        }
+        if (err.code === 'VOID_APPROVER_WRONG_BRANCH' || err.code === 'VOID_APPROVER_NOT_AUTHORIZED') {
+          setFormError('This manager cannot approve this for your branch.')
+          return
+        }
         if (err.code === 'RETURN_QUANTITY_EXCEEDED' || err.code === 'RETURN_NOT_ALLOWED') {
           setConflict(err.message)
           qc.invalidateQueries({ queryKey: ['sales', sale.sale.id] })
@@ -121,6 +144,10 @@ export function ReturnModal({ open, onClose, sale }: Props) {
       setFormError('A return reason is required.')
       return
     }
+    if (needsApproval && (!approverEmail.trim() || !approverPassword)) {
+      setFormError('Manager account and password are required.')
+      return
+    }
     mutation.mutate()
   }
 
@@ -135,7 +162,7 @@ export function ReturnModal({ open, onClose, sale }: Props) {
             Cancel
           </Button>
           <Button size="sm" onClick={submit} loading={mutation.isPending}>
-            Record return
+            {needsApproval ? 'Approve & record return' : 'Record return'}
           </Button>
         </>
       }
@@ -143,7 +170,33 @@ export function ReturnModal({ open, onClose, sale }: Props) {
       {conflict && <Callout tone="warning">{conflict}</Callout>}
       {formError && <Callout tone="error">{formError}</Callout>}
 
+      {needsApproval && (
+        <Callout tone="info">
+          Manager approval required. You don&rsquo;t have permission to process returns — an
+          authorized Manager, Admin, or Owner must approve this return.
+        </Callout>
+      )}
+
       <form onSubmit={submit} className="space-y-4">
+        {needsApproval && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <TextField
+              label="Manager account"
+              name="approverEmail"
+              type="email"
+              value={approverEmail}
+              onChange={(e) => setApproverEmail(e.target.value)}
+              autoFocus
+            />
+            <TextField
+              label="Password"
+              name="approverPassword"
+              type="password"
+              value={approverPassword}
+              onChange={(e) => setApproverPassword(e.target.value)}
+            />
+          </div>
+        )}
         <div className="space-y-2">
           {eligible.map((i) => (
             <div key={i.id} className="rounded-lg border border-border bg-surface-subtle p-3">

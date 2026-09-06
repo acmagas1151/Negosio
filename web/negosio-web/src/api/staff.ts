@@ -36,7 +36,7 @@ export const staffApi = {
   reactivate: (id: string) =>
     apiRequest<StaffMemberDto>(`/api/staff/${id}/reactivate`, { method: 'POST' }),
 
-  setSalesVoidPermission: (id: string, body: ChangeStaffPermissionsRequest) =>
+  setPermissions: (id: string, body: ChangeStaffPermissionsRequest) =>
     apiRequest<StaffMemberDto>(`/api/staff/${id}/permissions`, { method: 'PUT', body }),
 }
 

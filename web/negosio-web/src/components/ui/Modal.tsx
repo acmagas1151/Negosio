@@ -11,12 +11,22 @@ interface ModalProps {
   children: ReactNode
   footer?: ReactNode
   size?: 'sm' | 'md'
+  /** Keeps `title` as the dialog's accessible name but doesn't render it as visible header text —
+   * for content (like a success confirmation) that wants its own bespoke heading in the body
+   * instead of the standard title-bar row. The close button still renders, alone, top-right. */
+  hideTitle?: boolean
 }
 
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
+// FOCUSABLE is a comma-separated selector list — appending `:not(...)` to the end of the whole
+// string would only exclude it from the last alternative, not every one, so it's distributed
+// across each branch here instead.
+const FOCUSABLE_EXCEPT_CLOSE = FOCUSABLE.split(',')
+  .map((s) => `${s}:not([data-modal-close])`)
+  .join(',')
 
-export function Modal({ open, onClose, title, children, footer, size = 'md' }: ModalProps) {
+export function Modal({ open, onClose, title, children, footer, size = 'md', hideTitle = false }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const restoreFocusRef = useRef<HTMLElement | null>(null)
@@ -57,10 +67,13 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }: M
     restoreFocusRef.current = document.activeElement as HTMLElement | null
     const { overflow } = document.body.style
     document.body.style.overflow = 'hidden'
-    // Focus the first focusable node in the panel (fall back to the panel itself).
+    // Focus the first focusable node in the panel, skipping the close button itself — it's always
+    // the very first focusable element in DOM order (rendered before any content), so without this
+    // exclusion every modal would open with focus (and its visible ring) on "dismiss" rather than
+    // on its actual first control. Falls back to the panel itself if there's truly nothing else.
     const raf = requestAnimationFrame(() => {
       const target =
-        panelRef.current?.querySelector<HTMLElement>(FOCUSABLE) ?? panelRef.current
+        panelRef.current?.querySelector<HTMLElement>(FOCUSABLE_EXCEPT_CLOSE) ?? panelRef.current
       target?.focus()
     })
     return () => {
@@ -83,7 +96,7 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }: M
         aria-hidden="true"
         tabIndex={-1}
         onClick={onClose}
-        className="absolute inset-0 bg-text-primary/40"
+        className="absolute inset-0 bg-text-primary/30 backdrop-blur-[2px]"
       />
       <div
         ref={panelRef}
@@ -96,14 +109,15 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }: M
           size === 'sm' ? 'max-w-sm' : 'max-w-lg',
         )}
       >
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <h2 id={titleId} className="text-lg font-bold text-text-primary">
+        <div className={cn('flex items-start gap-4', hideTitle ? 'justify-end' : 'mb-4 justify-between')}>
+          <h2 id={titleId} className={hideTitle ? 'sr-only' : 'text-lg font-bold text-text-primary'}>
             {title}
           </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
+            data-modal-close
             className="-m-1.5 rounded-lg p-1.5 text-text-secondary hover:bg-surface-subtle"
           >
             <X className="size-5" aria-hidden="true" />

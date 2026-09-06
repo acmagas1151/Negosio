@@ -1,11 +1,9 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
-using Negosio.Application.Auth;
 using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Application.Inventory;
-using Negosio.Application.Staff;
 using Negosio.Domain.Entities;
 using Negosio.Domain.Enums;
 
@@ -17,24 +15,21 @@ public sealed class VoidSaleService : IVoidSaleService
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<VoidSaleRequest> _validator;
     private readonly IBranchAccessResolver _branchAccess;
-    private readonly ISalesVoidPermissionService _permissions;
-    private readonly IApproverVerificationService _approverVerification;
+    private readonly IVoidAuthorizationResolver _authResolver;
     private readonly IInventoryPosting _inventory;
     private readonly ISaleQueryService _saleQuery;
     private readonly TimeProvider _timeProvider;
 
     public VoidSaleService(
         ITenantDbContext db, ICurrentUser currentUser, IValidator<VoidSaleRequest> validator,
-        IBranchAccessResolver branchAccess, ISalesVoidPermissionService permissions,
-        IApproverVerificationService approverVerification, IInventoryPosting inventory,
-        ISaleQueryService saleQuery, TimeProvider timeProvider)
+        IBranchAccessResolver branchAccess, IVoidAuthorizationResolver authResolver,
+        IInventoryPosting inventory, ISaleQueryService saleQuery, TimeProvider timeProvider)
     {
         _db = db;
         _currentUser = currentUser;
         _validator = validator;
         _branchAccess = branchAccess;
-        _permissions = permissions;
-        _approverVerification = approverVerification;
+        _authResolver = authResolver;
         _inventory = inventory;
         _saleQuery = saleQuery;
         _timeProvider = timeProvider;
@@ -72,7 +67,8 @@ public sealed class VoidSaleService : IVoidSaleService
         // credentials or opening a transaction. NOT authoritative by itself; re-checked below.
         await EnsureEligibleAsync(sale, tenantId, nowUtc, cancellationToken);
 
-        var (voidedByUserId, approvedByUserId) = await ResolveActorAsync(sale.BranchId, request, cancellationToken);
+        var (voidedByUserId, approvedByUserId) =
+            await _authResolver.ResolveAsync(sale.BranchId, request.Approval, cancellationToken);
 
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
 
@@ -155,35 +151,6 @@ public sealed class VoidSaleService : IVoidSaleService
         // calls (which then proceed to write); if called after a lost race, CanVoid should always
         // be false (the very state change that beat us is what makes it ineligible) — if it somehow
         // isn't, that's a bug worth a loud failure rather than a silent no-op, hence no return path.
-    }
-
-    private async Task<(Guid VoidedBy, Guid? ApprovedBy)> ResolveActorAsync(
-        Guid saleBranchId, VoidSaleRequest request, CancellationToken cancellationToken)
-    {
-        var role = _currentUser.Role;
-
-        if (role is UserRole.Owner or UserRole.Admin or UserRole.Manager)
-        {
-            // Manager's branch match was already asserted by the 404 guard above (AssignedBranchIdAsync).
-            return (_currentUser.UserId, null);
-        }
-
-        // role == UserRole.Cashier, explicitly — the top-of-method guard already rejected every
-        // other role, so this is never reached as a fallback for "anything else."
-        if (await _permissions.HasGrantAsync(_currentUser.UserId, cancellationToken))
-        {
-            return (_currentUser.UserId, null);
-        }
-
-        if (request.Approval is null)
-        {
-            throw new BusinessRuleException(ErrorCodes.VoidApprovalRequired,
-                "You don't have permission to void completed sales. An authorized Manager, Admin, or Owner must approve this void.");
-        }
-
-        var approverId = await _approverVerification.VerifyAsync(
-            request.Approval.ApproverEmail, request.Approval.ApproverPassword, saleBranchId, cancellationToken);
-        return (_currentUser.UserId, approverId);
     }
 
     private static string IneligibilityMessage(string code) => code switch

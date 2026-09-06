@@ -36,7 +36,10 @@ public sealed record StaffMemberDto(
     string? InvitedByName,
     Guid? BranchId,
     string? BranchName,
-    bool SalesVoid);
+    bool SalesVoid,
+    bool SalesReturn,
+    bool DiscountApply,
+    bool CashDrawerOpen);
 
 /// <summary>Branch is required for a branch-scoped role, and must be absent for Owner/Admin.</summary>
 public sealed record InviteStaffRequest(string Email, string Role, string? BranchId = null);
@@ -46,14 +49,13 @@ public sealed record ChangeStaffRoleRequest(string Role, string? BranchId = null
 
 public sealed record ChangeStaffBranchRequest(string BranchId);
 
-public sealed record ChangeStaffPermissionsRequest(bool SalesVoid);
-
-public interface ISalesVoidPermissionService
-{
-    Task<bool> HasGrantAsync(Guid userId, CancellationToken cancellationToken = default);
-
-    Task<StaffMemberDto> SetAsync(Guid targetUserId, bool salesVoid, CancellationToken cancellationToken = default);
-}
+/// <summary>
+/// One flag per grantable <see cref="UserPermission"/> — kept as explicit named fields (matching
+/// every other DTO in this codebase) rather than a permission→bool map, so the wire contract stays
+/// self-documenting. Extend this record (and <see cref="IUserPermissionGrantService.SetAsync"/>'s
+/// caller in StaffController) when a new permission is added; the write path itself needs no change.
+/// </summary>
+public sealed record ChangeStaffPermissionsRequest(bool SalesVoid, bool SalesReturn, bool DiscountApply, bool CashDrawerOpen);
 
 /// <summary>
 /// Returned after creating / resending an invitation. <see cref="AcceptPath"/> is populated in

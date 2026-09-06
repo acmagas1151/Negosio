@@ -20,6 +20,7 @@ public sealed record PosCatalogItemDto(
 public sealed record PosCatalogQuery(
     Guid BranchId,
     string? Search = null,
+    Guid? CategoryId = null,
     int Page = 1,
     int PageSize = PagedResult<PosCatalogItemDto>.DefaultPageSize);
 

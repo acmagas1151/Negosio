@@ -6,11 +6,12 @@ import { posApi, salesApi, sessionsApi } from '../api/pos'
 import type { CashMovementType } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useCan } from '../lib/useCan'
-import type { CurrentSaleRef } from '../lib/pos'
+import type { LastSaleRef } from '../lib/pos'
 import { posStorage } from '../lib/posStorage'
 import { BranchPicker } from '../components/pos/BranchPicker'
 import { CashMovementModal } from '../components/pos/CashMovementModal'
 import { CloseSessionModal } from '../components/pos/CloseSessionModal'
+import { OpenCashDrawerModal } from '../components/pos/OpenCashDrawerModal'
 import { PosSessionGate } from '../components/pos/PosSessionGate'
 import { PosShell } from '../components/pos/PosShell'
 import { PosTerminal } from '../components/pos/PosTerminal'
@@ -50,11 +51,8 @@ export default function PosPage() {
   const [skipGate, setSkipGate] = useState(false)
   const [closeOpen, setCloseOpen] = useState(false)
   const [cashMovementType, setCashMovementType] = useState<CashMovementType | null>(null)
+  const [cashDrawerModalOpen, setCashDrawerModalOpen] = useState(false)
   const [pickerNotice, setPickerNotice] = useState<string | null>(null)
-  // The terminal's "current sale" — real only, set by a successful checkout (and kept in sync when
-  // that same sale is later voided). Cleared below whenever branch/register/session changes so it
-  // never leaks across a different session.
-  const [lastCompletedSale, setLastCompletedSale] = useState<CurrentSaleRef | null>(null)
 
   const ctx = contextQuery.data
   const persistedBranch =
@@ -73,13 +71,11 @@ export default function PosPage() {
     if (user) posStorage.writeBranch({ tenantId: user.tenantId }, id)
     setBranchOverride(id)
     setRegisterId(null)
-    setLastCompletedSale(null)
   }
   const switchBranch = () => {
     if (user) posStorage.clearBranch({ tenantId: user.tenantId })
     setBranchOverride(null)
     setRegisterId(null)
-    setLastCompletedSale(null)
   }
 
   const registersQuery = useQuery({
@@ -96,17 +92,17 @@ export default function PosPage() {
     retry: false,
   })
 
-  // Fallback source for "current sale": the most recent sale in THIS register session (bounded by
-  // its openedAtUtc, so a closed-then-reopened register never leaks a stale sale from a past
-  // shift). Covers refresh / Exit -> Continue, where the in-memory lastCompletedSale is gone even
-  // though the cashier really has completed sales this session. invalidateQueries(['sales']) on
-  // checkout success already covers this key too (prefix match), so it refreshes automatically.
+  // The single source of truth for "last sale" — the most recent sale in THIS register session
+  // (bounded by its openedAtUtc, so a closed-then-reopened register never leaks a stale sale from a
+  // past shift), read straight from the backend rather than cached in React state. That's what
+  // keeps it honest: a void from anywhere (this terminal, another tab, the Sales page) is reflected
+  // as soon as this query refetches, instead of a locally-remembered ref going stale. No status
+  // filter — a voided sale still IS the most recent transaction in this session and should keep
+  // showing as such (labeled voided), not vanish. invalidateQueries(['sales']) on checkout and void
+  // success (both already fire elsewhere) covers this key too (prefix match), so it stays fresh.
   const openedAtUtc = sessionQuery.data?.openedAtUtc
   const recentSalesQuery = useQuery({
     queryKey: ['sales', 'recent', registerId, openedAtUtc],
-    // No status filter — a voided sale still IS the most recent transaction in this session and
-    // should keep showing as such (labeled voided), not vanish. invalidateQueries(['sales']) on
-    // both checkout and void success already covers this key (prefix match), so it stays fresh.
     queryFn: () => salesApi.list({ registerId: registerId!, fromUtc: openedAtUtc, pageSize: 1 }),
     enabled: !!registerId && !!openedAtUtc,
   })
@@ -147,7 +143,6 @@ export default function PosPage() {
   const backToRegisters = () => {
     setRegisterId(null)
     setSkipGate(false)
-    setLastCompletedSale(null)
     registersQuery.refetch()
   }
 
@@ -216,18 +211,9 @@ export default function PosPage() {
   const session = sessionQuery.data
 
   const fetchedRecent = recentSalesQuery.data?.items[0]
-  const currentSale: CurrentSaleRef | null = lastCompletedSale
-    ? lastCompletedSale
-    : fetchedRecent
-      ? { saleId: fetchedRecent.id, saleNumber: fetchedRecent.saleNumber, status: fetchedRecent.status }
-      : null
-
-  // Keep showing the same sale once it's voided (status updates in place) rather than hiding it —
-  // it's still the most recent thing that happened in this session, just no longer voidable.
-  // Never touches the active cart — that's a separate, independent decision.
-  const handleSaleVoided = (voided: CurrentSaleRef) => {
-    if (currentSale && currentSale.saleId === voided.saleId) setLastCompletedSale(voided)
-  }
+  const lastSale: LastSaleRef | null = fetchedRecent
+    ? { saleId: fetchedRecent.id, saleNumber: fetchedRecent.saleNumber, status: fetchedRecent.status }
+    : null
 
   return (
     <>
@@ -239,15 +225,14 @@ export default function PosPage() {
         onCloseSession={() => setCloseOpen(true)}
         onCashIn={() => setCashMovementType('CashIn')}
         onCashOut={() => setCashMovementType('CashOut')}
+        onOpenCashDrawer={() => setCashDrawerModalOpen(true)}
       >
         <PosTerminal
           tenantId={user!.tenantId}
           branchId={branchId}
           registerId={chosen.id}
           registerSessionId={session.id}
-          currentSale={currentSale}
-          onSaleCompleted={setLastCompletedSale}
-          onSaleVoided={handleSaleVoided}
+          lastSale={lastSale}
           onSessionLost={() => sessionQuery.refetch()}
         />
       </PosShell>
@@ -268,6 +253,13 @@ export default function PosPage() {
         sessionId={session.id}
         type={cashMovementType ?? 'CashIn'}
         onDone={() => sessionQuery.refetch()}
+      />
+
+      <OpenCashDrawerModal
+        open={cashDrawerModalOpen}
+        onClose={() => setCashDrawerModalOpen(false)}
+        sessionId={session.id}
+        onOpened={() => sessionQuery.refetch()}
       />
     </>
   )

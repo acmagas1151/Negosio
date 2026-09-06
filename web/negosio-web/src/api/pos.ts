@@ -1,11 +1,14 @@
 import { apiRequest } from './client'
 import { qs } from './query-string'
 import type {
+  CancelTransactionAuthorizationRequest,
+  CashDrawerOpenDto,
   CheckoutRequest,
   CreateCashMovementRequest,
   CreateRegisterRequest,
   CreateReturnRequest,
   CloseRegisterSessionRequest,
+  OpenCashDrawerRequest,
   OpenRegisterSessionRequest,
   PagedResult,
   PosCatalogItemDto,
@@ -52,12 +55,18 @@ export const sessionsApi = {
     list: (sessionId: string) =>
       apiRequest<RegisterCashMovementDto[]>(`/api/register-sessions/${sessionId}/cash-movements`),
   },
+  cashDrawer: {
+    open: (sessionId: string, body: OpenCashDrawerRequest) =>
+      apiRequest<CashDrawerOpenDto>(`/api/register-sessions/${sessionId}/cash-drawer/open`, { method: 'POST', body }),
+  },
 }
 
 export const posApi = {
   context: () => apiRequest<PosContextDto>('/api/pos/context'),
   registers: (branchId?: string) =>
     apiRequest<PosRegisterDto[]>(`/api/pos/registers${qs({ branchId })}`),
+  authorizeCancelTransaction: (body: CancelTransactionAuthorizationRequest) =>
+    apiRequest<void>('/api/pos/transactions/cancel/authorize', { method: 'POST', body }),
 }
 
 export const posCatalogApi = {

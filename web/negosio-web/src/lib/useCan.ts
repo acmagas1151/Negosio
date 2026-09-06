@@ -9,7 +9,7 @@ export type Capability =
   | 'register:manage'
   | 'pos:operate'
   | 'sales:view'
-  | 'refund:manage'
+  | 'sales:return'
   | 'settings:write'
   | 'staff:manage'
   | 'branch:manage'
@@ -36,7 +36,9 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   'register:manage': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
   'pos:operate': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
   'sales:view': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
-  'refund:manage': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
+  // Mirrors SalesController's class-level RefundManage policy (Owner/Admin/Manager/Cashier) — the
+  // Cashier direct-grant-vs-approval split is resolved server-side per return, not by this capability.
+  'sales:return': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
   'settings:write': new Set<UserRole>(['Owner', 'Admin']),
   'staff:manage': new Set<UserRole>(['Owner', 'Admin']),
   'branch:manage': new Set<UserRole>(['Owner', 'Admin']),

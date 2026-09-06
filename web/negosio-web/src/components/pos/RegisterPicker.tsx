@@ -72,19 +72,21 @@ export function RegisterPicker({
                       : 'Available'}
                 </p>
               </div>
-              {mine ? (
-                <Button size="sm" onClick={() => onContinue(r.id)}>
-                  Continue
-                </Button>
-              ) : open ? (
-                <Button size="sm" variant="secondary" disabled>
-                  In use
-                </Button>
-              ) : (
-                <Button size="sm" variant="secondary" onClick={() => onSelect(r.id)}>
-                  Select
-                </Button>
-              )}
+              <div className="shrink-0">
+                {mine ? (
+                  <Button size="sm" className="whitespace-nowrap" onClick={() => onContinue(r.id)}>
+                    Continue
+                  </Button>
+                ) : open ? (
+                  <Button size="sm" variant="secondary" className="whitespace-nowrap" disabled>
+                    In use
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="secondary" className="whitespace-nowrap" onClick={() => onSelect(r.id)}>
+                    Select
+                  </Button>
+                )}
+              </div>
             </li>
           )
         })}

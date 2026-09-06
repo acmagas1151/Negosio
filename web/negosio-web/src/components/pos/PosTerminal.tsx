@@ -9,6 +9,8 @@ import type {
   DiscountType,
   PosCatalogItemDto,
   SaleDetailDto,
+  SaleResultDto,
+  VoidSaleApprovalInput,
 } from '../../api/types'
 import { posStorage, type TerminalCtx } from '../../lib/posStorage'
 import { usePosCart } from '../../hooks/usePosCart'
@@ -17,23 +19,28 @@ import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { usePosShortcuts } from '../../hooks/usePosShortcuts'
 import { useTaxSettings } from '../../hooks/useTaxSettings'
 import { calcTotals } from '../../lib/saleMath'
-import { formatMoney } from '../../lib/format'
-import type { CurrentSaleRef } from '../../lib/pos'
+import type { LastSaleRef } from '../../lib/pos'
 import { VOID_INELIGIBLE_MESSAGES } from '../../lib/pos'
 import { hasReturnableQty } from '../../lib/returns'
 import { useCan } from '../../lib/useCan'
 import { ReturnModal } from '../sales/ReturnModal'
 import { VoidSaleModal } from '../sales/VoidSaleModal'
 import { Callout, ConfirmDialog, EmptyState, ErrorState, Pagination, SkeletonText, useToast } from '../ui'
+import { CancelTransactionModal } from './CancelTransactionModal'
 import { CartPanel } from './CartPanel'
+import { CategoryFilters } from './CategoryFilters'
 import { CheckPriceModal } from './CheckPriceModal'
+import { DiscountApprovalModal } from './DiscountApprovalModal'
+import { PaymentFailedModal } from './PaymentFailedModal'
 import { PaymentModal } from './PaymentModal'
+import { PaymentSuccessModal } from './PaymentSuccessModal'
 import { PosActionBar } from './PosActionBar'
 import { PosProductGrid } from './PosProductGrid'
 import { PosSearchBar } from './PosSearchBar'
 import { ReprintReceiptModal } from './ReprintReceiptModal'
 import { TransactionDiscountModal } from './TransactionDiscountModal'
 import { TransactionLookupModal } from './TransactionLookupModal'
+import { VoidChoiceModal } from './VoidChoiceModal'
 
 const PAGE_SIZE = 24
 
@@ -50,15 +57,11 @@ interface Props {
   branchId: string
   registerId: string
   registerSessionId: string
-  /** The terminal's current sale — a successful checkout here, or (surviving a refresh / Exit ->
-   * Continue) the most recent sale in this register session, resolved by the parent. Independent
-   * of the active cart: Void and Reprint act on this, never on activeCart. */
-  currentSale: CurrentSaleRef | null
-  onSaleCompleted: (sale: CurrentSaleRef) => void
-  /** Called when a void succeeds, with the voided sale's updated ref (status: 'Voided') — lets the
-   * parent update its reference in place if that was the current sale, without touching the active
-   * cart. It keeps showing (now labeled voided) rather than disappearing. */
-  onSaleVoided: (voided: CurrentSaleRef) => void
+  /** The most recent completed sale in this register session, resolved by the parent straight from
+   * the backend. Independent of the active cart: Reprint acts on this, never on the cart. Void
+   * treats it as a search-by-number fallback only — it never lets the cashier vote "the cart" via
+   * this ref, since the cart's cancel path (below) doesn't touch a Sale at all. */
+  lastSale: LastSaleRef | null
   onSessionLost: () => void
 }
 
@@ -67,9 +70,7 @@ export function PosTerminal({
   branchId,
   registerId,
   registerSessionId,
-  currentSale,
-  onSaleCompleted,
-  onSaleVoided,
+  lastSale,
   onSessionLost,
 }: Props) {
   const ctx: TerminalCtx = useMemo(
@@ -82,6 +83,7 @@ export function PosTerminal({
   const { toast } = useToast()
 
   const [term, setTerm] = useState('')
+  const [categoryId, setCategoryId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const debounced = useDebouncedValue(term, 300)
 
@@ -91,14 +93,29 @@ export function PosTerminal({
   const [payError, setPayError] = useState<string | null>(null)
   const [needsNewId, setNeedsNewId] = useState(false)
   const [restoredAttempt, setRestoredAttempt] = useState<string | null>(null)
+  const [discountApprovalOpen, setDiscountApprovalOpen] = useState(false)
+  const [discountApprovalError, setDiscountApprovalError] = useState<string | null>(null)
+  const [successResult, setSuccessResult] = useState<SaleResultDto | null>(null)
+  const [successPayment, setSuccessPayment] = useState<CheckoutPaymentInput | null>(null)
+  // Only for a genuine payment-attempt failure (network/connectivity, a concurrency conflict, or a
+  // truly unexpected error) — insufficient inventory, discount approval, and a lost register
+  // session each already have their own targeted recovery flow and never populate this.
+  const [paymentFailure, setPaymentFailure] = useState<
+    { message: string; certainNotCharged: boolean } | null
+  >(null)
 
   const idRef = useRef<string | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  // The payment the cashier already confirmed — kept so a DISCOUNT_APPROVAL_REQUIRED retry can
+  // resubmit the exact same charge with the approval attached, without re-prompting for payment.
+  const pendingPaymentRef = useRef<CheckoutPaymentInput | null>(null)
 
   const canVoid = useCan('sales:void')
-  const canReturn = useCan('refund:manage')
+  const canReturn = useCan('sales:return')
 
   const [newTxnConfirmOpen, setNewTxnConfirmOpen] = useState(false)
+  const [voidChoiceOpen, setVoidChoiceOpen] = useState(false)
+  const [cancelTxnOpen, setCancelTxnOpen] = useState(false)
   const [voidLookupOpen, setVoidLookupOpen] = useState(false)
   const [voidTarget, setVoidTarget] = useState<SaleDetailDto | null>(null)
   const [returnLookupOpen, setReturnLookupOpen] = useState(false)
@@ -131,12 +148,18 @@ export function PosTerminal({
   useEffect(() => {
     // oxlint-disable-next-line set-state-in-effect
     setPage(1)
-  }, [debounced])
+  }, [debounced, categoryId])
 
   const catalog = useQuery({
-    queryKey: ['pos-catalog', { branchId, search: debounced, page }],
+    queryKey: ['pos-catalog', { branchId, search: debounced, categoryId, page }],
     queryFn: () =>
-      posCatalogApi.search({ branchId, search: debounced || undefined, page, pageSize: PAGE_SIZE }),
+      posCatalogApi.search({
+        branchId,
+        search: debounced || undefined,
+        categoryId: categoryId ?? undefined,
+        page,
+        pageSize: PAGE_SIZE,
+      }),
   })
 
   const rotateIfNeeded = useCallback(() => {
@@ -244,19 +267,27 @@ export function PosTerminal({
     return { ok: true }
   }, [])
 
-  // Reprint skips the manual sale-number lookup when the terminal already knows the current sale;
-  // it falls back to the existing lookup flow only when there isn't one at all (a genuinely empty
-  // session — no sale has ever completed here yet).
+  // Always goes through the lookup — the terminal's last sale is only ever a suggestion (prefilled
+  // into the search field below), never an automatic pick, so the cashier can reprint any sale.
   const startReprint = useCallback(() => {
-    if (currentSale) {
-      window.open(`/sales/${currentSale.saleId}/receipt?print=1`, '_blank', 'noopener')
+    setReprintOpen(true)
+  }, [])
+
+  // Void either cancels the uncompleted cart (nothing to search — there's no Sale yet) or looks up
+  // an existing sale by number. A cart with nothing in it has nothing to cancel, so skip straight
+  // to the lookup in that case rather than offering a choice with only one live option.
+  const onVoid = useCallback(() => {
+    if (cart.isEmpty) {
+      setVoidLookupOpen(true)
       return
     }
-    setReprintOpen(true)
-  }, [currentSale])
+    setVoidChoiceOpen(true)
+  }, [cart.isEmpty])
 
   const anyPosModalOpen =
     newTxnConfirmOpen ||
+    voidChoiceOpen ||
+    cancelTxnOpen ||
     voidLookupOpen ||
     voidTarget != null ||
     returnLookupOpen ||
@@ -264,7 +295,10 @@ export function PosTerminal({
     reprintOpen ||
     checkPriceOpen ||
     discountOpen ||
-    payOpen
+    payOpen ||
+    discountApprovalOpen ||
+    successResult != null ||
+    paymentFailure != null
 
   usePosShortcuts(
     {
@@ -304,7 +338,14 @@ export function PosTerminal({
       : { subtotal: 0, discountTotal: 0, taxTotal: 0, grandTotal: 0 }
 
   const mutation = useMutation({
-    mutationFn: (payment: CheckoutPaymentInput) => {
+    mutationFn: ({
+      payment,
+      approval,
+    }: {
+      payment: CheckoutPaymentInput
+      approval?: VoidSaleApprovalInput
+    }) => {
+      pendingPaymentRef.current = payment
       const clientRequestId = ensureId()
       const body: CheckoutRequest = {
         branchId,
@@ -316,6 +357,7 @@ export function PosTerminal({
           discount: l.discount.type === 'None' ? null : l.discount,
         })),
         payments: [payment],
+        approval,
       }
       return checkoutApi.checkout(body)
     },
@@ -324,32 +366,71 @@ export function PosTerminal({
       setPayError(null)
       setCheckoutError(null)
     },
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
       idRef.current = null
+      pendingPaymentRef.current = null
       setStatus('idle')
       setPayOpen(false)
+      setDiscountApprovalOpen(false)
       setRestoredAttempt(null)
       cart.clear() // also clears the persisted cart + attempt-id keys
       qc.invalidateQueries({ queryKey: ['inventory'] })
       qc.invalidateQueries({ queryKey: ['sales'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
-      onSaleCompleted({ saleId: result.saleId, saleNumber: result.saleNumber, status: result.status })
-      toast('success', `Sale #${result.saleNumber} completed — ${formatMoney(result.grandTotal)}`)
+      // The success modal is the primary confirmation; this toast is just a lightweight echo, so
+      // it stays short rather than repeating everything the modal already shows in detail.
+      toast('success', `Sale #${result.saleNumber} completed`)
+      setSuccessPayment(variables.payment)
+      setSuccessResult(result)
     },
     onError: (err) => {
       setStatus('failed')
       if (!(err instanceof ApiError)) {
-        setPayError('Payment failed. Please try again.')
+        // Truly unexpected (not even a typed API error) — no way to know whether the sale was
+        // actually recorded, so this is deliberately the ambiguous message, never a false "not
+        // charged" guarantee.
+        setPayOpen(false)
+        setPaymentFailure({
+          message: "We couldn't complete the payment. Please try again.",
+          certainNotCharged: false,
+        })
+        return
+      }
+      if (err.code === 'DISCOUNT_APPROVAL_REQUIRED') {
+        // First attempt from a Cashier without the grant: reveal the approval dialog, keeping the
+        // already-confirmed payment (pendingPaymentRef) so the retry doesn't re-prompt for it.
+        setPayOpen(false)
+        setDiscountApprovalError(null)
+        setDiscountApprovalOpen(true)
+        return
+      }
+      if (err.code === 'INVALID_APPROVER_CREDENTIALS') {
+        // Only ever reached via a discount-approval retry — Void/CashDrawer have their own modals
+        // and their own onError handlers, never this mutation.
+        setDiscountApprovalError('Invalid manager credentials.')
+        return
+      }
+      if (err.code === 'VOID_APPROVER_WRONG_BRANCH') {
+        setDiscountApprovalError('This manager cannot approve this for your branch.')
         return
       }
       if (err.code === 'NETWORK_ERROR') {
-        setPayError(
-          "We couldn't confirm the sale. Check your last sale under Sales, then Retry — it won't charge twice.",
-        )
+        // The response was lost, not necessarily the request — the sale may have completed on the
+        // backend even though this client never saw it. Never claim "not charged" here; a retry is
+        // still safe (same clientRequestId, so the backend just returns the existing sale instead
+        // of double-charging), but the cashier should be told the state is genuinely unconfirmed.
+        setPayOpen(false)
+        setPaymentFailure({
+          message: 'Unable to reach the payment service. Please try again.',
+          certainNotCharged: false,
+        })
         return
       }
       if (err.code === 'CHECKOUT_CONCURRENCY_CONFLICT') {
-        setPayError('That didn’t go through. Please retry.')
+        // The transaction was rolled back before any Sale was written — safe to say for certain
+        // that nothing was charged.
+        setPayOpen(false)
+        setPaymentFailure({ message: "That didn't go through. Please try again.", certainNotCharged: true })
         return
       }
       if (err.code === 'INSUFFICIENT_INVENTORY') {
@@ -376,7 +457,14 @@ export function PosTerminal({
         onSessionLost()
         return
       }
-      setPayError(err.message)
+      // Any other code we don't specifically recognize — an unmapped backend error, not something
+      // to show verbatim (could be an internal detail), and not something we can vouch for the
+      // charge state of either.
+      setPayOpen(false)
+      setPaymentFailure({
+        message: "We couldn't complete the payment. Please try again.",
+        certainNotCharged: false,
+      })
     },
   })
 
@@ -386,7 +474,7 @@ export function PosTerminal({
     <div className="flex h-full min-h-0 flex-col">
       <PosActionBar
         onNewTransaction={onNewTransaction}
-        onVoid={() => setVoidLookupOpen(true)}
+        onVoid={onVoid}
         onDiscounts={() => setDiscountOpen(true)}
         onReturns={() => setReturnLookupOpen(true)}
         onReprint={startReprint}
@@ -396,9 +484,10 @@ export function PosTerminal({
         discountsDisabled={cart.isEmpty}
       />
 
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[62%_38%] lg:grid-rows-1">
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[65%_35%] lg:grid-rows-1">
         <section className="flex min-h-0 flex-col gap-3 p-4">
           <PosSearchBar ref={searchInputRef} value={term} onChange={setTerm} onEnter={lookupBarcode} />
+          <CategoryFilters value={categoryId} onChange={setCategoryId} />
           <div className="min-h-0 flex-1 overflow-y-auto">
             {catalog.isError ? (
               <ErrorState
@@ -432,13 +521,12 @@ export function PosTerminal({
           )}
         </section>
 
-        <aside className="min-h-0">
+        <aside className="min-h-0 p-4 lg:pl-0">
           <CartPanel
             lines={cart.lines}
             totals={totals}
             tax={tax.data}
             taxPending={tax.isPending}
-            currentSale={currentSale}
             onSetQty={onSetQty}
             onRemove={onRemove}
             onSetDiscount={onSetDiscount}
@@ -463,7 +551,45 @@ export function PosTerminal({
         amountDue={totals.grandTotal}
         submitting={status === 'submitting'}
         error={payError}
-        onConfirm={(payment) => mutation.mutate(payment)}
+        onConfirm={(payment) => mutation.mutate({ payment })}
+      />
+
+      <PaymentSuccessModal
+        open={successResult != null}
+        onClose={() => setSuccessResult(null)}
+        result={successResult}
+        payment={successPayment}
+        onNewTransaction={() => {
+          setSuccessResult(null)
+          searchInputRef.current?.focus()
+        }}
+      />
+
+      <PaymentFailedModal
+        open={paymentFailure != null}
+        onClose={() => setPaymentFailure(null)}
+        onTryAgain={() => {
+          setPaymentFailure(null)
+          setPayOpen(true)
+        }}
+        amount={totals.grandTotal}
+        payment={pendingPaymentRef.current}
+        message={paymentFailure?.message ?? ''}
+        certainNotCharged={paymentFailure?.certainNotCharged ?? false}
+      />
+
+      <DiscountApprovalModal
+        open={discountApprovalOpen}
+        onClose={() => {
+          if (!mutation.isPending) setDiscountApprovalOpen(false)
+        }}
+        onSubmit={(approval) => {
+          if (pendingPaymentRef.current) {
+            mutation.mutate({ payment: pendingPaymentRef.current, approval })
+          }
+        }}
+        submitting={mutation.isPending}
+        error={discountApprovalError}
       />
 
       <ConfirmDialog
@@ -480,14 +606,38 @@ export function PosTerminal({
         confirmLabel="Start new transaction"
       />
 
+      <VoidChoiceModal
+        open={voidChoiceOpen}
+        onClose={() => setVoidChoiceOpen(false)}
+        cartItemCount={cart.lines.length}
+        onCancelTransaction={() => {
+          setVoidChoiceOpen(false)
+          setCancelTxnOpen(true)
+        }}
+        onVoidExistingSale={() => {
+          setVoidChoiceOpen(false)
+          setVoidLookupOpen(true)
+        }}
+      />
+      <CancelTransactionModal
+        open={cancelTxnOpen}
+        onClose={() => setCancelTxnOpen(false)}
+        branchId={branchId}
+        itemCount={cart.lines.length}
+        grandTotal={totals.grandTotal}
+        onAuthorized={() => {
+          confirmNewTransaction()
+          toast('success', 'Transaction cancelled')
+        }}
+      />
+
       <TransactionLookupModal
         open={voidLookupOpen}
         onClose={() => setVoidLookupOpen(false)}
         title="Void sale"
         actionLabel="Continue to void"
-        quickPickLabel="Void this sale"
-        quickPick={currentSale && currentSale.status !== 'Voided' ? currentSale : null}
         isEligible={voidEligibility}
+        initialSaleNumber={lastSale?.saleNumber}
         onContinue={(sale) => {
           setVoidLookupOpen(false)
           setVoidTarget(sale)
@@ -498,12 +648,7 @@ export function PosTerminal({
           open
           onClose={() => setVoidTarget(null)}
           sale={voidTarget}
-          onVoided={(updated) => {
-            onSaleVoided({
-              saleId: updated.sale.id,
-              saleNumber: updated.sale.saleNumber,
-              status: updated.sale.status,
-            })
+          onVoided={() => {
             setVoidTarget(null)
             qc.invalidateQueries({ queryKey: ['pos-catalog'] })
           }}
@@ -525,7 +670,11 @@ export function PosTerminal({
         <ReturnModal open onClose={() => setReturnTarget(null)} sale={returnTarget} />
       )}
 
-      <ReprintReceiptModal open={reprintOpen} onClose={() => setReprintOpen(false)} />
+      <ReprintReceiptModal
+        open={reprintOpen}
+        onClose={() => setReprintOpen(false)}
+        suggestedSaleNumber={lastSale?.saleNumber}
+      />
 
       <CheckPriceModal
         open={checkPriceOpen}
@@ -538,10 +687,10 @@ export function PosTerminal({
         open={discountOpen}
         onClose={() => setDiscountOpen(false)}
         lines={cart.lines}
-        onApply={(percent) => {
+        onApply={(assignments) => {
           rotateIfNeeded()
-          for (const line of cart.lines) {
-            setLineDiscount(line.variantId, { type: 'Percentage', value: percent })
+          for (const a of assignments) {
+            setLineDiscount(a.variantId, a.discount)
           }
         }}
       />

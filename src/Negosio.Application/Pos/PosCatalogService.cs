@@ -40,6 +40,11 @@ public sealed class PosCatalogService : IPosCatalogService
                 (x.v.Barcode != null && x.v.Barcode.Contains(term)));
         }
 
+        if (query.CategoryId is { } categoryId)
+        {
+            q = q.Where(x => x.p.CategoryId == categoryId);
+        }
+
         var projected = q
             .OrderBy(x => x.p.Name).ThenBy(x => x.v.Name)
             .Select(x => new Row(

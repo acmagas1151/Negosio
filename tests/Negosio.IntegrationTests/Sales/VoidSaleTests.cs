@@ -90,7 +90,7 @@ public class VoidSaleTests : IntegrationTest
         Authorize(owner.AccessToken);
         await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions")
         {
-            Content = JsonContent.Create(new ChangeStaffPermissionsRequest(true))
+            Content = JsonContent.Create(new ChangeStaffPermissionsRequest(true, false, false, false))
         });
 
         var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);

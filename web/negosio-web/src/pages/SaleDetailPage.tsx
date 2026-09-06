@@ -18,7 +18,7 @@ import { Button, ErrorState, LoadingState } from '../components/ui'
 
 export default function SaleDetailPage() {
   const { id = '' } = useParams()
-  const canRefund = useCan('refund:manage')
+  const canRefund = useCan('sales:return')
   const canVoidCapability = useCan('sales:void')
   const [returnOpen, setReturnOpen] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)

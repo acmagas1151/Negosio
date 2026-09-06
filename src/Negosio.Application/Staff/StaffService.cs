@@ -75,23 +75,33 @@ public sealed class StaffService : IStaffService
 
         var names = users.ToDictionary(u => u.Id, u => $"{u.FirstName} {u.LastName}".Trim());
 
-        var grantedUserIds = (await _tenant.UserPermissionGrants.AsNoTracking()
-            .Where(g => g.TenantId == tenantId && g.Permission == UserPermission.SalesVoid)
-            .Select(g => g.UserId)
-            .ToListAsync(cancellationToken)).ToHashSet();
+        // One query for every grantable permission — a per-user set of which ones they hold, keyed
+        // by UserId. Cheaper than four separate `Permission == X` queries, and adding a fifth
+        // grantable permission later needs no change here.
+        var grantsByUser = (await _tenant.UserPermissionGrants.AsNoTracking()
+            .Where(g => g.TenantId == tenantId)
+            .Select(g => new { g.UserId, g.Permission })
+            .ToListAsync(cancellationToken))
+            .GroupBy(g => g.UserId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Permission).ToHashSet());
 
         var members = users.Select(u =>
         {
             // Platform is the authority for role + active state; fall back to the tenant row.
             var role = logins.TryGetValue(u.Id, out var l) ? l.Role : u.Role;
             var active = logins.TryGetValue(u.Id, out var l2) ? l2.IsActive : u.IsActive;
+            var granted = grantsByUser.GetValueOrDefault(u.Id);
+            var isCashier = role == UserRole.Cashier;
             return new StaffMemberDto(
                 u.Id, StaffMemberKind.Member, u.FirstName, u.LastName, u.Email, role,
                 active ? StaffMemberStatus.Active : StaffMemberStatus.Deactivated,
                 JoinedAtUtc: u.CreatedAtUtc, InvitedAtUtc: null, ExpiresAtUtc: null, InvitedByName: null,
                 BranchId: u.BranchId,
                 BranchName: u.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null,
-                SalesVoid: grantedUserIds.Contains(u.Id) && role == UserRole.Cashier);
+                SalesVoid: isCashier && (granted?.Contains(UserPermission.SalesVoid) ?? false),
+                SalesReturn: isCashier && (granted?.Contains(UserPermission.SalesReturn) ?? false),
+                DiscountApply: isCashier && (granted?.Contains(UserPermission.DiscountApply) ?? false),
+                CashDrawerOpen: isCashier && (granted?.Contains(UserPermission.CashDrawerOpen) ?? false));
         });
 
         var now = UtcNow;
@@ -106,7 +116,7 @@ public sealed class StaffService : IStaffService
             InvitedByName: names.GetValueOrDefault(i.InvitedByUserId),
             BranchId: i.BranchId,
             BranchName: i.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null,
-            SalesVoid: false));
+            SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false));
 
         var assigned = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
         if (assigned is { } branchId)
@@ -269,17 +279,18 @@ public sealed class StaffService : IStaffService
             user.ClearBranch();
         }
 
-        // A SalesVoid grant is a direct authority the user's PREVIOUS role/branch holder earned:
+        // Every permission grant (SalesVoid, SalesReturn, DiscountApply, CashDrawerOpen, ...) is a
+        // direct authority the user's PREVIOUS role/branch holder earned:
         // - moving away from Cashier must not leave it dormant to silently reinstate itself if the
         //   role is later changed back — the next Manager to see them as a Cashier again should have
         //   to re-grant it.
-        // - and since the grant has no branch dimension of its own (keyed on UserId, not a
+        // - and since a grant has no branch dimension of its own (keyed on UserId, not a
         //   user-in-a-branch), a branch reassignment made through this same endpoint (role staying
-        //   Cashier, only request.BranchId changing) must not silently carry the grant to a
-        //   destination branch whose Manager never approved it — same rule ChangeBranchAsync applies.
+        //   Cashier, only request.BranchId changing) must not silently carry it to a destination
+        //   branch whose Manager never approved it — same rule ChangeBranchAsync applies.
         if ((roleChanged && newRole != UserRole.Cashier) || newBranchId != originalBranchId)
         {
-            await RemoveSalesVoidGrantIfAnyAsync(userId, cancellationToken);
+            await RemoveAllPermissionGrantsIfAnyAsync(userId, cancellationToken);
         }
 
         await _tenant.SaveChangesAsync(cancellationToken);
@@ -317,12 +328,12 @@ public sealed class StaffService : IStaffService
         user.AssignBranch(branchId);
 
         // The grant model has no branch dimension of its own (it's keyed on UserId, not a
-        // user-in-a-branch) — a SalesVoid grant made by the origin branch's Manager must not silently
-        // follow the user to a destination branch whose Manager never approved it. That Manager
-        // should decide fresh whether to grant it.
+        // user-in-a-branch) — a grant made by the origin branch's Manager must not silently follow
+        // the user to a destination branch whose Manager never approved it. That Manager should
+        // decide fresh whether to grant any of them.
         if (branchChanged)
         {
-            await RemoveSalesVoidGrantIfAnyAsync(userId, cancellationToken);
+            await RemoveAllPermissionGrantsIfAnyAsync(userId, cancellationToken);
         }
 
         await _tenant.SaveChangesAsync(cancellationToken);
@@ -392,17 +403,18 @@ public sealed class StaffService : IStaffService
 
     /// <summary>
     /// System-driven cleanup for a role/branch change already authorized by the caller reaching this
-    /// point — this deliberately bypasses <see cref="ISalesVoidPermissionService.SetAsync"/>, which
+    /// point — this deliberately bypasses <see cref="IUserPermissionGrantService.SetAsync"/>, which
     /// checks the ACTING user's authority to grant/revoke, since that check doesn't apply here (no
-    /// new grant/revoke is being requested; an existing one is just being invalidated by the change
-    /// that already happened). Queued on the same tracked <see cref="ITenantDbContext"/> the caller
-    /// saves right after, so it commits atomically with the role/branch change itself.
+    /// new grant/revoke is being requested; every existing one is just being invalidated by the
+    /// change that already happened). Removes every permission the user holds, not just one — none of
+    /// them should survive a role/branch move. Queued on the same tracked <see cref="ITenantDbContext"/>
+    /// the caller saves right after, so it commits atomically with the role/branch change itself.
     /// </summary>
-    private async Task RemoveSalesVoidGrantIfAnyAsync(Guid userId, CancellationToken cancellationToken)
+    private async Task RemoveAllPermissionGrantsIfAnyAsync(Guid userId, CancellationToken cancellationToken)
     {
         var tenantId = TenantId;
         var grants = await _tenant.UserPermissionGrants
-            .Where(g => g.TenantId == tenantId && g.UserId == userId && g.Permission == UserPermission.SalesVoid)
+            .Where(g => g.TenantId == tenantId && g.UserId == userId)
             .ToListAsync(cancellationToken);
 
         if (grants.Count > 0)
@@ -515,15 +527,22 @@ public sealed class StaffService : IStaffService
                 .Where(b => b.Id == branchId).Select(b => b.Name).FirstOrDefaultAsync(cancellationToken);
         }
 
-        var salesVoid = login.Role == UserRole.Cashier
-            && await _tenant.UserPermissionGrants.AsNoTracking()
-                .AnyAsync(g => g.TenantId == login.TenantId && g.UserId == user.Id && g.Permission == UserPermission.SalesVoid, cancellationToken);
+        var granted = login.Role == UserRole.Cashier
+            ? (await _tenant.UserPermissionGrants.AsNoTracking()
+                .Where(g => g.TenantId == login.TenantId && g.UserId == user.Id)
+                .Select(g => g.Permission)
+                .ToListAsync(cancellationToken)).ToHashSet()
+            : [];
 
         return new StaffMemberDto(
             user.Id, StaffMemberKind.Member, user.FirstName, user.LastName, user.Email, login.Role,
             login.IsActive ? StaffMemberStatus.Active : StaffMemberStatus.Deactivated,
             JoinedAtUtc: user.CreatedAtUtc, InvitedAtUtc: null, ExpiresAtUtc: null, InvitedByName: null,
-            BranchId: user.BranchId, BranchName: branchName, SalesVoid: salesVoid);
+            BranchId: user.BranchId, BranchName: branchName,
+            SalesVoid: granted.Contains(UserPermission.SalesVoid),
+            SalesReturn: granted.Contains(UserPermission.SalesReturn),
+            DiscountApply: granted.Contains(UserPermission.DiscountApply),
+            CashDrawerOpen: granted.Contains(UserPermission.CashDrawerOpen));
     }
 
     /// <summary>Branch-scoped role → an active branch id is required; Owner/Admin → must be null.</summary>

@@ -15,7 +15,10 @@ public class SalesVoidPermissionTests : IntegrationTest
     }
 
     private static HttpRequestMessage PermissionsRequest(Guid userId, bool salesVoid) =>
-        new(HttpMethod.Put, $"/api/staff/{userId}/permissions") { Content = JsonContent.Create(new ChangeStaffPermissionsRequest(salesVoid)) };
+        new(HttpMethod.Put, $"/api/staff/{userId}/permissions") { Content = JsonContent.Create(new ChangeStaffPermissionsRequest(salesVoid, false, false, false)) };
+
+    private static HttpRequestMessage PermissionsRequest(Guid userId, ChangeStaffPermissionsRequest body) =>
+        new(HttpMethod.Put, $"/api/staff/{userId}/permissions") { Content = JsonContent.Create(body) };
 
     [Fact]
     public async Task Owner_grants_and_revokes_for_any_cashier()
@@ -186,5 +189,53 @@ public class SalesVoidPermissionTests : IntegrationTest
         var list = await Client.GetFromJsonAsync<List<StaffMemberDto>>("/api/staff", TestJson.Options);
         list!.Single(m => m.Id == cashierId).SalesVoid.Should()
             .BeFalse("a branch move made through the role endpoint must be cleaned up exactly like the dedicated branch endpoint");
+    }
+
+    /// <summary>
+    /// The write path was generalized this pass from a SalesVoid-only service into
+    /// <see cref="Negosio.Application.Staff.IUserPermissionGrantService.SetAsync"/>, which can set
+    /// every grantable permission in one call. This confirms all four persist independently — setting
+    /// one doesn't grant or clobber another — and that an existing SalesVoid grant (the only kind
+    /// that could exist before this pass) survives being saved alongside the three new ones untouched.
+    /// </summary>
+    [Fact]
+    public async Task All_four_permissions_can_be_granted_together_and_persist_independently()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+
+        // Pre-existing SalesVoid grant, as if made before this pass shipped.
+        (await Client.SendAsync(PermissionsRequest(cashierId, salesVoid: true)))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Now grant SalesReturn and CashDrawerOpen too, leaving DiscountApply ungranted — the
+        // request always carries all four current values (mirroring the permissions modal's
+        // single "Save changes" submitting every toggle's state at once).
+        var res = await Client.SendAsync(PermissionsRequest(
+            cashierId, new ChangeStaffPermissionsRequest(SalesVoid: true, SalesReturn: true, DiscountApply: false, CashDrawerOpen: true)));
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updated = (await res.Content.ReadFromJsonAsync<StaffMemberDto>(TestJson.Options))!;
+        updated.SalesVoid.Should().BeTrue();
+        updated.SalesReturn.Should().BeTrue();
+        updated.DiscountApply.Should().BeFalse();
+        updated.CashDrawerOpen.Should().BeTrue();
+
+        var list = await Client.GetFromJsonAsync<List<StaffMemberDto>>("/api/staff", TestJson.Options);
+        var row = list!.Single(m => m.Id == cashierId);
+        row.SalesVoid.Should().BeTrue();
+        row.SalesReturn.Should().BeTrue();
+        row.DiscountApply.Should().BeFalse();
+        row.CashDrawerOpen.Should().BeTrue();
+
+        // Revoke SalesReturn only — the other three must be unaffected.
+        var afterRevoke = await Client.SendAsync(PermissionsRequest(
+            cashierId, new ChangeStaffPermissionsRequest(SalesVoid: true, SalesReturn: false, DiscountApply: false, CashDrawerOpen: true)));
+        afterRevoke.StatusCode.Should().Be(HttpStatusCode.OK);
+        var afterRevokeBody = (await afterRevoke.Content.ReadFromJsonAsync<StaffMemberDto>(TestJson.Options))!;
+        afterRevokeBody.SalesVoid.Should().BeTrue();
+        afterRevokeBody.SalesReturn.Should().BeFalse("revoking one permission must not touch the others");
+        afterRevokeBody.CashDrawerOpen.Should().BeTrue();
     }
 }

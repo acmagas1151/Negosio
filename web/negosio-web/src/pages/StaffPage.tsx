@@ -11,7 +11,7 @@ import { ChangeBranchModal } from '../components/staff/ChangeBranchModal'
 import { ChangeRoleModal } from '../components/staff/ChangeRoleModal'
 import { InviteStaffModal } from '../components/staff/InviteStaffModal'
 import { RoleBadge, StaffStatusBadge } from '../components/staff/StaffBadges'
-import { SalesVoidPermissionToggle } from '../components/staff/SalesVoidPermissionToggle'
+import { StaffPermissionsModal } from '../components/staff/StaffPermissionsModal'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
 import { useCan } from '../lib/useCan'
 import {
@@ -47,6 +47,7 @@ export default function StaffPage() {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [roleTarget, setRoleTarget] = useState<StaffMemberDto | null>(null)
   const [branchTarget, setBranchTarget] = useState<StaffMemberDto | null>(null)
+  const [permissionsTarget, setPermissionsTarget] = useState<StaffMemberDto | null>(null)
   const [confirm, setConfirm] = useState<{ member: StaffMemberDto; action: 'deactivate' | 'reactivate' | 'revoke' } | null>(null)
 
   const query = useQuery({ queryKey: ['staff'], queryFn: staffApi.list })
@@ -239,7 +240,9 @@ export default function StaffPage() {
                       ) : canManage(m) ? (
                         <>
                           {m.kind === 'Member' && m.role === 'Cashier' && canManagePermissions && (
-                            <SalesVoidPermissionToggle member={m} />
+                            <Button variant="ghost" size="sm" onClick={() => setPermissionsTarget(m)}>
+                              Permissions
+                            </Button>
                           )}
                           {canManageFull ? (
                             <>
@@ -286,6 +289,11 @@ export default function StaffPage() {
       <InviteStaffModal open={inviteOpen} onClose={() => setInviteOpen(false)} />
       <ChangeRoleModal open={roleTarget !== null} onClose={() => setRoleTarget(null)} member={roleTarget} />
       <ChangeBranchModal open={branchTarget !== null} onClose={() => setBranchTarget(null)} member={branchTarget} />
+      <StaffPermissionsModal
+        open={permissionsTarget !== null}
+        onClose={() => setPermissionsTarget(null)}
+        member={permissionsTarget}
+      />
       <ConfirmDialog
         open={confirm !== null}
         onClose={() => setConfirm(null)}

@@ -2,8 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Negosio.Application.Common;
 using Negosio.Application.Pos;
 using Negosio.Application.Sales;
+using Negosio.Application.Staff;
 using Negosio.Domain.Enums;
 using Negosio.IntegrationTests.Infrastructure;
 
@@ -176,5 +178,111 @@ public class ReturnTests : IntegrationTest
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var error = await response.Content.ReadFromJsonAsync<ApiErrorBody>();
         error!.Code.Should().Be("VALIDATION_FAILED");
+    }
+
+    // ---- Cashier authorization: direct SalesReturn grant, or Manager/Admin/Owner approval ----
+    // Same shape as VoidSaleTests' equivalent cases — RefundManage now admits every POS role at the
+    // controller, with ReturnAuthorizationResolver (service-level, the actual security boundary)
+    // requiring Owner/Admin/Manager, a direct grant, or a verified approval for a Cashier.
+
+    [Fact]
+    public async Task Cashier_without_grant_is_rejected_then_succeeds_with_manager_approval()
+    {
+        var scene = await SellAsync(); // Client is left authorized as Owner.
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, scene.BranchId);
+        var managerId = await CreateManagerAsync("mgr@example.com", "Manager123!", scene.BranchId);
+
+        Authorize(cashierToken);
+        var denied = await Client.PostAsJsonAsync(
+            $"/api/sales/{scene.SaleId}/returns",
+            new CreateReturnRequest(new[] { new ReturnLineInput(scene.SaleItemId, 1m) }, "No grant yet", PaymentMethod.Cash, null));
+        denied.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await denied.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be(ErrorCodes.ReturnApprovalRequired);
+
+        var approved = await Client.PostAsJsonAsync(
+            $"/api/sales/{scene.SaleId}/returns",
+            new CreateReturnRequest(
+                new[] { new ReturnLineInput(scene.SaleItemId, 1m) }, "Approved by manager", PaymentMethod.Cash, null,
+                new VoidSaleApprovalInput("mgr@example.com", "Manager123!")));
+        approved.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        await InScopeAsync(async db =>
+        {
+            var saleReturn = await db.SaleReturns.SingleAsync(r => r.SaleId == scene.SaleId);
+            saleReturn.CreatedByUserId.Should().Be(await GetUserIdFromTokenAsync(cashierToken));
+            return true;
+        });
+        _ = managerId;
+    }
+
+    [Fact]
+    public async Task Wrong_manager_password_is_rejected_and_the_sale_is_unchanged()
+    {
+        var scene = await SellAsync();
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, scene.BranchId);
+        await CreateManagerAsync("mgr@example.com", "Manager123!", scene.BranchId);
+
+        Authorize(cashierToken);
+        var res = await Client.PostAsJsonAsync(
+            $"/api/sales/{scene.SaleId}/returns",
+            new CreateReturnRequest(
+                new[] { new ReturnLineInput(scene.SaleItemId, 1m) }, "Bad password", PaymentMethod.Cash, null,
+                new VoidSaleApprovalInput("mgr@example.com", "WrongPassword!")));
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be(ErrorCodes.InvalidApproverCredentials);
+
+        await InScopeAsync(async db =>
+        {
+            (await db.SaleReturns.AnyAsync(r => r.SaleId == scene.SaleId)).Should().BeFalse();
+            var sale = await db.Sales.SingleAsync(s => s.Id == scene.SaleId);
+            sale.Status.Should().Be(SaleStatus.Completed);
+            return true;
+        });
+    }
+
+    [Fact]
+    public async Task Cashier_with_a_direct_grant_returns_without_any_approval()
+    {
+        var scene = await SellAsync(); // Client is left authorized as Owner.
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, scene.BranchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+
+        (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions")
+        {
+            Content = JsonContent.Create(new ChangeStaffPermissionsRequest(SalesVoid: false, SalesReturn: true, DiscountApply: false, CashDrawerOpen: false)),
+        })).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Authorize(cashierToken);
+        var res = await Client.PostAsJsonAsync(
+            $"/api/sales/{scene.SaleId}/returns",
+            new CreateReturnRequest(new[] { new ReturnLineInput(scene.SaleItemId, 1m) }, "Direct via grant", PaymentMethod.Cash, null));
+
+        res.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    /// <summary>Regression: revoking the grant must bring the approval requirement straight back.</summary>
+    [Fact]
+    public async Task Revoking_the_grant_brings_the_approval_requirement_back()
+    {
+        var scene = await SellAsync();
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, scene.BranchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+
+        var grantRequest = new ChangeStaffPermissionsRequest(SalesVoid: false, SalesReturn: true, DiscountApply: false, CashDrawerOpen: false);
+        (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions") { Content = JsonContent.Create(grantRequest) }))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var revokeRequest = new ChangeStaffPermissionsRequest(SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false);
+        (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions") { Content = JsonContent.Create(revokeRequest) }))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Authorize(cashierToken);
+        var res = await Client.PostAsJsonAsync(
+            $"/api/sales/{scene.SaleId}/returns",
+            new CreateReturnRequest(new[] { new ReturnLineInput(scene.SaleItemId, 1m) }, "Revoked", PaymentMethod.Cash, null));
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be(ErrorCodes.ReturnApprovalRequired);
     }
 }

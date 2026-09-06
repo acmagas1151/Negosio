@@ -37,6 +37,8 @@ public interface ITenantDbContext : IAsyncDisposable
 
     DbSet<RegisterCashMovement> RegisterCashMovements { get; }
 
+    DbSet<CashDrawerOpenEvent> CashDrawerOpenEvents { get; }
+
     DbSet<Sale> Sales { get; }
 
     DbSet<SaleItem> SaleItems { get; }
