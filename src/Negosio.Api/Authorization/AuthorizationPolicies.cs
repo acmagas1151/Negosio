@@ -60,6 +60,12 @@ public static class AuthorizationPolicies
     /// (service-enforced via IBranchAccessResolver, same as SaleQueryService/DashboardService).</summary>
     public const string ReportsView = "ReportsView";
 
+    // ---- Receipt settings ----
+
+    /// <summary>Manage receipt presentation settings — Owner/Admin the tenant default and any branch,
+    /// Manager only their own branch (service-enforced via IBranchAccessResolver).</summary>
+    public const string ReceiptSettingsManage = "ReceiptSettingsManage";
+
     private static readonly UserRole[] OwnerAdmin = [UserRole.Owner, UserRole.Admin];
     private static readonly UserRole[] ManagementRoles = [UserRole.Owner, UserRole.Admin, UserRole.Manager];
     private static readonly UserRole[] PosRoles = [UserRole.Owner, UserRole.Admin, UserRole.Manager, UserRole.Cashier];
@@ -116,6 +122,10 @@ public static class AuthorizationPolicies
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
 
         options.AddPolicy(ReportsView, policy =>
+            policy.RequireAuthenticatedUser()
+                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
+
+        options.AddPolicy(ReceiptSettingsManage, policy =>
             policy.RequireAuthenticatedUser()
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
 

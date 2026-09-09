@@ -60,6 +60,7 @@ public static class DependencyInjection
 
         // Receipt settings
         services.AddScoped<IReceiptSettingsService, ReceiptSettingsService>();
+        services.AddScoped<IReceiptSettingsResolver, ReceiptSettingsResolver>();
 
         // Phase 4: Staff & access management
         services.AddScoped<IStaffService, StaffService>();
