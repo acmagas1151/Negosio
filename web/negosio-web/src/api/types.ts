@@ -715,6 +715,21 @@ export interface UpdateTaxSettingsRequest {
   pricesIncludeTax: boolean
 }
 
+// ---- Tenant settings — business info ----
+// Backend contract: GET /api/settings/business-info -> BusinessInfoDto (open to any tenant user);
+// PUT /api/settings/business-info (Owner/Admin). `businessName` is read-only here (set elsewhere).
+
+export interface BusinessInfoDto {
+  businessName: string
+  contactNumber: string | null
+  taxId: string | null
+}
+
+export interface UpdateBusinessInfoRequest {
+  contactNumber: string | null
+  taxId: string | null
+}
+
 // ---- Tenant settings — receipt ----
 // Backend contract: GET /api/settings/receipts?branchId= -> ReceiptSettingsDto ; PUT /api/settings/receipts?branchId= (UpdateReceiptSettingsRequest); DELETE /api/settings/receipts?branchId= (204).
 
