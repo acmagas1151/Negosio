@@ -184,7 +184,7 @@ public sealed class SaleQueryService : ISaleQueryService
             r.CreatedAtUtc,
             r.Items.Select(i => new SaleReturnItemDto(
                 i.Id, i.SaleItemId, i.ProductVariantId, i.ProductNameSnapshot, i.Quantity, i.RefundAmount, i.Restocked)).ToList(),
-            r.Refunds.Select(rp => new ReceiptPaymentDto(rp.Method.ToString(), rp.Amount)).ToList()))
+            r.Refunds.Select(rp => new ReceiptPaymentDto(rp.Method.ToString(), rp.Amount, rp.ReferenceNumber, null, null)).ToList()))
             .ToList();
     }
 

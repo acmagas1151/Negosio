@@ -92,7 +92,13 @@ public interface ISaleQueryService
 
 public sealed record ReceiptLineDto(string Description, string? VariantName, decimal Quantity, decimal UnitPrice, decimal NetAmount);
 
-public sealed record ReceiptPaymentDto(string Method, decimal Amount);
+public sealed record ReceiptPaymentDto(
+    string Method,
+    decimal Amount,
+    // --- appended for Receipt Settings (Task 8) ---
+    string? ReferenceNumber,
+    decimal? ReceivedAmount,
+    decimal? ChangeAmount);
 
 public sealed record ReceiptDto(
     string StoreName,
@@ -108,7 +114,19 @@ public sealed record ReceiptDto(
     decimal GrandTotal,
     IReadOnlyList<ReceiptPaymentDto> Payments,
     decimal ChangeDue,
-    SaleStatus Status);
+    SaleStatus Status,
+    // --- appended for Receipt Settings (Task 8) ---
+    string? HeaderText,
+    string? FooterText,
+    string? BusinessAddress,
+    string? BusinessContactNumber,
+    string? TaxId,
+    bool ShowBranch,
+    bool ShowCashier,
+    bool ShowPaymentMethod,
+    bool ShowTaxLine,
+    bool ShowReferenceNumber,
+    ReceiptWidth Width);
 
 public interface IReceiptService
 {
