@@ -21,6 +21,8 @@ interface MetricCardProps {
   accent?: MetricAccent
   /** Optional period-over-period change, e.g. 12.5 or -3.2. */
   deltaPct?: number
+  /** Trailing text after the delta, e.g. "vs previous period". Defaults to "vs last week". */
+  deltaLabel?: string
   loading?: boolean
 }
 
@@ -30,6 +32,7 @@ export function MetricCard({
   value,
   accent = 'blue',
   deltaPct,
+  deltaLabel = 'vs last week',
   loading = false,
 }: MetricCardProps) {
   const up = (deltaPct ?? 0) >= 0
@@ -66,7 +69,7 @@ export function MetricCard({
             <TrendingDown className="size-3.5" aria-hidden="true" />
           )}
           {up ? '+' : ''}
-          {deltaPct}% <span className="font-normal text-text-muted">vs last week</span>
+          {deltaPct}% <span className="font-normal text-text-muted">{deltaLabel}</span>
         </p>
       )}
     </Card>

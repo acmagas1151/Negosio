@@ -20,7 +20,9 @@ public class SaleReturn : Entity
         Reason = string.Empty;
     }
 
-    private SaleReturn(Guid tenantId, Guid saleId, Guid branchId, string returnNumber, Guid createdByUserId, string reason)
+    private SaleReturn(
+        Guid tenantId, Guid saleId, Guid branchId, string returnNumber, Guid createdByUserId, string reason,
+        Guid? approvedByUserId)
     {
         TenantId = tenantId;
         SaleId = saleId;
@@ -28,6 +30,7 @@ public class SaleReturn : Entity
         ReturnNumber = returnNumber;
         CreatedByUserId = createdByUserId;
         Reason = reason;
+        ApprovedByUserId = approvedByUserId;
     }
 
     public Guid TenantId { get; private set; }
@@ -40,6 +43,14 @@ public class SaleReturn : Entity
 
     public Guid CreatedByUserId { get; private set; }
 
+    /// <summary>
+    /// The Manager/Admin/Owner whose password verified this return, when the requester (a Cashier
+    /// without a direct <c>SalesReturn</c> grant) needed approval — set by <c>ReturnAuthorizationResolver</c>
+    /// at the same moment it verifies the approver, same shape as <see cref="Sale.ApprovedByUserId"/>.
+    /// Null when the requester acted directly: a privileged role, or a Cashier with the grant.
+    /// </summary>
+    public Guid? ApprovedByUserId { get; private set; }
+
     public string Reason { get; private set; }
 
     public decimal TotalRefund { get; private set; }
@@ -48,14 +59,16 @@ public class SaleReturn : Entity
 
     public IReadOnlyCollection<RefundPayment> Refunds => _refunds.AsReadOnly();
 
-    public static SaleReturn Begin(Guid tenantId, Guid saleId, Guid branchId, string returnNumber, Guid createdByUserId, string reason)
+    public static SaleReturn Begin(
+        Guid tenantId, Guid saleId, Guid branchId, string returnNumber, Guid createdByUserId, string reason,
+        Guid? approvedByUserId = null)
     {
         if (string.IsNullOrWhiteSpace(reason))
         {
             throw new ArgumentException("A return reason is required.", nameof(reason));
         }
 
-        return new SaleReturn(tenantId, saleId, branchId, returnNumber, createdByUserId, reason.Trim());
+        return new SaleReturn(tenantId, saleId, branchId, returnNumber, createdByUserId, reason.Trim(), approvedByUserId);
     }
 
     public SaleReturnItem AddItem(Guid saleItemId, Guid productVariantId, string productNameSnapshot, decimal quantity, decimal refundAmount, bool restocked)

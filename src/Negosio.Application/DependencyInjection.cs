@@ -9,6 +9,7 @@ using Negosio.Application.Inventory;
 using Negosio.Application.Platform;
 using Negosio.Application.Pos;
 using Negosio.Application.Registers;
+using Negosio.Application.Reports;
 using Negosio.Application.Sales;
 using Negosio.Application.Settings;
 using Negosio.Application.Staff;
@@ -65,6 +66,10 @@ public static class DependencyInjection
         services.AddScoped<IUserPermissionGrantService, UserPermissionGrantService>();
         services.AddScoped<IVoidAuthorizationResolver, VoidAuthorizationResolver>();
         services.AddScoped<IVoidSaleService, VoidSaleService>();
+
+        // Reports
+        services.AddScoped<IReportPeriodResolver, ReportPeriodResolver>();
+        services.AddScoped<IReportsService, ReportsService>();
 
         return services;
     }

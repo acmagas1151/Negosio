@@ -54,6 +54,12 @@ public static class AuthorizationPolicies
     /// <summary>Force-close another user's register session (administrative override).</summary>
     public const string RegisterForceClose = "RegisterForceClose";
 
+    // ---- Reports ----
+
+    /// <summary>View sales/business reports — Owner/Admin tenant-wide, Manager their own branch only
+    /// (service-enforced via IBranchAccessResolver, same as SaleQueryService/DashboardService).</summary>
+    public const string ReportsView = "ReportsView";
+
     private static readonly UserRole[] OwnerAdmin = [UserRole.Owner, UserRole.Admin];
     private static readonly UserRole[] ManagementRoles = [UserRole.Owner, UserRole.Admin, UserRole.Manager];
     private static readonly UserRole[] PosRoles = [UserRole.Owner, UserRole.Admin, UserRole.Manager, UserRole.Cashier];
@@ -106,6 +112,10 @@ public static class AuthorizationPolicies
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
 
         options.AddPolicy(StaffPermissionManage, policy =>
+            policy.RequireAuthenticatedUser()
+                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
+
+        options.AddPolicy(ReportsView, policy =>
             policy.RequireAuthenticatedUser()
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
 

@@ -18,6 +18,7 @@ public sealed class SaleReturnConfiguration : IEntityTypeConfiguration<SaleRetur
         builder.Property(r => r.BranchId).IsRequired();
         builder.Property(r => r.ReturnNumber).IsRequired().HasMaxLength(30).IsUnicode(false);
         builder.Property(r => r.CreatedByUserId).IsRequired();
+        builder.Property(r => r.ApprovedByUserId).IsRequired(false);
         builder.Property(r => r.Reason).IsRequired().HasMaxLength(500);
         builder.Property(r => r.TotalRefund).HasPrecision(18, 2);
         builder.Property(r => r.CreatedAtUtc).IsRequired();

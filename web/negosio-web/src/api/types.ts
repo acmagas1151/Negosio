@@ -567,6 +567,8 @@ export interface SaleReturnDto {
   totalRefund: number
   createdByUserId: string
   createdByName: string
+  approvedByUserId: string | null
+  approvedByName: string | null
   createdAtUtc: string
   items: SaleReturnItemDto[]
   refunds: ReceiptPaymentDto[]
@@ -774,4 +776,98 @@ export interface AcceptInvitationRequest {
 
 export interface AcceptInvitationResultDto {
   email: string
+}
+
+// ---- Reports ----
+// Backend contract: GET /api/reports/overview | /top-products | /categories (ReportsController).
+// Every figure here is a backend-computed aggregate — the frontend never recomputes a total from
+// raw rows. Boundaries for a `period` preset are resolved server-side in the business's own
+// (Philippines, fixed UTC+8) local day — never the browser's timezone.
+
+export type ReportPeriod = 'Today' | 'Yesterday' | 'Last7Days' | 'Last30Days' | 'ThisMonth' | 'Custom'
+
+/** Shared filter for every report request. `fromDate`/`toDate` (yyyy-MM-dd) are only read when
+ * `period` is 'Custom'. */
+export interface ReportFilterParams {
+  period: ReportPeriod
+  fromDate?: string
+  toDate?: string
+  branchId?: string
+  registerId?: string
+  cashierId?: string
+}
+
+export interface ReportKpiDto {
+  grossSales: number
+  discounts: number
+  tax: number
+  netSales: number
+  returns: number
+  netCollected: number
+  completedTransactions: number
+  averageTransactionValue: number
+  totalItemsSold: number
+  voidedSalesCount: number
+  voidedSalesValue: number
+  returnsCount: number
+}
+
+/** Percent change vs. the immediately preceding period of equal length. `null` — never a fabricated
+ * figure — when the previous period was zero and there's nothing meaningful to divide by. */
+export interface ReportKpiComparisonDto {
+  grossSalesChangePercent: number | null
+  netSalesChangePercent: number | null
+  transactionsChangePercent: number | null
+  averageTransactionChangePercent: number | null
+  returnsChangePercent: number | null
+}
+
+/** `bucketLabel` is pre-formatted server-side in business-local time ("9 AM", "Sep 9") — render it
+ * verbatim, never re-parse/re-convert `bucketStartUtc` for display. */
+export interface SalesTrendPointDto {
+  bucketLabel: string
+  bucketStartUtc: string
+  netSales: number
+  transactions: number
+}
+
+/** `paymentCount` counts payment *records*, not sales — a split-tender sale contributes to more
+ * than one method here, by design. */
+export interface PaymentMethodBreakdownDto {
+  method: PaymentMethod
+  amount: number
+  paymentCount: number
+  percentage: number
+}
+
+export interface ReportsOverviewDto {
+  fromUtc: string
+  toUtc: string
+  kpis: ReportKpiDto
+  comparison: ReportKpiComparisonDto
+  trendIsHourly: boolean
+  trend: SalesTrendPointDto[]
+  paymentMethods: PaymentMethodBreakdownDto[]
+}
+
+/** Grouped by the stable productVariantId — product/variant/SKU/category shown are the *current*
+ * catalog values (a live join), not a point-in-time snapshot. */
+export interface TopProductDto {
+  productVariantId: string
+  productName: string
+  variantName: string | null
+  sku: string | null
+  categoryName: string | null
+  quantitySold: number
+  salesAmount: number
+}
+
+/** Grouped by the product's *current* category — a product recategorized after the sale reports
+ * under its new category (no per-sale category snapshot exists). */
+export interface CategoryPerformanceDto {
+  categoryId: string | null
+  categoryName: string
+  quantitySold: number
+  salesAmount: number
+  percentageOfSales: number
 }

@@ -15,6 +15,7 @@ export function SaleReturnsList({ returns }: { returns: SaleReturnDto[] }) {
             </span>
             <span className="text-[13px] text-text-muted">
               {new Date(r.createdAtUtc).toLocaleString()} · {r.createdByName}
+              {r.approvedByName ? ` · approved by ${r.approvedByName}` : ''}
             </span>
           </div>
           <p className="mt-1 text-[13px] text-text-secondary">{r.reason}</p>

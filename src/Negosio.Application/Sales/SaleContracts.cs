@@ -144,6 +144,8 @@ public sealed record SaleReturnDto(
     decimal TotalRefund,
     Guid CreatedByUserId,
     string CreatedByName,
+    Guid? ApprovedByUserId,
+    string? ApprovedByName,
     DateTime CreatedAtUtc,
     IReadOnlyList<SaleReturnItemDto> Items,
     IReadOnlyList<ReceiptPaymentDto> Refunds);

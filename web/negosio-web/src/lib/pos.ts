@@ -5,7 +5,9 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   Card: 'Card',
   GCash: 'GCash',
   Maya: 'Maya',
-  BankTransfer: 'Bank Transfer',
+  // Stored value stays BankTransfer — only the display label is InstaPay, consistent everywhere
+  // (POS, receipts, Sales, Returns, Reports) rather than special-casing any one page.
+  BankTransfer: 'InstaPay',
   Other: 'Other',
 }
 

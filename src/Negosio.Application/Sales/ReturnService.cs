@@ -67,7 +67,8 @@ public sealed class ReturnService : IReturnService
 
         // Cashier direct-grant-or-approval resolution — server-authoritative; the frontend's own
         // "should I show the approval fields" guess is UX only and never the actual security boundary.
-        await _authResolver.ResolveAsync(sale.BranchId, request.Approval, cancellationToken);
+        // Non-null only when a Cashier without the grant needed a Manager/Admin/Owner to approve.
+        var approvedByUserId = await _authResolver.ResolveAsync(sale.BranchId, request.Approval, cancellationToken);
 
         var branch = await _db.Branches.SingleAsync(b => b.Id == sale.BranchId, cancellationToken);
         var tenant = await _db.TenantProfiles.SingleAsync(p => p.Id == tenantId, cancellationToken);
@@ -84,7 +85,7 @@ public sealed class ReturnService : IReturnService
         // Returns draw from the same branch transaction sequence as sales (DocumentNumberType.Sale),
         // so a return gets the next running number after the last sale or return in the branch.
         var returnNumber = await _documentNumbers.NextAsync(tenantId, sale.BranchId, DocumentNumberType.Sale, branch.Code, cancellationToken);
-        var saleReturn = SaleReturn.Begin(tenantId, sale.Id, sale.BranchId, returnNumber, _currentUser.UserId, request.Reason);
+        var saleReturn = SaleReturn.Begin(tenantId, sale.Id, sale.BranchId, returnNumber, _currentUser.UserId, request.Reason, approvedByUserId);
 
         foreach (var lineInput in request.Items)
         {

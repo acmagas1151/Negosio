@@ -17,6 +17,7 @@ export type Capability =
   | 'sales:void'
   | 'staff:permissions'
   | 'register:cash-movement'
+  | 'reports:view'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
 // 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
@@ -53,6 +54,9 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   // Mirrors RegisterSessionsController's class-level PosOperate policy — ownership of the specific
   // session (not just role) is enforced server-side by RegisterCashMovementService.
   'register:cash-movement': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
+  // Mirrors AuthorizationPolicies.ReportsView — Owner/Admin tenant-wide, Manager their own branch
+  // only (service-enforced). Cashier and every other role never reach the Reports page at all.
+  'reports:view': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
 }
 
 /**

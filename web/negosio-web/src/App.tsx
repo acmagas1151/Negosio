@@ -17,6 +17,7 @@ import ProductsPage from './pages/ProductsPage'
 import ReceiptPage from './pages/ReceiptPage'
 import RegisterPage from './pages/RegisterPage'
 import RegistersPage from './pages/RegistersPage'
+import ReportsPage from './pages/ReportsPage'
 import SaleDetailPage from './pages/SaleDetailPage'
 import SalesPage from './pages/SalesPage'
 import BranchesPage from './pages/BranchesPage'
@@ -57,6 +58,14 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
     ),
   },
   { path: '/sales/:id/receipt', element: <ReceiptPage /> },
+  {
+    path: '/reports',
+    element: (
+      <RequireCapability capability="reports:view" title="Reports">
+        <ReportsPage />
+      </RequireCapability>
+    ),
+  },
   { path: '/settings', element: <SettingsPage /> },
   {
     path: '/staff',

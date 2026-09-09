@@ -179,7 +179,9 @@ public sealed class SaleQueryService : ISaleQueryService
 
         return returns.Select(r => new SaleReturnDto(
             r.Id, r.ReturnNumber, r.SaleId, originalSaleNumber, r.Reason, r.TotalRefund, r.CreatedByUserId,
-            userNames.GetValueOrDefault(r.CreatedByUserId, string.Empty), r.CreatedAtUtc,
+            userNames.GetValueOrDefault(r.CreatedByUserId, string.Empty),
+            r.ApprovedByUserId, r.ApprovedByUserId is { } approvedBy ? userNames.GetValueOrDefault(approvedBy) : null,
+            r.CreatedAtUtc,
             r.Items.Select(i => new SaleReturnItemDto(
                 i.Id, i.SaleItemId, i.ProductVariantId, i.ProductNameSnapshot, i.Quantity, i.RefundAmount, i.Restocked)).ToList(),
             r.Refunds.Select(rp => new ReceiptPaymentDto(rp.Method.ToString(), rp.Amount)).ToList()))

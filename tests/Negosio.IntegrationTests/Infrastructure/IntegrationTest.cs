@@ -329,4 +329,24 @@ public abstract class IntegrationTest : IAsyncLifetime
                 $"UPDATE Sales SET CompletedAtUtc = {completedAtUtc} WHERE Id = {saleId}");
             return true;
         });
+
+    /// <summary>Test-only backdate of a sale's CreatedAtUtc — raw SQL, bypasses the domain. Reports
+    /// filter on this field, so this is how a report test places a sale in a specific period.</summary>
+    protected Task BackdateSaleCreatedAtAsync(Guid saleId, DateTime createdAtUtc) =>
+        InScopeAsync(async db =>
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE Sales SET CreatedAtUtc = {createdAtUtc} WHERE Id = {saleId}");
+            return true;
+        });
+
+    /// <summary>Test-only backdate of a return's CreatedAtUtc — raw SQL, bypasses the domain. Lets a
+    /// report test place a return in a different period than its original sale.</summary>
+    protected Task BackdateSaleReturnCreatedAtAsync(Guid saleReturnId, DateTime createdAtUtc) =>
+        InScopeAsync(async db =>
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE SaleReturns SET CreatedAtUtc = {createdAtUtc} WHERE Id = {saleReturnId}");
+            return true;
+        });
 }

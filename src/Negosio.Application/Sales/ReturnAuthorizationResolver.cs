@@ -16,7 +16,10 @@ namespace Negosio.Application.Sales;
 /// </summary>
 public interface IReturnAuthorizationResolver
 {
-    Task ResolveAsync(Guid branchId, VoidSaleApprovalInput? approval, CancellationToken cancellationToken = default);
+    /// <summary>Returns the approving Manager/Admin/Owner's user id when approval was actually needed
+    /// and verified; null when the requester acted directly (a privileged role, or a Cashier with the
+    /// SalesReturn grant) — the caller persists this on <see cref="SaleReturn.ApprovedByUserId"/>.</summary>
+    Task<Guid?> ResolveAsync(Guid branchId, VoidSaleApprovalInput? approval, CancellationToken cancellationToken = default);
 }
 
 public sealed class ReturnAuthorizationResolver : IReturnAuthorizationResolver
@@ -33,7 +36,7 @@ public sealed class ReturnAuthorizationResolver : IReturnAuthorizationResolver
         _approverVerification = approverVerification;
     }
 
-    public async Task ResolveAsync(Guid branchId, VoidSaleApprovalInput? approval, CancellationToken cancellationToken = default)
+    public async Task<Guid?> ResolveAsync(Guid branchId, VoidSaleApprovalInput? approval, CancellationToken cancellationToken = default)
     {
         // Explicit, defense-in-depth role gate — never rely solely on the controller's RefundManage
         // policy (which now just admits every POS role, the same way SalesView does for Void).
@@ -44,13 +47,13 @@ public sealed class ReturnAuthorizationResolver : IReturnAuthorizationResolver
 
         if (_currentUser.Role is UserRole.Owner or UserRole.Admin or UserRole.Manager)
         {
-            return;
+            return null;
         }
 
         // role == UserRole.Cashier, explicitly — the guard above already rejected every other role.
         if (await _permissions.HasGrantAsync(_currentUser.UserId, UserPermission.SalesReturn, cancellationToken))
         {
-            return;
+            return null;
         }
 
         if (approval is null)
@@ -59,6 +62,6 @@ public sealed class ReturnAuthorizationResolver : IReturnAuthorizationResolver
                 "You don't have permission to process returns. An authorized Manager, Admin, or Owner must approve this return.");
         }
 
-        await _approverVerification.VerifyAsync(approval.ApproverEmail, approval.ApproverPassword, branchId, cancellationToken);
+        return await _approverVerification.VerifyAsync(approval.ApproverEmail, approval.ApproverPassword, branchId, cancellationToken);
     }
 }

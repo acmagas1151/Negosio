@@ -205,14 +205,17 @@ public class ReturnTests : IntegrationTest
                 new[] { new ReturnLineInput(scene.SaleItemId, 1m) }, "Approved by manager", PaymentMethod.Cash, null,
                 new VoidSaleApprovalInput("mgr@example.com", "Manager123!")));
         approved.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = (await approved.Content.ReadFromJsonAsync<SaleReturnDto>(TestJson.Options))!;
+        body.CreatedByUserId.Should().Be(await GetUserIdFromTokenAsync(cashierToken));
+        body.ApprovedByUserId.Should().Be(managerId, "the manager's approval was required and used");
 
         await InScopeAsync(async db =>
         {
             var saleReturn = await db.SaleReturns.SingleAsync(r => r.SaleId == scene.SaleId);
             saleReturn.CreatedByUserId.Should().Be(await GetUserIdFromTokenAsync(cashierToken));
+            saleReturn.ApprovedByUserId.Should().Be(managerId);
             return true;
         });
-        _ = managerId;
     }
 
     [Fact]
@@ -259,6 +262,8 @@ public class ReturnTests : IntegrationTest
             new CreateReturnRequest(new[] { new ReturnLineInput(scene.SaleItemId, 1m) }, "Direct via grant", PaymentMethod.Cash, null));
 
         res.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = (await res.Content.ReadFromJsonAsync<SaleReturnDto>(TestJson.Options))!;
+        body.ApprovedByUserId.Should().BeNull("the cashier acted on their own direct grant — no approval was used");
     }
 
     /// <summary>Regression: revoking the grant must bring the approval requirement straight back.</summary>
