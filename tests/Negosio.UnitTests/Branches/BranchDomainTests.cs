@@ -7,7 +7,7 @@ namespace Negosio.UnitTests.Branches;
 public class BranchDomainTests
 {
     private static Branch NewBranch() =>
-        Branch.Create(Guid.NewGuid(), "Main", "main", "L1", null, "City", "Province", "1000");
+        Branch.Create(Guid.NewGuid(), "Main", "main", "L1", null, "City", "Province", "1000", null);
 
     [Fact]
     public void UpdateDetails_trims_and_keeps_the_code()
@@ -15,7 +15,7 @@ public class BranchDomainTests
         var b = NewBranch();
         var before = b.UpdatedAtUtc;
 
-        b.UpdateDetails("  BGC Hub ", " New L1 ", "  ", " Taguig ", " Metro Manila ", "  ");
+        b.UpdateDetails("  BGC Hub ", " New L1 ", "  ", " Taguig ", " Metro Manila ", "  ", "  0917 111 2222 ");
 
         b.Name.Should().Be("BGC Hub");
         b.AddressLine1.Should().Be("New L1");
@@ -23,6 +23,7 @@ public class BranchDomainTests
         b.City.Should().Be("Taguig");
         b.Province.Should().Be("Metro Manila");
         b.PostalCode.Should().BeNull();
+        b.ContactNumber.Should().Be("0917 111 2222");
         b.Code.Should().Be("MAIN"); // unchanged
         b.UpdatedAtUtc.Should().BeOnOrAfter(before);
     }
@@ -31,7 +32,7 @@ public class BranchDomainTests
     public void UpdateDetails_rejects_a_blank_name()
     {
         var b = NewBranch();
-        var act = () => b.UpdateDetails(" ", "L1", null, "City", "Province", null);
+        var act = () => b.UpdateDetails(" ", "L1", null, "City", "Province", null, null);
         act.Should().Throw<ArgumentException>();
     }
 

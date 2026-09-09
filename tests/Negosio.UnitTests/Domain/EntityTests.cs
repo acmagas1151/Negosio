@@ -62,13 +62,14 @@ public class EntityTests
     [Fact]
     public void Branch_Create_uppercases_code_and_normalizes_optional_fields()
     {
-        var branch = Branch.Create(Guid.NewGuid(), " Main ", " main ", " L1 ", "  ", " City ", " Province ", "  ");
+        var branch = Branch.Create(Guid.NewGuid(), " Main ", " main ", " L1 ", "  ", " City ", " Province ", "  ", "  ");
 
         branch.Code.Should().Be("MAIN");
         branch.Name.Should().Be("Main");
         branch.AddressLine1.Should().Be("L1");
         branch.AddressLine2.Should().BeNull();
         branch.PostalCode.Should().BeNull();
+        branch.ContactNumber.Should().BeNull();
     }
 
     [Fact]

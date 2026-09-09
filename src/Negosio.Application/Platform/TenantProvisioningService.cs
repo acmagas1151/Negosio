@@ -135,7 +135,7 @@ public sealed class TenantProvisioningService : ITenantProvisioningService
         if (branch is null)
         {
             var b = command.Branch;
-            branch = Branch.Create(tenant.Id, b.Name, b.Code, b.AddressLine1, b.AddressLine2, b.City, b.Province, b.PostalCode);
+            branch = Branch.Create(tenant.Id, b.Name, b.Code, b.AddressLine1, b.AddressLine2, b.City, b.Province, b.PostalCode, null);
             tenantDb.Branches.Add(branch);
         }
 

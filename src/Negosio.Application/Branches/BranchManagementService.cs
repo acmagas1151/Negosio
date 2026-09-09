@@ -44,7 +44,7 @@ public sealed class BranchManagementService : IBranchManagementService
 
         var branch = Branch.Create(
             tenantId, request.Name, request.Code, request.AddressLine1,
-            request.AddressLine2, request.City, request.Province, request.PostalCode);
+            request.AddressLine2, request.City, request.Province, request.PostalCode, request.ContactNumber);
         _db.Branches.Add(branch);
 
         try
@@ -70,7 +70,7 @@ public sealed class BranchManagementService : IBranchManagementService
 
         branch.UpdateDetails(
             request.Name, request.AddressLine1, request.AddressLine2,
-            request.City, request.Province, request.PostalCode);
+            request.City, request.Province, request.PostalCode, request.ContactNumber);
 
         await _db.SaveChangesAsync(cancellationToken);
         return await GetAsync(id, cancellationToken);
@@ -122,7 +122,8 @@ public sealed class BranchManagementService : IBranchManagementService
         b => new BranchDto(
             b.Id, b.Name, b.Code, b.AddressLine1, b.AddressLine2, b.City, b.Province, b.PostalCode,
             b.IsActive, b.CreatedAtUtc,
-            _db.Users.Count(u => u.BranchId == b.Id && u.IsActive));
+            _db.Users.Count(u => u.BranchId == b.Id && u.IsActive),
+            b.ContactNumber);
 
     private Guid RequireTenant()
     {

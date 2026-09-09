@@ -17,6 +17,8 @@ public sealed class TenantProfileConfiguration : IEntityTypeConfiguration<Tenant
         builder.Property(p => p.BusinessType).IsRequired().HasConversion<int>();
         builder.Property(p => p.TaxRatePercent).IsRequired().HasPrecision(5, 2);
         builder.Property(p => p.PricesIncludeTax).IsRequired();
+        builder.Property(p => p.ContactNumber).HasMaxLength(40);
+        builder.Property(p => p.TaxId).HasMaxLength(40);
         builder.Property(p => p.CreatedAtUtc).IsRequired();
         builder.Property(p => p.UpdatedAtUtc).IsRequired();
     }

@@ -256,7 +256,7 @@ public abstract class IntegrationTest : IAsyncLifetime
         string name = "BGC", string code = "BGC", string city = "Taguig", string province = "Metro Manila")
     {
         var response = await Client.PostAsJsonAsync("/api/branches",
-            new Negosio.Application.Branches.CreateBranchRequest(name, code, "5th Ave", null, city, province, "1634"));
+            new Negosio.Application.Branches.CreateBranchRequest(name, code, "5th Ave", null, city, province, "1634", null));
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<Negosio.Application.Branches.BranchDto>(TestJson.Options))!;
     }
