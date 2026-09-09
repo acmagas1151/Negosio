@@ -14,6 +14,8 @@ public interface ITenantDbContext : IAsyncDisposable
 {
     DbSet<TenantProfile> TenantProfiles { get; }
 
+    DbSet<ReceiptSettings> ReceiptSettings { get; }
+
     DbSet<Branch> Branches { get; }
 
     DbSet<User> Users { get; }

@@ -58,6 +58,9 @@ public static class DependencyInjection
         services.AddScoped<IReturnService, ReturnService>();
         services.AddScoped<ITenantSettingsService, TenantSettingsService>();
 
+        // Receipt settings
+        services.AddScoped<IReceiptSettingsService, ReceiptSettingsService>();
+
         // Phase 4: Staff & access management
         services.AddScoped<IStaffService, StaffService>();
         services.AddScoped<IStaffInvitationService, StaffInvitationService>();

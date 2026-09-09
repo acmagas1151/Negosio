@@ -29,6 +29,8 @@ public sealed class TenantDbContext : DbContext, ITenantDbContext
 
     public DbSet<TenantProfile> TenantProfiles => Set<TenantProfile>();
 
+    public DbSet<ReceiptSettings> ReceiptSettings => Set<ReceiptSettings>();
+
     public DbSet<Branch> Branches => Set<Branch>();
 
     public DbSet<User> Users => Set<User>();
