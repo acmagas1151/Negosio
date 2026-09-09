@@ -17,5 +17,5 @@ public class ReceiptTextTests
 
     [Fact]
     public void Normalize_strips_control_chars_but_keeps_newlines()
-        => ReceiptText.Normalize("ab\nc").Should().Be("ab\nc");
+        => ReceiptText.Normalize("a\u0007b\nc").Should().Be("ab\nc");
 }
