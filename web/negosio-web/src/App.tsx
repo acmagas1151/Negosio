@@ -22,6 +22,7 @@ import SaleDetailPage from './pages/SaleDetailPage'
 import SalesPage from './pages/SalesPage'
 import BranchesPage from './pages/BranchesPage'
 import SettingsPage from './pages/SettingsPage'
+import ReceiptSettingsPage from './pages/settings/ReceiptSettingsPage'
 import StaffPage from './pages/StaffPage'
 
 const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
@@ -66,7 +67,16 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
       </RequireCapability>
     ),
   },
-  { path: '/settings', element: <SettingsPage /> },
+  { path: '/settings', element: <Navigate to="/settings/tax" replace /> },
+  { path: '/settings/tax', element: <SettingsPage /> },
+  {
+    path: '/settings/receipts',
+    element: (
+      <RequireCapability capability="receipt:settings" title="Receipt settings">
+        <ReceiptSettingsPage />
+      </RequireCapability>
+    ),
+  },
   {
     path: '/staff',
     element: (
