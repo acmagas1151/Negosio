@@ -86,6 +86,16 @@ function ReceiptSettingsForm() {
   const branches = branchesQuery.data ?? []
   const canEditReceipts = receiptSettings.data?.canEdit ?? false
 
+  // A non-writer (Manager) can't edit the tenant default; their branches query only
+  // returns their own branch(es). Land them on that branch instead of a scope they
+  // can't touch (and can't switch back to, since the option isn't rendered).
+  useEffect(() => {
+    if (!canWrite && scope === TENANT_SCOPE && branches.length > 0) {
+      // oxlint-disable-next-line set-state-in-effect
+      setScope(branches[0].id)
+    }
+  }, [canWrite, scope, branches])
+
   // ---- Receipt settings form state (14 fields) ----
   const [values, setValues] = useState<UpdateReceiptSettingsRequest | null>(null)
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({})
@@ -244,9 +254,7 @@ function ReceiptSettingsForm() {
             onChange={(e) => setScope(e.target.value)}
             hint="Branch overrides fall back to the tenant default for anything left unchanged."
           >
-            <option value={TENANT_SCOPE} disabled={!canWrite}>
-              Tenant default
-            </option>
+            {canWrite && <option value={TENANT_SCOPE}>Tenant default</option>}
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
