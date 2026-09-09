@@ -350,12 +350,6 @@ public sealed class UpdateReceiptSettingsRequestValidator : AbstractValidator<Up
     {
         RuleFor(x => x.Width).IsInEnum();
 
-        foreach (var selector in new Func<UpdateReceiptSettingsRequest, string?>[]
-                 { x => x.SalesHeaderText, x => x.SalesFooterText, x => x.DeliveryHeaderText, x => x.DeliveryFooterText })
-        {
-            // one rule per text field, evaluated against the normalized value
-        }
-
         Text(x => x.SalesHeaderText, nameof(UpdateReceiptSettingsRequest.SalesHeaderText));
         Text(x => x.SalesFooterText, nameof(UpdateReceiptSettingsRequest.SalesFooterText));
         Text(x => x.DeliveryHeaderText, nameof(UpdateReceiptSettingsRequest.DeliveryHeaderText));
