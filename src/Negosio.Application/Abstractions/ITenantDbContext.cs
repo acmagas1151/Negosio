@@ -53,6 +53,11 @@ public interface ITenantDbContext : IAsyncDisposable
 
     DbSet<RefundPayment> RefundPayments { get; }
 
+    // Delivery
+    DbSet<DeliveryReceipt> DeliveryReceipts { get; }
+
+    DbSet<DeliveryReceiptItem> DeliveryReceiptItems { get; }
+
     DbSet<DocumentNumberCounter> DocumentNumberCounters { get; }
 
     DbSet<UserPermissionGrant> UserPermissionGrants { get; }

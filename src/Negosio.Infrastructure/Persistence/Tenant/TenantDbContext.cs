@@ -65,6 +65,10 @@ public sealed class TenantDbContext : DbContext, ITenantDbContext
 
     public DbSet<RefundPayment> RefundPayments => Set<RefundPayment>();
 
+    public DbSet<DeliveryReceipt> DeliveryReceipts => Set<DeliveryReceipt>();
+
+    public DbSet<DeliveryReceiptItem> DeliveryReceiptItems => Set<DeliveryReceiptItem>();
+
     public DbSet<DocumentNumberCounter> DocumentNumberCounters => Set<DocumentNumberCounter>();
 
     public DbSet<UserPermissionGrant> UserPermissionGrants => Set<UserPermissionGrant>();
