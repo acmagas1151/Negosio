@@ -1,6 +1,6 @@
 # Handover Summary
 
-_End of a session on branch `feature/receipt-settings` — **Plan A (Receipt Settings) + Plan B (Delivery Receipt) both executed**, whole-branch reviewed (verdict: ship with follow-ups), final-review fixes applied. Last code commit `925ddf1`. **Not merged, not pushed** — awaiting the user's review. Branched from `master` @ `70abed7`._
+_**Plan A (Receipt Settings) + Plan B (Delivery Receipt) both executed**, whole-branch reviewed (verdict: ship with follow-ups), final-review fixes applied. **Merged to `master` locally as `a5c2df1` (`--no-ff`); `feature/receipt-settings` deleted. NOT pushed** — `master` is 36 commits ahead of `origin/master`. Forked from `master` @ `70abed7`._
 
 ## Project Context
 
@@ -71,8 +71,8 @@ _(The final review also flagged: a missing `.dr .bold` CSS rule, an unreachable 
 
 ## Next steps
 
-1. User reviews `feature/receipt-settings` (live and/or diff).
-2. Merge to `master` once approved (currently unmerged, unpushed) — the branch holds both Plan A and Plan B.
+1. **`master` is 36 commits ahead of `origin/master` and unpushed** — push when ready (`git push origin master`).
+2. Optionally pick up the open follow-ups above (void banner on the DR reprint; `LineNumber` column for stable print order; modal `isSuccess` gating).
 3. Phase D items from the original spec remain deferred (no Customer entity, no delivery tracking/status, no digital signature — signature block is blank ruled lines by design).
 
 ## Dev environment
