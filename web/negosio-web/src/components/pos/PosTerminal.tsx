@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { PackageSearch } from 'lucide-react'
 import { ApiError } from '../../api/client'
+import { deliveryReceiptsApi } from '../../api/deliveryReceipts'
 import { checkoutApi, posCatalogApi } from '../../api/pos'
 import type {
   CheckoutPaymentInput,
@@ -30,6 +31,7 @@ import { CancelTransactionModal } from './CancelTransactionModal'
 import { CartPanel } from './CartPanel'
 import { CategoryFilters } from './CategoryFilters'
 import { CheckPriceModal } from './CheckPriceModal'
+import { DeliveryDetailsModal, type DeliveryDetails } from './DeliveryDetailsModal'
 import { DiscountApprovalModal } from './DiscountApprovalModal'
 import { PaymentFailedModal } from './PaymentFailedModal'
 import { PaymentModal } from './PaymentModal'
@@ -97,6 +99,12 @@ export function PosTerminal({
   const [discountApprovalError, setDiscountApprovalError] = useState<string | null>(null)
   const [successResult, setSuccessResult] = useState<SaleResultDto | null>(null)
   const [successPayment, setSuccessPayment] = useState<CheckoutPaymentInput | null>(null)
+  // "For delivery" flow: details are captured before payment and held here; the delivery receipt
+  // is created only after the sale exists (in the checkout mutation's onSuccess). Kept across a
+  // cancelled/re-opened payment modal; cleared on New Transaction and after a completed sale.
+  const [forDelivery, setForDelivery] = useState(false)
+  const [deliveryDetails, setDeliveryDetails] = useState<DeliveryDetails | null>(null)
+  const [deliveryDetailsOpen, setDeliveryDetailsOpen] = useState(false)
   // Only for a genuine payment-attempt failure (network/connectivity, a concurrency conflict, or a
   // truly unexpected error) — insufficient inventory, discount approval, and a lost register
   // session each already have their own targeted recovery flow and never populate this.
@@ -228,7 +236,62 @@ export function PosTerminal({
     setNeedsNewId(false)
     setRestoredAttempt(null)
     setNewTxnConfirmOpen(false)
+    setForDelivery(false)
+    setDeliveryDetails(null)
   }, [cart])
+
+  // The payment modal and the delivery-details modal swap rather than stack (same pattern as the
+  // void-choice → void-lookup flow). Ticking "For delivery" opens the details form; it only
+  // becomes a real flag once details are saved. Unticking clears it.
+  const onToggleForDelivery = useCallback((next: boolean) => {
+    if (next) {
+      setPayOpen(false)
+      setDeliveryDetailsOpen(true)
+      return
+    }
+    setForDelivery(false)
+    setDeliveryDetails(null)
+  }, [])
+
+  const onEditDelivery = useCallback(() => {
+    setPayOpen(false)
+    setDeliveryDetailsOpen(true)
+  }, [])
+
+  const onSaveDeliveryDetails = useCallback((details: DeliveryDetails) => {
+    setDeliveryDetails(details)
+    setForDelivery(true)
+    setDeliveryDetailsOpen(false)
+    setPayOpen(true)
+  }, [])
+
+  const onCancelDeliveryDetails = useCallback(() => {
+    setDeliveryDetailsOpen(false)
+    setPayOpen(true)
+    // If nothing was ever saved, the tick reverts; an edit of already-saved details keeps them.
+    setForDelivery((current) => current && deliveryDetails != null)
+  }, [deliveryDetails])
+
+  // Creates the delivery receipt for a just-completed sale. The sale is already safe by the time
+  // this runs — a failure here never unwinds it, it just tells the cashier to add the DR later.
+  const createDrMutation = useMutation({
+    mutationFn: ({ saleId, details }: { saleId: string; details: DeliveryDetails }) =>
+      deliveryReceiptsApi.createForSale(saleId, {
+        recipientName: details.recipientName,
+        deliveryAddress: details.deliveryAddress,
+        contactNumber: details.contactNumber || undefined,
+        deliveryNotes: details.deliveryNotes || undefined,
+      }),
+    onSuccess: (dr) => {
+      window.open('/delivery-receipts/' + dr.id + '?print=1', '_blank', 'noopener')
+    },
+    onError: () => {
+      toast(
+        'error',
+        'Sale completed, but the delivery receipt could not be created. Add it from the sale page.',
+      )
+    },
+  })
 
   // Eligibility for the two sale-lookup flows. Both only decide what the lookup modal can show a
   // "continue" button for — the backend independently re-checks and is authoritative either way
@@ -382,6 +445,14 @@ export function PosTerminal({
       toast('success', `Sale #${result.saleNumber} completed`)
       setSuccessPayment(variables.payment)
       setSuccessResult(result)
+
+      // "For delivery": the sale exists now, so create its delivery receipt. Runs after the sale
+      // is confirmed safe — a DR failure only surfaces a toast, it never touches the sale.
+      if (forDelivery && deliveryDetails) {
+        createDrMutation.mutate({ saleId: result.saleId, details: deliveryDetails })
+      }
+      setForDelivery(false)
+      setDeliveryDetails(null)
     },
     onError: (err) => {
       setStatus('failed')
@@ -552,6 +623,17 @@ export function PosTerminal({
         submitting={status === 'submitting'}
         error={payError}
         onConfirm={(payment) => mutation.mutate({ payment })}
+        forDelivery={forDelivery}
+        deliverySummary={deliveryDetails?.recipientName ?? null}
+        onToggleForDelivery={onToggleForDelivery}
+        onEditDelivery={onEditDelivery}
+      />
+
+      <DeliveryDetailsModal
+        open={deliveryDetailsOpen}
+        onClose={onCancelDeliveryDetails}
+        onSave={onSaveDeliveryDetails}
+        initial={deliveryDetails}
       />
 
       <PaymentSuccessModal

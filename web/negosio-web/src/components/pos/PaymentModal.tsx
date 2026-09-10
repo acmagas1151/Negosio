@@ -13,9 +13,28 @@ interface Props {
   submitting: boolean
   error: string | null
   onConfirm: (payment: CheckoutPaymentInput) => void
+  /** Whether this sale is flagged for delivery (delivery details already captured). */
+  forDelivery: boolean
+  /** Recipient name to echo once details are captured; null when none yet. */
+  deliverySummary: string | null
+  /** Tick / untick "For delivery". Ticking opens the delivery-details form; unticking clears it. */
+  onToggleForDelivery: (next: boolean) => void
+  /** Re-open the delivery-details form to edit the captured values. */
+  onEditDelivery: () => void
 }
 
-export function PaymentModal({ open, onClose, amountDue, submitting, error, onConfirm }: Props) {
+export function PaymentModal({
+  open,
+  onClose,
+  amountDue,
+  submitting,
+  error,
+  onConfirm,
+  forDelivery,
+  deliverySummary,
+  onToggleForDelivery,
+  onEditDelivery,
+}: Props) {
   const [method, setMethod] = useState<PaymentMethod>('Cash')
   const [received, setReceived] = useState('')
   const [reference, setReference] = useState('')
@@ -134,6 +153,33 @@ export function PaymentModal({ open, onClose, amountDue, submitting, error, onCo
           autoFocus
         />
       )}
+
+      <div className="mt-4 rounded-lg border border-border-strong px-3 py-2.5">
+        <label className="flex items-center gap-2.5 text-sm font-semibold text-text-secondary">
+          <input
+            type="checkbox"
+            checked={forDelivery}
+            disabled={submitting}
+            onChange={(e) => onToggleForDelivery(e.target.checked)}
+            className="size-4 rounded border-border-strong text-primary-600 focus:ring-primary-500"
+          />
+          For delivery
+        </label>
+        {forDelivery && deliverySummary && (
+          <p className="mt-1.5 pl-6 text-[13px] text-text-muted">
+            Delivering to <span className="font-medium text-text-secondary">{deliverySummary}</span>
+            {' · '}
+            <button
+              type="button"
+              onClick={onEditDelivery}
+              disabled={submitting}
+              className="font-semibold text-primary-700 hover:underline"
+            >
+              Edit
+            </button>
+          </p>
+        )}
+      </div>
     </Modal>
   )
 }
