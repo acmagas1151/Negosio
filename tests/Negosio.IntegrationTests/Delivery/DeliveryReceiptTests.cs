@@ -149,6 +149,20 @@ public class DeliveryReceiptTests : IntegrationTest
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    [Fact] // final review: a voided sale must not get a delivery receipt (server-side, not just the hidden button)
+    public async Task Create_is_rejected_for_a_voided_sale()
+    {
+        var scene = await ArrangeSaleAsync();
+        (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/void",
+            new VoidSaleRequest("test"))).EnsureSuccessStatusCode();
+
+        var resp = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipt", Req());
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        (await Client.GetAsync($"/api/sales/{scene.SaleId}/delivery-receipt"))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound); // nothing was created
+    }
+
     [Fact]
     public async Task Branch_scoped_user_cannot_read_another_branchs_DR()
     {

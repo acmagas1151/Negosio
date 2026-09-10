@@ -9,6 +9,7 @@ export function deliveryReceiptCss(): string {
 .dr { width:190mm; margin:0 auto; background:#fff; color:#000; padding:16mm 12mm; font:12px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 .dr h1 { font-size:18px; text-align:center; margin:0 0 2px; }
 .dr .center { text-align:center; }
+.dr .bold { font-weight:700; }
 .dr .muted { color:#333; }
 .dr p { margin:0; }
 .dr-title { text-align:center; font-size:15px; font-weight:700; letter-spacing:1px; margin:6px 0 0; }

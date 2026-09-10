@@ -103,4 +103,5 @@ public static class ErrorCodes
 
     // ---- Delivery receipts ----
     public const string DeliveryReceiptNotFound = "DELIVERY_RECEIPT_NOT_FOUND";
+    public const string DeliveryReceiptNotAllowed = "DELIVERY_RECEIPT_NOT_ALLOWED";
 }

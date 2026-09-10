@@ -5,6 +5,7 @@ using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Application.Settings;
 using Negosio.Domain.Entities;
+using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Delivery;
 
@@ -58,9 +59,25 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             return await GetAsync(existing.Id, ct);
         }
 
+        // Server-authoritative status gate (mirrors ReturnService's allow-list). The UI hides the
+        // button for a Voided sale, but that is UX only — a permanent, un-deletable DR must never be
+        // created for a sale that is not in a delivered state. Placed after the existing-DR
+        // short-circuit so a DR created while the sale was valid stays retrievable if it is later voided.
+        if (sale.Status is not (SaleStatus.Completed or SaleStatus.PartiallyRefunded or SaleStatus.Refunded))
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.DeliveryReceiptNotAllowed,
+                "A delivery receipt can only be created for a completed sale.");
+        }
+
         await _validator.ValidateAndThrowAppAsync(request, ct);
 
         var lines = ResolveItems(sale, request);
+        if (lines.Count == 0)
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.InvalidSaleItem, "A delivery receipt must include at least one item.");
+        }
 
         var preparedByName = await _db.Users.Where(u => u.Id == _currentUser.UserId)
             .Select(u => u.FirstName + " " + u.LastName)
@@ -216,12 +233,6 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             }
 
             pairs.Add((saleItem, line.Quantity));
-        }
-
-        if (pairs.Count == 0)
-        {
-            throw new BusinessRuleException(
-                ErrorCodes.InvalidSaleItem, "A delivery receipt must include at least one item.");
         }
 
         return pairs;
