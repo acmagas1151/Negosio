@@ -273,12 +273,12 @@ public sealed class DeliveryReceiptItemConfiguration : IEntityTypeConfiguration<
 - Produces:
   - `sealed record CreateDeliveryReceiptItemInput(Guid SaleItemId, decimal Quantity)`
   - `sealed record CreateDeliveryReceiptRequest(string RecipientName, string DeliveryAddress, string? ContactNumber, string? DeliveryNotes, IReadOnlyList<CreateDeliveryReceiptItemInput>? Items)` — `Items = null` ⇒ "use all sale lines at full quantity".
-  - `sealed record DeliveryReceiptItemDto(string ProductName, string? VariantName, decimal Quantity, decimal? UnitPrice, decimal? Amount)` — `UnitPrice`/`Amount` are `null` when `DeliveryShowPrices` is off.
+  - `sealed record DeliveryReceiptItemDto(string ProductName, string? VariantName, decimal Quantity, decimal? UnitPrice, decimal? Amount)` — `UnitPrice`/`Amount` are `null` when `DeliveryShowPrices` is off. (The print/preview column header for `UnitPrice` reads **"Unit Price"** — DTO name unchanged.)
   - `sealed record DeliveryReceiptDto(Guid Id, string Number, DateTime CreatedAtUtc, string? RelatedSaleNumber, string BranchName, string RecipientName, string DeliveryAddress, string? ContactNumber, string? DeliveryNotes, string PreparedByName, IReadOnlyList<DeliveryReceiptItemDto> Items, string? HeaderText, string? FooterText, string BusinessName, string? BusinessAddress, string? BusinessContactNumber, string? TaxId, bool ShowPrices, bool ShowRelatedSaleNumber, bool ShowContactNumber, bool ShowSignatureFields)`
   - `interface IDeliveryReceiptService { Task<DeliveryReceiptDto> CreateOrGetForSaleAsync(Guid saleId, CreateDeliveryReceiptRequest request, CancellationToken ct = default); Task<DeliveryReceiptDto?> GetForSaleAsync(Guid saleId, CancellationToken ct = default); Task<DeliveryReceiptDto> GetAsync(Guid id, CancellationToken ct = default); }`
-  - `CreateDeliveryReceiptRequestValidator`: `RecipientName` required ≤ 120; `DeliveryAddress` required ≤ 300; `ContactNumber` ≤ 40; `DeliveryNotes` ≤ 1000; each item `Quantity > 0`.
+  - `CreateDeliveryReceiptRequestValidator`: `RecipientName` **required** (`NotEmpty`) ≤ 120; `DeliveryAddress` **required** (`NotEmpty`) ≤ 300; `ContactNumber` optional ≤ 40; `DeliveryNotes` optional ≤ 1000; each item `Quantity > 0`. Failure messages should use the user-facing labels — "Recipient name is required.", "Recipient address is required.", etc.
 
-- [ ] **Step 1: Failing validator tests** (mirror Plan A Task 2 style).
+- [ ] **Step 1: Failing validator tests** (mirror Plan A Task 2 style) — include: blank `RecipientName` → error; blank `DeliveryAddress` → error; 301-char `DeliveryAddress` → error; null `ContactNumber`/`DeliveryNotes` → OK.
 - [ ] **Step 2: Create contracts + validator.**
 - [ ] **Step 3: Run tests, verify PASS.**
 - [ ] **Step 4: Commit** — `git commit -am "feat(delivery): delivery-receipt contracts + validator"`
@@ -346,9 +346,22 @@ public class DeliveryReceiptTests : IntegrationTest
 
         dr.Number.Should().Be("DR-000001");
         dr.RecipientName.Should().Be("Juan Dela Cruz");
+        dr.DeliveryAddress.Should().Be("123 Ayala Ave, Makati");   // required, persisted, round-trips
         dr.RelatedSaleNumber.Should().Be(scene.SaleNumber);
         dr.Items.Should().ContainSingle();
         dr.Items[0].Quantity.Should().Be(2m);
+    }
+
+    [Fact]
+    public async Task Create_rejects_blank_recipient_name_or_address()
+    {
+        var scene = await ArrangeSaleAsync();
+        (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipt",
+            new CreateDeliveryReceiptRequest("  ", "123 Ayala Ave", null, null, null)))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipt",
+            new CreateDeliveryReceiptRequest("Juan Dela Cruz", "   ", null, null, null)))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]                                                        // acceptance 20
@@ -489,15 +502,19 @@ public sealed class DeliveryReceiptsController : ControllerBase
 - `deliveryReceiptsApi.getForSale(saleId)` (`GET /api/sales/{id}/delivery-receipt`, returns `DeliveryReceiptDto | null` — treat 404 as `null`), `.createForSale(saleId, body)`, `.get(id)`.
 
 - [ ] **Step 1:** Types + `deliveryReceipts.ts`.
-- [ ] **Step 2:** `deliveryReceiptStyles.ts` — A4 CSS: `.dr { width: 190mm; margin: 0 auto; font: 12px/1.5 system-ui; }`, a bordered items `table`, a `.dr-signatures` 3-column grid with `border-top` ruled lines and labels (Prepared by / Delivered by / Received by), `@media print { @page { size: A4; margin: 12mm; } .dr-actions { display:none } }`. Keep it self-contained (inline `<style>` like `ReceiptPage`).
+- [ ] **Step 2:** `deliveryReceiptStyles.ts` — A4 CSS: `.dr { width: 190mm; margin: 0 auto; font: 12px/1.5 system-ui; }`, a bordered items `table`, a `.dr-signatures` block — **stacked lines** (not a grid): `Prepared by: <name>` then `Delivered by:`, `Received by:`, `Date received:` each followed by a `border-bottom` ruled line long enough to hand-write on. `@media print { @page { size: A4; margin: 12mm; } .dr-actions { display:none } }`. Keep it self-contained (inline `<style>` like `ReceiptPage`).
 - [ ] **Step 3:** `DeliveryReceiptPage.tsx` — route param `:id`, `useQuery(['delivery-receipts', id], () => deliveryReceiptsApi.get(id))`, `?print=1` → `window.print()` once loaded (copy the `printedRef` pattern from `ReceiptPage`). Layout:
   - `<ReceiptHeader headerText={d.headerText || 'DELIVERY RECEIPT'} business={{...}} />` — note: for the DR, when `headerText` is null show the business block **and** a `DELIVERY RECEIPT` title line.
-  - Document details: DR #, date, `relatedSaleNumber` (only if `d.showRelatedSaleNumber`), branch.
-  - Recipient / address / `contactNumber` (only if `d.showContactNumber`).
-  - Items table: Qty · Product (+variant) · Unit price + Amount columns only when `d.showPrices` (and values are non-null).
+  - Document details: DR #, date, branch.
+  - **Recipient details block** — one line each, in order:
+    - `Recipient: <recipientName>` — **always shown**
+    - `Address: <deliveryAddress>` — **always shown**, wraps onto continuation lines (label is "Address:" on the printout; the field is `deliveryAddress` / UI label "Recipient address")
+    - `Contact: <contactNumber>` — only when `d.showContactNumber` **and** a contact number exists
+    - `Related Sale: #<relatedSaleNumber>` — only when `d.showRelatedSaleNumber` **and** a related sale number exists
+  - Items table: header `Qty | Product | Unit Price | Amount`. The `Unit Price` + `Amount` columns render only when `d.showPrices` (and the value is non-null). **Column label is literally "Unit Price"** — no change to the underlying `unitPrice` value.
   - Delivery notes block when present.
-  - Signature grid when `d.showSignatureFields`.
-  - `<ReceiptFooter footerText={d.footerText} />` — but for the DR a null footer should render nothing (pass a `variant="delivery"` prop or just `d.footerText && <ReceiptFooter .../>`).
+  - Signature block when `d.showSignatureFields` (see the stacked style above; `Prepared by` = `d.preparedByName`).
+  - `<ReceiptFooter footerText={d.footerText} />` — but for the DR a null footer should render nothing (`d.footerText && <ReceiptFooter .../>`).
 - [ ] **Step 4:** `App.tsx` — `{ path: '/delivery-receipts/:id', element: <DeliveryReceiptPage /> }` in `protectedRoutes` (no `RequireCapability` — server enforces branch; any `sales:view` role may print).
 - [ ] **Step 5:** `npx tsc --noEmit` + `npm run build` clean.
 - [ ] **Step 6: Commit** — `git commit -am "feat(web): delivery receipt A4 print page"`
@@ -516,11 +533,20 @@ public sealed class DeliveryReceiptsController : ControllerBase
   - DR exists → **"View delivery receipt"** → `window.open('/delivery-receipts/' + dr.id + '?print=1', '_blank', 'noopener')`.
   - No DR, and sale status is `Completed` / `PartiallyRefunded` / `Refunded` (a voided sale gets no DR) → **"Print delivery receipt"** → opens `CreateDeliveryReceiptModal`.
   - Show for any `sales:view` role (no extra capability).
-- `CreateDeliveryReceiptModal`:
-  - Fields: Recipient name (required), Delivery address (required, textarea), Contact number, Delivery notes (textarea).
+- `CreateDeliveryReceiptModal` — fields, in this order:
+
+  ```
+  Recipient name *          <TextField>
+  Recipient address *       <TextArea rows={2}>      (maps to `deliveryAddress`)
+  Contact number            <TextField>
+  Delivery notes            <TextArea rows={2}>
+  ```
+
+  - **Recipient name** and **Recipient address** are required (client-side + server FluentValidation is authoritative). Contact number and Delivery notes are optional.
+  - Labels are exactly "Recipient name", "Recipient address", "Contact number", "Delivery notes". The request payload key stays `deliveryAddress`.
   - Items: list the sale's items with an editable quantity per line (default = full qty; min 0 — a 0 excludes the line). Build `items: [{ saleItemId, quantity }]` (omit lines with qty 0; if all lines full, send `items: undefined` to keep it simple).
   - Submit → `deliveryReceiptsApi.createForSale(id, body)` → on success invalidate `['sales', id, 'delivery-receipt']`, close modal, `window.open('/delivery-receipts/' + dr.id + '?print=1', ...)`.
-  - Error handling: 400 → field errors via `fieldErrorsFrom`; other → toast.
+  - Error handling: 400 → field errors via `fieldErrorsFrom` (the `deliveryAddress` field error must attach to the "Recipient address" input); other → toast.
 - Reuse `Modal`, `TextField`, `TextArea` (Plan A), `Button`, `useToast`.
 
 - [ ] **Step 1:** Build `CreateDeliveryReceiptModal`.
@@ -538,7 +564,7 @@ public sealed class DeliveryReceiptsController : ControllerBase
 - [ ] **Step 1:** Servers up (`:5170` / `:5173`). Seeded accounts as in Plan A.
 - [ ] **Step 2:** Headless-Chrome pass:
   - Owner: `/settings/receipts` → Delivery tab → set header "DELIVERY RECEIPT", footer "Received in good order", turn **off** "Show prices" → save.
-  - Open a completed sale → **Print delivery receipt** → fill recipient "Maria Santos", address, contact, notes → submit → A4 page opens, auto-print dialog. Verify: DR-000001, related sale #, item quantities match the sale, **no price columns**, signature lines present, footer text applied. (acceptance 14, 16, 17, 18, 19)
+  - Open a completed sale → **Print delivery receipt** → the modal shows **Recipient name \*, Recipient address \*, Contact number, Delivery notes** — try to submit with a blank address → blocked; fill recipient "Maria Santos", address "12 Sample St, BGC, Taguig", contact, notes → submit → A4 page opens, auto-print dialog. Verify: DR-000001, `Recipient:` + `Address:` lines always shown, related sale #, item table header reads **"Unit Price"**, **no price columns** (Show prices off), signature block `Prepared by: <you>` + blank `Delivered by` / `Received by` / `Date received` lines, footer text applied. (acceptance 14, 16, 17, 18, 19)
   - Back on the sale → button now says **"View delivery receipt"** → opens the **same** DR-000001 (acceptance 20).
   - Turn "Show prices" back on → create a DR for a *different* sale → prices now shown. First sale's DR still shows no prices (settings resolved at... note: settings are resolved at **GET** time, so toggling later changes the reprint — that matches the spec's "reprint uses current saved settings" for the *sales* receipt; for the DR the spec says reprint = same document identity/number, but header/footer/toggles are still live settings. Confirm this is acceptable in the handover; the DR *data* (items, recipient, number) is immutable, the *presentation* follows current settings.)
   - Manager (BGC): can create a DR for a BGC sale; cannot open `/delivery-receipts/{id}` of a main-branch DR (redirect/404 view).
@@ -556,7 +582,8 @@ public sealed class DeliveryReceiptsController : ControllerBase
 - §4.2 `DeliveryReceipt`/`DeliveryReceiptItem`, snapshots, non-unique `SaleId`, one-per-sale service rule → Tasks 2, 3, 5. ✓
 - §4.3 `DocumentNumberType.DeliveryReceipt` + `DR-{value:D6}` → Task 1. ✓
 - §6.2 endpoints (`POST`/`GET` on sale, `GET /api/delivery-receipts/{id}`), `SalesView` + service branch check, idempotent create → Tasks 5, 6. ✓
-- §7.3 A4 page, sections, `?print=1`, price columns gated, signature grid, configurable header/footer → Task 7. ✓
+- §7.3 A4 page, sections, `?print=1`, **"Unit Price" column label**, price columns gated, **Recipient + Address always shown / Contact + Related Sale gated**, stacked signature block (Prepared by / Delivered by / Received by / Date received), configurable header/footer → Task 7. ✓
+- Recipient name + recipient address **required** (client + server), UI label "Recipient address" mapping to persisted `DeliveryAddress` (no second property) → Tasks 4, 8. ✓
 - §7.4 "Print delivery receipt" on Sale detail, becomes "View..." after creation, no POS button → Task 8. ✓
 - §12 acceptance 14–20 → mapped inline in Task 5 (14,15,16,17,18,20) + Task 9 (19, live 20, void-sale). ✓
 - Delivery header/footer/toggles sourced from Plan A `ReceiptSettings` (delivery fields) → Task 5 Step (GetAsync uses `IReceiptSettingsResolver`). ✓

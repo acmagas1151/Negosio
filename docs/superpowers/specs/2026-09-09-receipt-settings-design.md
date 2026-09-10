@@ -107,10 +107,10 @@ public class DeliveryReceipt : Entity
     public Guid? SaleId { get; private set; }           // optional link
     public string? RelatedSaleNumber { get; private set; }   // snapshot for display if SaleId set
 
-    public string RecipientName { get; private set; }
-    public string DeliveryAddress { get; private set; }
-    public string? ContactNumber { get; private set; }
-    public string? DeliveryNotes { get; private set; }
+    public string RecipientName { get; private set; }      // required, ≤ 120
+    public string DeliveryAddress { get; private set; }    // required, ≤ 300  — UI label: "Recipient address"
+    public string? ContactNumber { get; private set; }     // optional, ≤ 40
+    public string? DeliveryNotes { get; private set; }     // optional, ≤ 1000
 
     public Guid PreparedByUserId { get; private set; }
     public string PreparedByNameSnapshot { get; private set; }
@@ -128,10 +128,15 @@ public class DeliveryReceiptItem : Entity
     public string ProductNameSnapshot { get; private set; }
     public string? VariantNameSnapshot { get; private set; }
     public decimal Quantity { get; private set; }
-    public decimal? UnitPrice { get; private set; }     // nullable — printed only if DeliveryShowPrices
+    public decimal? UnitPrice { get; private set; }     // nullable — printed only if DeliveryShowPrices; column header is "Unit Price"
 }
 ```
 
+- `RecipientName` and `DeliveryAddress` are **required** and **always print** — no per-field
+  show/hide toggle for them in v1. `DeliveryReceipt.Create` rejects blank/whitespace for either.
+  The UI labels `DeliveryAddress` as **"Recipient address"** (creation modal, print page, preview,
+  validation messages) — the persisted property name stays `DeliveryAddress`; do NOT add a second
+  `RecipientAddress` property.
 - Line items **snapshotted** at creation (same rationale as `SaleItem` — a later rename/reprice
   never changes an issued document). When `SaleId` is provided, items are pre-filled from
   `SaleItem` but still copied.
@@ -249,11 +254,39 @@ banners unchanged.
 
 ### 7.3 `DeliveryReceiptPage.tsx` (new, route `/delivery-receipts/:id`)
 
-A4/Letter layout: business header + `DELIVERY RECEIPT` title · document details (DR#, date,
-related Sale#, branch) · recipient / address / contact · items table (qty, product, unit, unit
-price + amount only if `DeliveryShowPrices`) · delivery notes · signature grid (Prepared by =
-name; Delivered by / Received by / date received = blank lines) · configurable footer.
-`?print=1` auto-prints, same convention as the sales receipt.
+A4/Letter layout: business header + `DELIVERY RECEIPT` title · document details block · items
+table · delivery notes · signature block · configurable footer. `?print=1` auto-prints, same
+convention as the sales receipt.
+
+**Document details block** — one line each, in this order:
+
+```
+Recipient: <RecipientName>
+Address:   <DeliveryAddress>              (wraps onto continuation lines)
+Contact:   <ContactNumber>               (hidden when DeliveryShowContactNumber = false)
+Related Sale: #<RelatedSaleNumber>       (hidden when DeliveryShowRelatedSaleNumber = false)
+```
+
+`Recipient` and `Address` are **core fields and always render** — there are no per-field
+show/hide toggles for them in v1. Only `Contact` and `Related Sale` are gated. (`DeliveryAddress`
+is the authoritative persisted field; its user-facing label is **"Recipient address"** everywhere
+in the UI — creation modal, print page, preview, validation messages.)
+
+**Items table** — columns `Qty | Product | Unit Price | Amount`. `Unit Price` + `Amount` render
+only when `DeliveryShowPrices` (and the value is non-null). The column header is literally
+**"Unit Price"** (was "Unit" in an earlier draft — label only, no pricing-logic change).
+
+**Signature block** — rendered only when `DeliveryShowSignatureFields`. Stacked, not a grid:
+
+```
+Prepared by: <PreparedByNameSnapshot>
+Delivered by: ____________________
+Received by:  ____________________
+Date received: __________________
+```
+
+`Prepared by` is filled from the persisted `PreparedByNameSnapshot`; the other three are blank
+ruled lines for hand-completion (no digital capture — D5).
 
 ### 7.4 Settings UI
 
