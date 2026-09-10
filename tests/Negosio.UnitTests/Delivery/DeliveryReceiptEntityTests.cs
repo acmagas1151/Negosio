@@ -9,7 +9,7 @@ public class DeliveryReceiptEntityTests
     private static DeliveryReceipt Make() => DeliveryReceipt.Create(
         Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "0000042",
         "  Juan Dela Cruz ", " 123 Ayala Ave, Makati ", " 0917 111 2222 ", "  Leave at guardhouse ",
-        Guid.NewGuid(), "Cashier One");
+        Guid.NewGuid(), " Cashier One ");
 
     [Fact]
     public void Create_trims_and_keeps_snapshot_fields()
@@ -40,6 +40,8 @@ public class DeliveryReceiptEntityTests
         dr.AddItem("Coke 1.5L", null, 3m, 85m);
         dr.Items.Should().ContainSingle();
         dr.Items.Single().UnitPrice.Should().Be(85m);
+        dr.Items.Single().ProductNameSnapshot.Should().Be("Coke 1.5L");
+        dr.Items.Single().Quantity.Should().Be(3m);
 
         var act = () => dr.AddItem("Bad", null, 0m, null);
         act.Should().Throw<ArgumentOutOfRangeException>();

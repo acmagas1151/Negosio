@@ -107,6 +107,8 @@ public class DeliveryReceipt : Entity
             trimmedRelatedSaleNumber = null;
         }
 
+        var trimmedPreparedByNameSnapshot = preparedByNameSnapshot?.Trim() ?? string.Empty;
+
         return new DeliveryReceipt(
             tenantId,
             branchId,
@@ -117,7 +119,7 @@ public class DeliveryReceipt : Entity
             trimmedContactNumber,
             trimmedDeliveryNotes,
             preparedByUserId,
-            preparedByNameSnapshot);
+            trimmedPreparedByNameSnapshot);
     }
 
     public DeliveryReceiptItem AddItem(
