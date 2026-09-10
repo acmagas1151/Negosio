@@ -187,7 +187,12 @@ export function PaymentModal({
           />
         )}
 
-        <div className="mt-4 rounded-lg border border-border-strong px-3 py-2.5">
+        <div
+          className={cn(
+            'mt-4 rounded-lg border border-border-strong',
+            forDelivery ? 'px-4 py-3.5' : 'px-3 py-2.5',
+          )}
+        >
           <label className="flex items-center gap-2.5 text-sm font-semibold text-text-secondary">
             <input
               type="checkbox"

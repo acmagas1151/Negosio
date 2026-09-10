@@ -8,12 +8,12 @@ interface Props {
   disabled?: boolean
 }
 
-/** Presentational: the soft nested card with the four delivery inputs. All state and validation
- * live in the parent (PaymentModal) so the values survive a failed-payment retry. */
+/** Presentational: the four delivery inputs, rendered directly inside the payment modal's
+ * "For delivery" section (no card of their own). All state and validation live in the parent
+ * (PaymentModal) so the values survive a failed-payment retry. */
 export function DeliveryDetailsFields({ values, onChange, errors, disabled }: Props) {
   return (
-    <div className="mt-3 space-y-2 rounded-xl border border-primary-200 bg-primary-50/70 p-3">
-      <p className="text-sm font-bold text-text-primary">Delivery details</p>
+    <div className="mt-3 space-y-3 border-t border-border pt-3">
       <TextField
         label="Recipient name *"
         name="recipientName"
