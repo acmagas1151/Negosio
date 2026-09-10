@@ -58,6 +58,9 @@ public static class DependencyInjection
         services.AddScoped<IReturnService, ReturnService>();
         services.AddScoped<ITenantSettingsService, TenantSettingsService>();
 
+        // Delivery receipts
+        services.AddScoped<Delivery.IDeliveryReceiptService, Delivery.DeliveryReceiptService>();
+
         // Receipt settings
         services.AddScoped<IReceiptSettingsService, ReceiptSettingsService>();
         services.AddScoped<IReceiptSettingsResolver, ReceiptSettingsResolver>();
