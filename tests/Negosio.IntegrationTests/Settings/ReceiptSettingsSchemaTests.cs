@@ -38,5 +38,16 @@ public class ReceiptSettingsSchemaTests : IntegrationTest
         }));
 
         Assert.IsType<Microsoft.Data.SqlClient.SqlException>(ex.InnerException);
+
+        // (c) a SECOND row for the same (tenant, branchId) violates the per-branch filtered
+        // unique index UX_ReceiptSettings_TenantId_BranchId.
+        var branchDup = await Assert.ThrowsAnyAsync<DbUpdateException>(() => InScopeAsync(async db =>
+        {
+            db.ReceiptSettings.Add(ReceiptSettings.CreateDefault(tenantId, branchId, userId));
+            await db.SaveChangesAsync();
+            return true;
+        }));
+
+        Assert.IsType<Microsoft.Data.SqlClient.SqlException>(branchDup.InnerException);
     }
 }

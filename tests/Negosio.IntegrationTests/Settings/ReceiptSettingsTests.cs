@@ -80,6 +80,31 @@ public class ReceiptSettingsTests : IntegrationTest
         afterReset.IsOverride.Should().BeFalse();
     }
 
+    [Fact]                                                            // F2 regression lock
+    public async Task Cashier_get_receipt_settings_for_own_branch_reports_canEdit_false()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        Authorize(await AddTenantUserTokenAsync("cash@example.com", UserRole.Cashier, branchId));
+
+        var got = await Client.GetFromJsonAsync<ReceiptSettingsDto>(
+            $"/api/settings/receipts?branchId={branchId}", TestJson.Options);
+
+        got!.CanEdit.Should().BeFalse();
+    }
+
+    [Fact]                                                            // F2: a Manager can't edit the tenant default
+    public async Task Manager_get_tenant_default_reports_canEdit_false()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
+        Authorize(await AddTenantUserTokenAsync("mgr@example.com", UserRole.Manager, mainId));
+
+        var got = await Client.GetFromJsonAsync<ReceiptSettingsDto>("/api/settings/receipts", TestJson.Options);
+
+        got!.CanEdit.Should().BeFalse();
+    }
+
     [Fact]                                                            // acceptance 9 / VALIDATION
     public async Task Oversized_header_is_rejected()
     {

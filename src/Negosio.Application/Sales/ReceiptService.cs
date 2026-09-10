@@ -80,7 +80,7 @@ public sealed class ReceiptService : IReceiptService
             HeaderText: settings.SalesHeaderText,
             FooterText: settings.SalesFooterText,
             BusinessAddress: businessAddress,
-            BusinessContactNumber: branch?.ContactNumber,
+            BusinessContactNumber: branch?.ContactNumber ?? profile.ContactNumber,
             TaxId: profile.TaxId,
             ShowBranch: settings.SalesShowBranch,
             ShowCashier: settings.SalesShowCashier,

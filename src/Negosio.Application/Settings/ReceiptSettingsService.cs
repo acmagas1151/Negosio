@@ -5,6 +5,7 @@ using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Domain.Common;
 using Negosio.Domain.Entities;
+using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Settings;
 
@@ -39,8 +40,9 @@ public sealed class ReceiptSettingsService : IReceiptSettingsService
 
         var (row, effective, scope, isOverride) = await LoadEffectiveAsync(branchId, cancellationToken);
 
+        var roleCanManage = _currentUser.Role is UserRole.Owner or UserRole.Admin or UserRole.Manager;
         var canEdit = _branchAccess.IsAllBranch
-            || (branchId is { } b && b == await _branchAccess.AssignedBranchIdAsync(cancellationToken));
+            || (roleCanManage && branchId is { } b && b == await _branchAccess.AssignedBranchIdAsync(cancellationToken));
 
         string? updatedByName = null;
         if (row is not null)

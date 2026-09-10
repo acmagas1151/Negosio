@@ -84,17 +84,20 @@ function ReceiptSettingsForm() {
   })
 
   const branches = branchesQuery.data ?? []
+  // Inactive branches can't be saved (ResolveTargetBranchAsync runs with allowInactive: false),
+  // so don't offer them as scope options.
+  const selectableBranches = branches.filter((b) => b.isActive)
   const canEditReceipts = receiptSettings.data?.canEdit ?? false
 
   // A non-writer (Manager) can't edit the tenant default; their branches query only
   // returns their own branch(es). Land them on that branch instead of a scope they
   // can't touch (and can't switch back to, since the option isn't rendered).
   useEffect(() => {
-    if (!canWrite && scope === TENANT_SCOPE && branches.length > 0) {
+    if (!canWrite && scope === TENANT_SCOPE && selectableBranches.length > 0) {
       // oxlint-disable-next-line set-state-in-effect
-      setScope(branches[0].id)
+      setScope(selectableBranches[0].id)
     }
-  }, [canWrite, scope, branches])
+  }, [canWrite, scope, selectableBranches])
 
   // ---- Receipt settings form state (14 fields) ----
   const [values, setValues] = useState<UpdateReceiptSettingsRequest | null>(null)
@@ -220,11 +223,21 @@ function ReceiptSettingsForm() {
 
   const dto = receiptSettings.data!
   const selectedBranch = branches.find((b) => b.id === selectedBranchId)
+  // Mirror the backend's BusinessAddress / BusinessContactNumber composition (ReceiptService) so the
+  // preview can't visually diverge from the real print. For the tenant-default scope (no single
+  // branch) use the first branch as a representative.
+  const addressSource = selectedBranch ?? branches[0]
+  const composedAddress = addressSource
+    ? [addressSource.addressLine1, addressSource.city, addressSource.province]
+        .map((p) => p?.trim())
+        .filter((p): p is string => !!p)
+        .join(', ') || null
+    : null
   const businessValues = {
     businessName: businessInfo.data?.businessName ?? '',
     branchName: selectedBranch?.name ?? '',
-    address: null,
-    contactNumber: businessInfo.data?.contactNumber ?? null,
+    address: composedAddress,
+    contactNumber: selectedBranch?.contactNumber ?? businessInfo.data?.contactNumber ?? null,
     taxId: businessInfo.data?.taxId ?? null,
   }
 
@@ -255,10 +268,9 @@ function ReceiptSettingsForm() {
             hint="Branch overrides fall back to the tenant default for anything left unchanged."
           >
             {canWrite && <option value={TENANT_SCOPE}>Tenant default</option>}
-            {branches.map((b) => (
+            {selectableBranches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
-                {b.isActive ? '' : ' (inactive)'}
               </option>
             ))}
           </Select>
