@@ -46,7 +46,7 @@ amount of manually-entered, persisted delivery metadata.
 | D6 | `SettingsPage` gains a lightweight **tab shell** (`Tax` · `Receipts`). Receipt Settings is its own route `/settings/receipts` with sub-tabs `General` · `Sales receipt` · `Delivery receipt`. |
 | D7 | **Receipt width setting included**: `ReceiptWidth` enum `Mm80` (default) · `Mm58`, applied to the thermal Sales receipt only. |
 | D8 | `ReceiptDto` extended: per-payment `ReferenceNumber`, `ReceivedAmount`, `ChangeAmount` (from the existing `Payment` columns, not currently surfaced). |
-| D9 | **Delivery Receipt is a persistent aggregate** (`DeliveryReceipt` + `DeliveryReceiptItem`), `DR-000001` from `DocumentNumberService` (branch-scoped counter, consistent with Sale/Return), created from a Sale on the Sale-detail page, line items snapshotted. Reprint returns the same document — never a new number. **One DR per Sale is enforced in the service layer only** — no DB unique constraint on `SaleId`, so multiple/partial deliveries per sale stay possible in a later phase. No POS-modal button. |
+| D9 | **Delivery Receipt is a persistent aggregate** (`DeliveryReceipt` + `DeliveryReceiptItem`), created from a Sale on the Sale-detail page, line items snapshotted. Reprint returns the same document (looked up by `Id`). **One DR per Sale is enforced in the service layer only** — no DB unique constraint on `SaleId`, so multiple/partial deliveries per sale stay possible in a later phase. No POS-modal button. **DR numbering removed 2026-09-10** — no `DR-000001` sequence; the DR is identified by `Id` + creation date + related Sale #. |
 
 ## 4. Data model
 
@@ -99,11 +99,10 @@ public enum ReceiptWidth { Mm80 = 0, Mm58 = 1 }
 ### 4.2 `DeliveryReceipt` + `DeliveryReceiptItem` (new, tenant DB)
 
 ```csharp
-public class DeliveryReceipt : Entity
+public class DeliveryReceipt : Entity                   // Id = the identifier (no human-readable number in v1)
 {
     public Guid TenantId { get; private set; }
     public Guid BranchId { get; private set; }
-    public string Number { get; private set; }          // "DR-000001"  (D9)
     public Guid? SaleId { get; private set; }           // optional link
     public string? RelatedSaleNumber { get; private set; }   // snapshot for display if SaleId set
 
@@ -118,7 +117,7 @@ public class DeliveryReceipt : Entity
     private readonly List<DeliveryReceiptItem> _items = new();
     public IReadOnlyCollection<DeliveryReceiptItem> Items => _items.AsReadOnly();
 
-    public static DeliveryReceipt Create(...);          // number allocated by caller in tx
+    public static DeliveryReceipt Create(...);          // no number — Id is the identifier
 }
 
 public class DeliveryReceiptItem : Entity
@@ -140,28 +139,21 @@ public class DeliveryReceiptItem : Entity
 - Line items **snapshotted** at creation (same rationale as `SaleItem` — a later rename/reprice
   never changes an issued document). When `SaleId` is provided, items are pre-filled from
   `SaleItem` but still copied.
-- `DeliveryReceiptConfiguration`: unique index `(TenantId, BranchId, Number)` (mirrors
-  `SaleReturns`). `Number` `HasMaxLength(30).IsUnicode(false)`. FK to `Sale` `OnDelete(Restrict)`,
-  items `OnDelete(Cascade)`, field-access navigation. **Non-unique** index `(TenantId, SaleId)`
-  for lookup only.
+- `DeliveryReceiptConfiguration`: FK to `Sale` `OnDelete(Restrict)`, items `OnDelete(Cascade)`,
+  field-access navigation. **Non-unique** index `(TenantId, SaleId)` for lookup only. No `Number`
+  column, no `Number` index.
 - **v1: one `DeliveryReceipt` per `SaleId`, enforced in `DeliveryReceiptService` — not by a DB
   constraint.** The create endpoint is idempotent: if a DR already exists for that sale it is
-  returned (200, no new number); otherwise one is created. Leaving the schema free of a
-  `SaleId`-unique constraint keeps partial / multiple deliveries per sale open for a later phase
-  without a migration. A DR with `SaleId = null` (ad-hoc) is structurally allowed but not exposed
-  in v1's UI.
+  returned (200); otherwise one is created. Leaving the schema free of a `SaleId`-unique
+  constraint keeps partial / multiple deliveries per sale open for a later phase without a
+  migration. A DR with `SaleId = null` (ad-hoc) is structurally allowed but not exposed in v1's UI.
 
-### 4.3 `DocumentNumberType` extension
+### 4.3 ~~`DocumentNumberType` extension~~ — REMOVED (user decision 2026-09-10)
 
-```csharp
-public enum DocumentNumberType { Sale = 1, Return = 2, PurchaseOrder = 3, StockTransfer = 4,
-                                 DeliveryReceipt = 5 }
-```
-
-`DocumentNumberService.NextAsync` switch gains
-`DocumentNumberType.DeliveryReceipt => $"DR-{value:D6}"` → `DR-000001`. The counter row is
-**branch-scoped** (real `branchId` passed), consistent with how Sale/Return numbers already work —
-each branch has its own `DR-` run. Allocation happens inside the create transaction.
+DR numbering is out of scope for v1. No `DocumentNumberType.DeliveryReceipt`, no
+`DocumentNumberService` change. A `DeliveryReceipt` has no human-readable number; it is identified
+by its `Id` (URL / reprint stability) and referenced on the printout by its creation date and the
+related Sale #. Adding a number later is a purely additive follow-up.
 
 ### 4.4 Identity fields (D3)
 
@@ -215,7 +207,7 @@ runs, strips control chars; **plain text only — no HTML permitted or rendered*
 
 | Endpoint | Policy | Notes |
 |---|---|---|
-| `POST /api/sales/{saleId}/delivery-receipt` | `SalesView` + service branch check (`ReceiptService` pattern) | Roles: Owner/Admin/Manager/Cashier (same as who can open a sale). Body = delivery metadata + optional item qty overrides. If a DR already exists for this sale → returns it (200), no new number. Else allocates `DR-` in a tx, snapshots items from the sale, persists, stamps `PreparedByUserId`. |
+| `POST /api/sales/{saleId}/delivery-receipt` | `SalesView` + service branch check (`ReceiptService` pattern) | Roles: Owner/Admin/Manager/Cashier (same as who can open a sale). Body = delivery metadata (recipient name + recipient address required) + optional item qty overrides. If a DR already exists for this sale → returns it (200). Else snapshots items from the sale, persists, stamps `PreparedByUserId`. Returns 201. |
 | `GET /api/sales/{saleId}/delivery-receipt` | `SalesView` | Returns the DR for that sale or 404. |
 | `GET /api/delivery-receipts/{id}` | `SalesView` | Branch-scoped like `ReceiptService`. Feeds the print page. |
 
@@ -362,7 +354,7 @@ Cashier/Viewer PUT → 403 (3); header/footer persist & round-trip after re-auth
 oversized/HTML input rejected (9,VALIDATION). `ReceiptDtoTests`: default settings ⇒ byte-identical
 to pre-change output (8,10,12); custom header/footer applied (7); real persisted totals & payment
 values unchanged (11); reprint reflects current saved settings (13).
-`DeliveryReceiptTests`: create from sale ⇒ persisted, unique `DR-` number (14,15); recipient/
+`DeliveryReceiptTests`: create from sale ⇒ persisted (14; ~~15 "unique DR number" — removed~~); recipient/
 address/items correct & snapshotted (16,17); price columns obey `DeliveryShowPrices` (18);
 header/footer applied (19); second `POST` for the same sale ⇒ same DR id & number, no new
 document (20).
@@ -385,9 +377,11 @@ shows the access-denied page.
 | D6 | Approved. Settings tabs `Tax` · `Receipts`; Receipt Settings sub-tabs `General` · `Sales receipt` · `Delivery receipt`; proper routes where they fit the router cleanly. |
 | D7 | Approved. Sales receipt `80mm` default / `58mm` compact. Delivery Receipt A4/Letter, unaffected. |
 | D8 | Approved. `ReceiptDto`/`ReceiptPaymentDto` gain persisted `ReferenceNumber` / `ReceivedAmount` / `ChangeAmount`; frontend renders, never recalculates. |
-| D9 | Approved. Persistent `DeliveryReceipt` aggregate, create from Sale Detail, `DR-000001` via `DocumentNumberService` (branch-scoped counter). Reprint = same persisted DR + number. One DR per sale **enforced in service only** — schema/domain stay open to multiple/partial deliveries later. No POS button. |
+| D9 | Approved. Persistent `DeliveryReceipt` aggregate, create from Sale Detail. Reprint = same persisted DR (by `Id`). One DR per sale **enforced in service only** — schema/domain stay open to multiple/partial deliveries later. No POS button. **DR numbering removed 2026-09-10** — no `DR-000001`, no `DocumentNumberService`; the DR is identified by `Id` + creation date + related Sale #. |
+| — | **2026-09-10:** delivery item column label is **"Unit Price"** (not "Unit"). `DeliveryAddress` (required, ≤ 300) is surfaced everywhere as **"Recipient address"** — label only, no second property. Recipient name + recipient address are required. Print/preview: `Recipient:` + `Address:` always show; `Contact:` + `Related Sale:` gated. Signature block stacked (Prepared by / Delivered by / Received by / Date received). |
 
-Cross-cutting confirmations: existing tenants print unchanged via fallback; plain text only (no
+Cross-cutting confirmations: existing tenants print unchanged via fallback (address/TIN appear only
+when set — 2026-09-10, kept as-is); plain text only (no
 arbitrary HTML); preview may use unsaved local form state; real print/reprint always uses
 persisted settings; settings writes persist `UpdatedByUserId`/`UpdatedAtUtc`; delivery item
 names/prices/quantities are snapshots; no Customer module; no delivery tracking/status; no digital
