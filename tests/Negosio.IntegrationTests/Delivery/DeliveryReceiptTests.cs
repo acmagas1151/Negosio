@@ -4,6 +4,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Delivery;
 using Negosio.Application.Pos;
+using Negosio.Application.Sales;
 using Negosio.Application.Settings;
 using Negosio.Domain.Enums;
 using Negosio.IntegrationTests.Infrastructure;
@@ -122,6 +123,30 @@ public class DeliveryReceiptTests : IntegrationTest
         var again = await Client.GetFromJsonAsync<DeliveryReceiptDto>($"/api/delivery-receipts/{dr.Id}", TestJson.Options);
         again!.Id.Should().Be(dr.Id);
         again.Items[0].ProductName.Should().Be(dr.Items[0].ProductName);
+    }
+
+    [Fact] // fix round 1: a permanent DR must never be created line-less
+    public async Task Create_rejects_empty_item_selection()
+    {
+        var scene = await ArrangeSaleAsync();
+        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipt",
+            Req(Array.Empty<CreateDeliveryReceiptItemInput>()));
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact] // fix round 1: two lines for one sale item could aggregate past the sold quantity
+    public async Task Create_rejects_duplicate_sale_item()
+    {
+        var scene = await ArrangeSaleAsync(qty: 2m);
+        var sale = await Client.GetFromJsonAsync<SaleDetailDto>($"/api/sales/{scene.SaleId}", TestJson.Options);
+        var saleItemId = sale!.Items[0].Id;
+
+        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipt", Req(new[]
+        {
+            new CreateDeliveryReceiptItemInput(saleItemId, 1m),
+            new CreateDeliveryReceiptItemInput(saleItemId, 1m),
+        }));
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]

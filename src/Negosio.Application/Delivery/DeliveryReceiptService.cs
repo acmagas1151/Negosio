@@ -41,7 +41,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
     {
         var tenantId = RequireTenant();
 
-        var sale = await _db.Sales
+        var sale = await _db.Sales.AsNoTracking()
             .Include(s => s.Items)
             .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == saleId, ct)
             ?? throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
@@ -132,6 +132,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
 
         var items = dr.Items
             .OrderBy(i => i.CreatedAtUtc)
+            .ThenBy(i => i.Id)
             .Select(i =>
             {
                 decimal? unitPrice = settings.DeliveryShowPrices ? i.UnitPrice : null;
@@ -168,8 +169,10 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
 
     /// <summary>
     /// Maps <paramref name="request"/>.Items to <c>(SaleItem, qty)</c> pairs — each line must refer to
-    /// an item on the sale and may not exceed its sold quantity. When <c>Items</c> is null, every sale
-    /// item is delivered at full quantity.
+    /// an item on the sale, be listed at most once, and may not exceed its sold quantity. When
+    /// <c>Items</c> is null, every sale item is delivered at full quantity; a non-null but empty (or
+    /// otherwise line-less) selection is rejected — a Delivery Receipt is permanent and must not be
+    /// created without lines.
     /// </summary>
     private static IReadOnlyList<(SaleItem SaleItem, decimal Quantity)> ResolveItems(
         Sale sale, CreateDeliveryReceiptRequest request)
@@ -178,8 +181,21 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         {
             return sale.Items
                 .OrderBy(i => i.CreatedAtUtc)
+                .ThenBy(i => i.Id)
                 .Select(i => (i, i.Quantity))
                 .ToList();
+        }
+
+        if (request.Items.Count == 0)
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.InvalidSaleItem, "A delivery receipt must include at least one item.");
+        }
+
+        if (request.Items.GroupBy(i => i.SaleItemId).Any(g => g.Count() > 1))
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.InvalidSaleItem, "Each sale item may be listed at most once.");
         }
 
         var pairs = new List<(SaleItem, decimal)>();
@@ -200,6 +216,12 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             }
 
             pairs.Add((saleItem, line.Quantity));
+        }
+
+        if (pairs.Count == 0)
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.InvalidSaleItem, "A delivery receipt must include at least one item.");
         }
 
         return pairs;
