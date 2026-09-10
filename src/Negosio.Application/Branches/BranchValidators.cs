@@ -16,6 +16,7 @@ public sealed class CreateBranchRequestValidator : AbstractValidator<CreateBranc
         RuleFor(x => x.City).NotEmpty().WithMessage("City is required.").MaximumLength(100);
         RuleFor(x => x.Province).NotEmpty().WithMessage("Province is required.").MaximumLength(100);
         RuleFor(x => x.PostalCode).MaximumLength(20);
+        RuleFor(x => x.ContactNumber).MaximumLength(40);
     }
 }
 
@@ -29,5 +30,6 @@ public sealed class UpdateBranchRequestValidator : AbstractValidator<UpdateBranc
         RuleFor(x => x.City).NotEmpty().WithMessage("City is required.").MaximumLength(100);
         RuleFor(x => x.Province).NotEmpty().WithMessage("Province is required.").MaximumLength(100);
         RuleFor(x => x.PostalCode).MaximumLength(20);
+        RuleFor(x => x.ContactNumber).MaximumLength(40);
     }
 }

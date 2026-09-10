@@ -21,6 +21,7 @@ public sealed class BranchConfiguration : IEntityTypeConfiguration<Branch>
         builder.Property(b => b.City).IsRequired().HasMaxLength(100);
         builder.Property(b => b.Province).IsRequired().HasMaxLength(100);
         builder.Property(b => b.PostalCode).HasMaxLength(20);
+        builder.Property(b => b.ContactNumber).HasMaxLength(40);
         builder.Property(b => b.IsActive).IsRequired();
         builder.Property(b => b.CreatedAtUtc).IsRequired();
         builder.Property(b => b.UpdatedAtUtc).IsRequired();

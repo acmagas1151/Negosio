@@ -210,6 +210,7 @@ export interface BranchDto {
   city: string
   province: string
   postalCode: string | null
+  contactNumber: string | null
   isActive: boolean
   createdAtUtc: string
   assignedStaffCount: number
@@ -556,6 +557,9 @@ export interface SaleReturnItemDto {
 export interface ReceiptPaymentDto {
   method: string
   amount: number
+  referenceNumber: string | null
+  receivedAmount: number | null
+  changeAmount: number | null
 }
 
 export interface SaleReturnDto {
@@ -665,6 +669,63 @@ export interface ReceiptDto {
   payments: ReceiptPaymentDto[]
   changeDue: number
   status: SaleStatus
+  headerText: string | null
+  footerText: string | null
+  businessAddress: string | null
+  businessContactNumber: string | null
+  taxId: string | null
+  showBranch: boolean
+  showCashier: boolean
+  showPaymentMethod: boolean
+  showTaxLine: boolean
+  showReferenceNumber: boolean
+  width: ReceiptWidth
+}
+
+// ---- Delivery receipt (Plan B — persistent Delivery Receipt) ----
+// Backend contract:
+//   POST /api/sales/{id}/delivery-receipt -> 201 (created) or 200 (already exists), DeliveryReceiptDto either way.
+//   GET  /api/sales/{id}/delivery-receipt -> 200 DeliveryReceiptDto | 404 (also 404 for an unknown sale — treat as null).
+//   GET  /api/delivery-receipts/{id}      -> 200 DeliveryReceiptDto | 404 (cross-branch access -> 404).
+// There is NO delivery-receipt number. When `showPrices` is false, both `unitPrice` and `amount` are null.
+
+export interface DeliveryReceiptItemDto {
+  productName: string
+  variantName: string | null
+  quantity: number
+  unitPrice: number | null
+  amount: number | null
+}
+
+export interface DeliveryReceiptDto {
+  id: string
+  createdAtUtc: string
+  relatedSaleNumber: string | null
+  branchName: string
+  recipientName: string
+  deliveryAddress: string
+  contactNumber: string | null
+  deliveryNotes: string | null
+  preparedByName: string
+  items: DeliveryReceiptItemDto[]
+  headerText: string | null
+  footerText: string | null
+  businessName: string
+  businessAddress: string | null
+  businessContactNumber: string | null
+  taxId: string | null
+  showPrices: boolean
+  showRelatedSaleNumber: boolean
+  showContactNumber: boolean
+  showSignatureFields: boolean
+}
+
+export interface CreateDeliveryReceiptRequest {
+  recipientName: string
+  deliveryAddress: string
+  contactNumber?: string
+  deliveryNotes?: string
+  items?: { saleItemId: string; quantity: number }[]
 }
 
 // ---- Returns ----
@@ -699,6 +760,54 @@ export interface UpdateTaxSettingsRequest {
   taxRatePercent: number
   pricesIncludeTax: boolean
 }
+
+// ---- Tenant settings — business info ----
+// Backend contract: GET /api/settings/business-info -> BusinessInfoDto (open to any tenant user);
+// PUT /api/settings/business-info (Owner/Admin). `businessName` is read-only here (set elsewhere).
+
+export interface BusinessInfoDto {
+  businessName: string
+  contactNumber: string | null
+  taxId: string | null
+}
+
+export interface UpdateBusinessInfoRequest {
+  contactNumber: string | null
+  taxId: string | null
+}
+
+// ---- Tenant settings — receipt ----
+// Backend contract: GET /api/settings/receipts?branchId= -> ReceiptSettingsDto ; PUT /api/settings/receipts?branchId= (UpdateReceiptSettingsRequest); DELETE /api/settings/receipts?branchId= (204).
+
+export type ReceiptWidth = 'Mm80' | 'Mm58'
+
+export interface ReceiptSettingsDto {
+  scope: 'TenantDefault' | 'Branch'
+  branchId: string | null
+  canEdit: boolean
+  isOverride: boolean
+  width: ReceiptWidth
+  salesHeaderText: string | null
+  salesFooterText: string | null
+  salesShowBranch: boolean
+  salesShowCashier: boolean
+  salesShowPaymentMethod: boolean
+  salesShowTaxLine: boolean
+  salesShowReferenceNumber: boolean
+  deliveryHeaderText: string | null
+  deliveryFooterText: string | null
+  deliveryShowPrices: boolean
+  deliveryShowRelatedSaleNumber: boolean
+  deliveryShowContactNumber: boolean
+  deliveryShowSignatureFields: boolean
+  updatedAtUtc: string | null
+  updatedByName: string | null
+}
+
+export type UpdateReceiptSettingsRequest = Omit<
+  ReceiptSettingsDto,
+  'scope' | 'branchId' | 'canEdit' | 'isOverride' | 'updatedAtUtc' | 'updatedByName'
+>
 
 // ---- Phase 4: Staff & access management ----
 // One email = one Negosio account = one tenant (unchanged). Staff are invited by an Owner/Admin,

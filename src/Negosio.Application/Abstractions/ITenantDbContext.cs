@@ -14,6 +14,8 @@ public interface ITenantDbContext : IAsyncDisposable
 {
     DbSet<TenantProfile> TenantProfiles { get; }
 
+    DbSet<ReceiptSettings> ReceiptSettings { get; }
+
     DbSet<Branch> Branches { get; }
 
     DbSet<User> Users { get; }
@@ -50,6 +52,11 @@ public interface ITenantDbContext : IAsyncDisposable
     DbSet<SaleReturnItem> SaleReturnItems { get; }
 
     DbSet<RefundPayment> RefundPayments { get; }
+
+    // Delivery
+    DbSet<DeliveryReceipt> DeliveryReceipts { get; }
+
+    DbSet<DeliveryReceiptItem> DeliveryReceiptItems { get; }
 
     DbSet<DocumentNumberCounter> DocumentNumberCounters { get; }
 

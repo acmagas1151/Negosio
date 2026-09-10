@@ -38,6 +38,12 @@ public class TenantProfile : Entity
     /// </summary>
     public bool PricesIncludeTax { get; private set; }
 
+    /// <summary>Public-facing business contact number shown on receipts. Null when not set.</summary>
+    public string? ContactNumber { get; private set; }
+
+    /// <summary>Business tax registration identifier shown on receipts. Null when not set.</summary>
+    public string? TaxId { get; private set; }
+
     public static TenantProfile Create(Guid tenantId, string name, BusinessType businessType)
     {
         if (string.IsNullOrWhiteSpace(name))
@@ -57,6 +63,13 @@ public class TenantProfile : Entity
 
         TaxRatePercent = taxRatePercent;
         PricesIncludeTax = pricesIncludeTax;
+        Touch();
+    }
+
+    public void ConfigureBusinessInfo(string? contactNumber, string? taxId)
+    {
+        ContactNumber = string.IsNullOrWhiteSpace(contactNumber) ? null : contactNumber.Trim();
+        TaxId = string.IsNullOrWhiteSpace(taxId) ? null : taxId.Trim();
         Touch();
     }
 }

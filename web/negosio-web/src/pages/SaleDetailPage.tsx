@@ -3,11 +3,13 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { branchesApi } from '../api/branches'
+import { deliveryReceiptsApi } from '../api/deliveryReceipts'
 import { salesApi } from '../api/pos'
 import { PAYMENT_METHOD_LABELS, VOID_INELIGIBLE_MESSAGES } from '../lib/pos'
 import { formatMoney } from '../lib/format'
 import { hasReturnableQty } from '../lib/returns'
 import { useCan } from '../lib/useCan'
+import { CreateDeliveryReceiptModal } from '../components/sales/CreateDeliveryReceiptModal'
 import { ReturnModal } from '../components/sales/ReturnModal'
 import { SaleItemsTable } from '../components/sales/SaleItemsTable'
 import { SaleReturnsList } from '../components/sales/SaleReturnsList'
@@ -22,6 +24,7 @@ export default function SaleDetailPage() {
   const canVoidCapability = useCan('sales:void')
   const [returnOpen, setReturnOpen] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)
+  const [deliveryReceiptOpen, setDeliveryReceiptOpen] = useState(false)
 
   const query = useQuery({
     queryKey: ['sales', id],
@@ -31,6 +34,11 @@ export default function SaleDetailPage() {
   const branchesQuery = useQuery({
     queryKey: ['branches', 'sales-filter'],
     queryFn: () => branchesApi.list({ includeInactive: true }),
+  })
+  const deliveryReceiptQuery = useQuery({
+    queryKey: ['sales', id, 'delivery-receipt'],
+    queryFn: () => deliveryReceiptsApi.getForSale(id),
+    enabled: !!id,
   })
   const multiBranch = (branchesQuery.data?.length ?? 0) > 1
 
@@ -56,6 +64,12 @@ export default function SaleDetailPage() {
               canRefund &&
               (d.sale.status === 'Completed' || d.sale.status === 'PartiallyRefunded') &&
               hasReturnableQty(d.items)
+            const deliveryReceipt = deliveryReceiptQuery.data
+            const canPrintDeliveryReceipt =
+              !deliveryReceipt &&
+              (d.sale.status === 'Completed' ||
+                d.sale.status === 'PartiallyRefunded' ||
+                d.sale.status === 'Refunded')
             return (
               <>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -86,6 +100,29 @@ export default function SaleDetailPage() {
                           Print receipt
                         </Button>
                       </Link>
+                      {deliveryReceipt ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                            window.open(
+                              '/delivery-receipts/' + deliveryReceipt.id + '?print=1',
+                              '_blank',
+                              'noopener',
+                            )
+                          }
+                        >
+                          View delivery receipt
+                        </Button>
+                      ) : canPrintDeliveryReceipt ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setDeliveryReceiptOpen(true)}
+                        >
+                          Print delivery receipt
+                        </Button>
+                      ) : null}
                     </div>
                     {canVoidCapability && d.sale.status === 'Completed' && !d.canVoid && d.voidIneligibilityCode && (
                       <p className="text-[13px] text-text-muted">
@@ -187,6 +224,11 @@ export default function SaleDetailPage() {
                 )}
 
                 <ReturnModal open={returnOpen} onClose={() => setReturnOpen(false)} sale={d} />
+                <CreateDeliveryReceiptModal
+                  open={deliveryReceiptOpen}
+                  onClose={() => setDeliveryReceiptOpen(false)}
+                  sale={d}
+                />
                 <VoidSaleModal
                   open={voidOpen}
                   onClose={() => setVoidOpen(false)}

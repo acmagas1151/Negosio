@@ -18,6 +18,7 @@ export type Capability =
   | 'staff:permissions'
   | 'register:cash-movement'
   | 'reports:view'
+  | 'receipt:settings'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
 // 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
@@ -57,6 +58,8 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   // Mirrors AuthorizationPolicies.ReportsView — Owner/Admin tenant-wide, Manager their own branch
   // only (service-enforced). Cashier and every other role never reach the Reports page at all.
   'reports:view': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
+  // Mirrors AuthorizationPolicies.ReceiptSettingsManage — Owner/Admin/Manager.
+  'receipt:settings': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
 }
 
 /**

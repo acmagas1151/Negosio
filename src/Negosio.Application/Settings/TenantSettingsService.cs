@@ -18,24 +18,45 @@ public sealed class UpdateTaxSettingsRequestValidator : AbstractValidator<Update
     }
 }
 
+public sealed record BusinessInfoDto(string BusinessName, string? ContactNumber, string? TaxId);
+
+public sealed record UpdateBusinessInfoRequest(string? ContactNumber, string? TaxId);
+
+public sealed class UpdateBusinessInfoRequestValidator : AbstractValidator<UpdateBusinessInfoRequest>
+{
+    public UpdateBusinessInfoRequestValidator()
+    {
+        RuleFor(x => x.ContactNumber)
+            .MaximumLength(40);
+        RuleFor(x => x.TaxId)
+            .MaximumLength(40);
+    }
+}
+
 public interface ITenantSettingsService
 {
     Task<TaxSettingsDto> GetTaxAsync(CancellationToken cancellationToken = default);
 
     Task<TaxSettingsDto> UpdateTaxAsync(UpdateTaxSettingsRequest request, CancellationToken cancellationToken = default);
+
+    Task<BusinessInfoDto> GetBusinessInfoAsync(CancellationToken cancellationToken = default);
+
+    Task<BusinessInfoDto> UpdateBusinessInfoAsync(UpdateBusinessInfoRequest request, CancellationToken cancellationToken = default);
 }
 
 public sealed class TenantSettingsService : ITenantSettingsService
 {
     private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
-    private readonly IValidator<UpdateTaxSettingsRequest> _validator;
+    private readonly IValidator<UpdateTaxSettingsRequest> _taxValidator;
+    private readonly IValidator<UpdateBusinessInfoRequest> _businessInfoValidator;
 
-    public TenantSettingsService(ITenantDbContext db, ICurrentUser currentUser, IValidator<UpdateTaxSettingsRequest> validator)
+    public TenantSettingsService(ITenantDbContext db, ICurrentUser currentUser, IValidator<UpdateTaxSettingsRequest> taxValidator, IValidator<UpdateBusinessInfoRequest> businessInfoValidator)
     {
         _db = db;
         _currentUser = currentUser;
-        _validator = validator;
+        _taxValidator = taxValidator;
+        _businessInfoValidator = businessInfoValidator;
     }
 
     public async Task<TaxSettingsDto> GetTaxAsync(CancellationToken cancellationToken = default)
@@ -48,13 +69,32 @@ public sealed class TenantSettingsService : ITenantSettingsService
     public async Task<TaxSettingsDto> UpdateTaxAsync(UpdateTaxSettingsRequest request, CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
-        await _validator.ValidateAndThrowAppAsync(request, cancellationToken);
+        await _taxValidator.ValidateAndThrowAppAsync(request, cancellationToken);
 
         var profile = await _db.TenantProfiles.SingleAsync(p => p.Id == tenantId, cancellationToken);
         profile.ConfigureTax(request.TaxRatePercent, request.PricesIncludeTax);
         await _db.SaveChangesAsync(cancellationToken);
 
         return new TaxSettingsDto(profile.TaxRatePercent, profile.PricesIncludeTax);
+    }
+
+    public async Task<BusinessInfoDto> GetBusinessInfoAsync(CancellationToken cancellationToken = default)
+    {
+        var tenantId = RequireTenant();
+        var profile = await _db.TenantProfiles.AsNoTracking().SingleAsync(p => p.Id == tenantId, cancellationToken);
+        return new BusinessInfoDto(profile.Name, profile.ContactNumber, profile.TaxId);
+    }
+
+    public async Task<BusinessInfoDto> UpdateBusinessInfoAsync(UpdateBusinessInfoRequest request, CancellationToken cancellationToken = default)
+    {
+        var tenantId = RequireTenant();
+        await _businessInfoValidator.ValidateAndThrowAppAsync(request, cancellationToken);
+
+        var profile = await _db.TenantProfiles.SingleAsync(p => p.Id == tenantId, cancellationToken);
+        profile.ConfigureBusinessInfo(request.ContactNumber, request.TaxId);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return new BusinessInfoDto(profile.Name, profile.ContactNumber, profile.TaxId);
     }
 
     private Guid RequireTenant()

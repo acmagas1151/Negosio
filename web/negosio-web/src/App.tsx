@@ -4,6 +4,7 @@ import { ProtectedRoute } from './auth/ProtectedRoute'
 import { RequireCapability } from './auth/RequireCapability'
 import CategoriesPage from './pages/CategoriesPage'
 import DashboardPage from './pages/DashboardPage'
+import DeliveryReceiptPage from './pages/DeliveryReceiptPage'
 import InventoryPage from './pages/InventoryPage'
 import InviteAcceptPage from './pages/InviteAcceptPage'
 import LoginPage from './pages/LoginPage'
@@ -22,6 +23,7 @@ import SaleDetailPage from './pages/SaleDetailPage'
 import SalesPage from './pages/SalesPage'
 import BranchesPage from './pages/BranchesPage'
 import SettingsPage from './pages/SettingsPage'
+import ReceiptSettingsPage from './pages/settings/ReceiptSettingsPage'
 import StaffPage from './pages/StaffPage'
 
 const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
@@ -58,6 +60,7 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
     ),
   },
   { path: '/sales/:id/receipt', element: <ReceiptPage /> },
+  { path: '/delivery-receipts/:id', element: <DeliveryReceiptPage /> },
   {
     path: '/reports',
     element: (
@@ -66,7 +69,16 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
       </RequireCapability>
     ),
   },
-  { path: '/settings', element: <SettingsPage /> },
+  { path: '/settings', element: <Navigate to="/settings/tax" replace /> },
+  { path: '/settings/tax', element: <SettingsPage /> },
+  {
+    path: '/settings/receipts',
+    element: (
+      <RequireCapability capability="receipt:settings" title="Receipt settings">
+        <ReceiptSettingsPage />
+      </RequireCapability>
+    ),
+  },
   {
     path: '/staff',
     element: (

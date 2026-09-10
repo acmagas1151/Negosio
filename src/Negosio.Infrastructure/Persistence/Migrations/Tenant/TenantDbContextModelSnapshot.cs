@@ -8,7 +8,7 @@ using Negosio.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace Negosio.Infrastructure.Persistence.Migrations.Tenant
+namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
 {
     [DbContext(typeof(TenantDbContext))]
     partial class TenantDbContextModelSnapshot : ModelSnapshot
@@ -45,6 +45,10 @@ namespace Negosio.Infrastructure.Persistence.Migrations.Tenant
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ContactNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
@@ -208,6 +212,111 @@ namespace Negosio.Infrastructure.Persistence.Migrations.Tenant
                         .HasDatabaseName("IX_Categories_TenantId_NormalizedName");
 
                     b.ToTable("Categories", (string)null);
+                });
+
+            modelBuilder.Entity("Negosio.Domain.Entities.DeliveryReceipt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BranchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ContactNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DeliveryAddress")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("DeliveryNotes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("PreparedByNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid>("PreparedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RecipientName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<string>("RelatedSaleNumber")
+                        .HasMaxLength(30)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(30)");
+
+                    b.Property<Guid?>("SaleId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SaleId");
+
+                    b.HasIndex("TenantId", "SaleId")
+                        .HasDatabaseName("IX_DeliveryReceipts_TenantId_SaleId");
+
+                    b.ToTable("DeliveryReceipts", (string)null);
+                });
+
+            modelBuilder.Entity("Negosio.Domain.Entities.DeliveryReceiptItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("DeliveryReceiptId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ProductNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal?>("UnitPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("VariantNameSnapshot")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeliveryReceiptId");
+
+                    b.HasIndex("TenantId", "DeliveryReceiptId")
+                        .HasDatabaseName("IX_DeliveryReceiptItems_TenantId_DeliveryReceiptId");
+
+                    b.ToTable("DeliveryReceiptItems", (string)null);
                 });
 
             modelBuilder.Entity("Negosio.Domain.Entities.DocumentNumberCounter", b =>
@@ -397,6 +506,87 @@ namespace Negosio.Infrastructure.Persistence.Migrations.Tenant
                         .HasFilter("[Sku] IS NOT NULL");
 
                     b.ToTable("ProductVariants", (string)null);
+                });
+
+            modelBuilder.Entity("Negosio.Domain.Entities.ReceiptSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("BranchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DeliveryFooterText")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("DeliveryHeaderText")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<bool>("DeliveryShowContactNumber")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("DeliveryShowPrices")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("DeliveryShowRelatedSaleNumber")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("DeliveryShowSignatureFields")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("SalesFooterText")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("SalesHeaderText")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<bool>("SalesShowBranch")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("SalesShowCashier")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("SalesShowPaymentMethod")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("SalesShowReferenceNumber")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("SalesShowTaxLine")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UpdatedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Width")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ReceiptSettings_TenantDefault")
+                        .HasFilter("[BranchId] IS NULL");
+
+                    b.HasIndex("TenantId", "BranchId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ReceiptSettings_TenantId_BranchId")
+                        .HasFilter("[BranchId] IS NOT NULL");
+
+                    b.ToTable("ReceiptSettings", (string)null);
                 });
 
             modelBuilder.Entity("Negosio.Domain.Entities.RefundPayment", b =>
@@ -1002,6 +1192,10 @@ namespace Negosio.Infrastructure.Persistence.Migrations.Tenant
                     b.Property<int>("BusinessType")
                         .HasColumnType("int");
 
+                    b.Property<string>("ContactNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
@@ -1012,6 +1206,10 @@ namespace Negosio.Infrastructure.Persistence.Migrations.Tenant
 
                     b.Property<bool>("PricesIncludeTax")
                         .HasColumnType("bit");
+
+                    b.Property<string>("TaxId")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
 
                     b.Property<decimal>("TaxRatePercent")
                         .HasPrecision(5, 2)
@@ -1133,6 +1331,23 @@ namespace Negosio.Infrastructure.Persistence.Migrations.Tenant
                         .WithMany()
                         .HasForeignKey("RegisterSessionId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Negosio.Domain.Entities.DeliveryReceipt", b =>
+                {
+                    b.HasOne("Negosio.Domain.Entities.Sale", null)
+                        .WithMany()
+                        .HasForeignKey("SaleId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Negosio.Domain.Entities.DeliveryReceiptItem", b =>
+                {
+                    b.HasOne("Negosio.Domain.Entities.DeliveryReceipt", null)
+                        .WithMany("Items")
+                        .HasForeignKey("DeliveryReceiptId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
@@ -1289,6 +1504,11 @@ namespace Negosio.Infrastructure.Persistence.Migrations.Tenant
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Negosio.Domain.Entities.DeliveryReceipt", b =>
+                {
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("Negosio.Domain.Entities.Product", b =>

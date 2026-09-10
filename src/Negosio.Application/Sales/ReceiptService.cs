@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
 using Negosio.Application.Branches;
 using Negosio.Application.Common;
+using Negosio.Application.Settings;
 
 namespace Negosio.Application.Sales;
 
@@ -10,12 +11,18 @@ public sealed class ReceiptService : IReceiptService
     private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IBranchAccessResolver _branchAccess;
+    private readonly IReceiptSettingsResolver _settingsResolver;
 
-    public ReceiptService(ITenantDbContext db, ICurrentUser currentUser, IBranchAccessResolver branchAccess)
+    public ReceiptService(
+        ITenantDbContext db,
+        ICurrentUser currentUser,
+        IBranchAccessResolver branchAccess,
+        IReceiptSettingsResolver settingsResolver)
     {
         _db = db;
         _currentUser = currentUser;
         _branchAccess = branchAccess;
+        _settingsResolver = settingsResolver;
     }
 
     public async Task<ReceiptDto> GetReceiptAsync(Guid saleId, CancellationToken cancellationToken = default)
@@ -34,13 +41,26 @@ public sealed class ReceiptService : IReceiptService
             throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
         }
 
-        var storeName = await _db.TenantProfiles.Where(p => p.Id == tenantId).Select(p => p.Name).SingleAsync(cancellationToken);
-        var branchName = await _db.Branches.Where(b => b.Id == sale.BranchId).Select(b => b.Name).FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
+        var settings = await _settingsResolver.ResolveAsync(sale.BranchId, cancellationToken);
+
+        var profile = await _db.TenantProfiles.Where(p => p.Id == tenantId)
+            .Select(p => new { p.Name, p.ContactNumber, p.TaxId })
+            .SingleAsync(cancellationToken);
+        var branch = await _db.Branches.Where(b => b.Id == sale.BranchId)
+            .Select(b => new { b.Name, b.AddressLine1, b.City, b.Province, b.ContactNumber })
+            .FirstOrDefaultAsync(cancellationToken);
+        var branchName = branch?.Name ?? string.Empty;
         var registerName = await _db.RegisterSessions.Where(rs => rs.Id == sale.RegisterSessionId)
             .Join(_db.Registers, rs => rs.RegisterId, r => r.Id, (_, r) => r.Name)
             .FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
         var cashierName = await _db.Users.Where(u => u.Id == sale.CreatedByUserId)
             .Select(u => u.FirstName + " " + u.LastName).FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
+
+        var addressParts = new[] { branch?.AddressLine1, branch?.City, branch?.Province }
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .Select(part => part!.Trim())
+            .ToArray();
+        var businessAddress = addressParts.Length > 0 ? string.Join(", ", addressParts) : null;
 
         var lines = sale.Items
             .OrderBy(i => i.CreatedAtUtc)
@@ -49,14 +69,25 @@ public sealed class ReceiptService : IReceiptService
 
         var payments = sale.Payments
             .OrderBy(p => p.CreatedAtUtc)
-            .Select(p => new ReceiptPaymentDto(p.Method.ToString(), p.Amount))
+            .Select(p => new ReceiptPaymentDto(p.Method.ToString(), p.Amount, p.ReferenceNumber, p.ReceivedAmount, p.ChangeAmount))
             .ToList();
 
         return new ReceiptDto(
-            storeName, branchName, registerName, sale.SaleNumber, cashierName,
+            profile.Name, branchName, registerName, sale.SaleNumber, cashierName,
             sale.CompletedAtUtc ?? sale.CreatedAtUtc, lines,
             sale.Subtotal, sale.DiscountTotal, sale.TaxTotal, sale.GrandTotal,
-            payments, sale.ChangeDue, sale.Status);
+            payments, sale.ChangeDue, sale.Status,
+            HeaderText: settings.SalesHeaderText,
+            FooterText: settings.SalesFooterText,
+            BusinessAddress: businessAddress,
+            BusinessContactNumber: branch?.ContactNumber ?? profile.ContactNumber,
+            TaxId: profile.TaxId,
+            ShowBranch: settings.SalesShowBranch,
+            ShowCashier: settings.SalesShowCashier,
+            ShowPaymentMethod: settings.SalesShowPaymentMethod,
+            ShowTaxLine: settings.SalesShowTaxLine,
+            ShowReferenceNumber: settings.SalesShowReferenceNumber,
+            Width: settings.Width);
     }
 
     private Guid RequireTenant()

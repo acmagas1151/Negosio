@@ -24,7 +24,8 @@ public class Branch : Entity
         string? addressLine2,
         string city,
         string province,
-        string? postalCode)
+        string? postalCode,
+        string? contactNumber)
     {
         TenantId = tenantId;
         Name = name;
@@ -34,6 +35,7 @@ public class Branch : Entity
         City = city;
         Province = province;
         PostalCode = postalCode;
+        ContactNumber = contactNumber;
         IsActive = true;
     }
 
@@ -53,6 +55,8 @@ public class Branch : Entity
 
     public string? PostalCode { get; private set; }
 
+    public string? ContactNumber { get; private set; }
+
     public bool IsActive { get; private set; }
 
     public static Branch Create(
@@ -63,7 +67,8 @@ public class Branch : Entity
         string? addressLine2,
         string city,
         string province,
-        string? postalCode)
+        string? postalCode,
+        string? contactNumber)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -83,12 +88,14 @@ public class Branch : Entity
             string.IsNullOrWhiteSpace(addressLine2) ? null : addressLine2.Trim(),
             city?.Trim() ?? string.Empty,
             province?.Trim() ?? string.Empty,
-            string.IsNullOrWhiteSpace(postalCode) ? null : postalCode.Trim());
+            string.IsNullOrWhiteSpace(postalCode) ? null : postalCode.Trim(),
+            string.IsNullOrWhiteSpace(contactNumber) ? null : contactNumber.Trim());
     }
 
     /// <summary>Editable branch details. <see cref="Code"/> is immutable after creation.</summary>
     public void UpdateDetails(
-        string name, string addressLine1, string? addressLine2, string city, string province, string? postalCode)
+        string name, string addressLine1, string? addressLine2, string city, string province, string? postalCode,
+        string? contactNumber)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -101,6 +108,7 @@ public class Branch : Entity
         City = city?.Trim() ?? string.Empty;
         Province = province?.Trim() ?? string.Empty;
         PostalCode = string.IsNullOrWhiteSpace(postalCode) ? null : postalCode.Trim();
+        ContactNumber = string.IsNullOrWhiteSpace(contactNumber) ? null : contactNumber.Trim();
         Touch();
     }
 

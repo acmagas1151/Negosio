@@ -36,7 +36,7 @@ public class BranchManagementTests : IntegrationTest
         await CreateBranchAsync("First", "DUP");
 
         var second = await Client.PostAsJsonAsync("/api/branches",
-            new CreateBranchRequest("Second", "dup", "L1", null, "City", "Province", null));
+            new CreateBranchRequest("Second", "dup", "L1", null, "City", "Province", null, null));
 
         second.StatusCode.Should().Be(HttpStatusCode.Conflict);
         (await second.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be("DUPLICATE_BRANCH_CODE");
@@ -54,7 +54,7 @@ public class BranchManagementTests : IntegrationTest
         Authorize(token);
 
         var response = await Client.PostAsJsonAsync("/api/branches",
-            new CreateBranchRequest("Nope", "NOPE", "L1", null, "City", "Province", null));
+            new CreateBranchRequest("Nope", "NOPE", "L1", null, "City", "Province", null, null));
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
@@ -67,7 +67,7 @@ public class BranchManagementTests : IntegrationTest
         Authorize(adminToken);
 
         var response = await Client.PostAsJsonAsync("/api/branches",
-            new CreateBranchRequest("Admin Branch", "ADM", "L1", null, "City", "Province", null));
+            new CreateBranchRequest("Admin Branch", "ADM", "L1", null, "City", "Province", null, null));
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
@@ -84,7 +84,7 @@ public class BranchManagementTests : IntegrationTest
         Authorize(tenantB.AccessToken);
         (await Client.GetAsync($"/api/branches/{aBranch.Id}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
         (await Client.PutAsJsonAsync($"/api/branches/{aBranch.Id}",
-            new UpdateBranchRequest("Hax", "L1", null, "C", "P", null))).StatusCode.Should().Be(HttpStatusCode.NotFound);
+            new UpdateBranchRequest("Hax", "L1", null, "C", "P", null, null))).StatusCode.Should().Be(HttpStatusCode.NotFound);
         (await Client.PostAsync($"/api/branches/{aBranch.Id}/deactivate", null)).StatusCode.Should().Be(HttpStatusCode.NotFound);
         (await Client.PostAsync($"/api/branches/{aBranch.Id}/reactivate", null)).StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -96,7 +96,7 @@ public class BranchManagementTests : IntegrationTest
         var branch = await CreateBranchAsync("Old Name", "KEEP");
 
         var response = await Client.PutAsJsonAsync($"/api/branches/{branch.Id}",
-            new UpdateBranchRequest("New Name", "New L1", "Suite 2", "Makati", "Metro Manila", "1200"));
+            new UpdateBranchRequest("New Name", "New L1", "Suite 2", "Makati", "Metro Manila", "1200", null));
         response.EnsureSuccessStatusCode();
 
         var detail = await Client.GetFromJsonAsync<BranchDto>($"/api/branches/{branch.Id}", TestJson.Options);
@@ -130,6 +130,16 @@ public class BranchManagementTests : IntegrationTest
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await response.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be("LAST_ACTIVE_BRANCH");
+    }
+
+    [Fact]
+    public async Task Branch_contact_number_round_trips()
+    {
+        await RegisterLoginAndAuthorizeAsync();
+        var created = await Client.PostAsJsonAsync("/api/branches",
+            new CreateBranchRequest("Contactful", "CF", "L1", null, "City", "Prov", null, "0917 555 0000"));
+        var dto = (await created.Content.ReadFromJsonAsync<BranchDto>(TestJson.Options))!;
+        dto.ContactNumber.Should().Be("0917 555 0000");
     }
 
     [Fact]

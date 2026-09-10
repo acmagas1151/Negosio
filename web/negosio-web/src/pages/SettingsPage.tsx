@@ -7,12 +7,14 @@ import { TAX_SETTINGS_QUERY_KEY, useTaxSettings } from '../hooks/useTaxSettings'
 import { fieldErrorsFrom } from '../lib/formErrors'
 import { useCan } from '../lib/useCan'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
+import { SettingsTabs } from '../components/settings/SettingsTabs'
 import {
   Button,
   Callout,
   Card,
   ErrorState,
   LoadingState,
+  PageHeader,
   TextField,
   useToast,
 } from '../components/ui'
@@ -21,7 +23,8 @@ export default function SettingsPage() {
   return (
     <DashboardLayout title="Settings">
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
+        <PageHeader title="Settings" />
+        <SettingsTabs />
         <TaxSettingsCard />
       </div>
     </DashboardLayout>

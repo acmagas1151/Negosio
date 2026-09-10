@@ -12,7 +12,8 @@ public sealed record BranchDto(
     string? PostalCode,
     bool IsActive,
     DateTime CreatedAtUtc,
-    int AssignedStaffCount);
+    int AssignedStaffCount,
+    string? ContactNumber);
 
 public sealed record CreateBranchRequest(
     string Name,
@@ -21,7 +22,8 @@ public sealed record CreateBranchRequest(
     string? AddressLine2,
     string City,
     string Province,
-    string? PostalCode);
+    string? PostalCode,
+    string? ContactNumber);
 
 public sealed record UpdateBranchRequest(
     string Name,
@@ -29,7 +31,8 @@ public sealed record UpdateBranchRequest(
     string? AddressLine2,
     string City,
     string Province,
-    string? PostalCode);
+    string? PostalCode,
+    string? ContactNumber);
 
 public interface IBranchQueryService
 {

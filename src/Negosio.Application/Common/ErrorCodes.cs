@@ -100,4 +100,8 @@ public static class ErrorCodes
     public const string CashDrawerApprovalRequired = "CASH_DRAWER_APPROVAL_REQUIRED";
     public const string DiscountApprovalRequired = "DISCOUNT_APPROVAL_REQUIRED";
     public const string ReturnApprovalRequired = "RETURN_APPROVAL_REQUIRED";
+
+    // ---- Delivery receipts ----
+    public const string DeliveryReceiptNotFound = "DELIVERY_RECEIPT_NOT_FOUND";
+    public const string DeliveryReceiptNotAllowed = "DELIVERY_RECEIPT_NOT_ALLOWED";
 }
