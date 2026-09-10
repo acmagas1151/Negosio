@@ -70,6 +70,23 @@ export interface LastSaleRef {
   status: SaleStatus
 }
 
+/** Delivery metadata captured inline in the payment modal when a sale is "for delivery". Maps to
+ * the approved backend fields RecipientName / DeliveryAddress / ContactNumber / DeliveryNotes —
+ * the "Recipient address" label is UI-only; the payload key stays deliveryAddress. */
+export interface DeliveryFields {
+  recipientName: string
+  deliveryAddress: string
+  contactNumber: string
+  deliveryNotes: string
+}
+
+export const EMPTY_DELIVERY_FIELDS: DeliveryFields = {
+  recipientName: '',
+  deliveryAddress: '',
+  contactNumber: '',
+  deliveryNotes: '',
+}
+
 /**
  * Quick-cash suggestions for a cash payment: the exact amount, then the next round PHP note
  * above it (50 / 100 / 500 / 1000 boundaries), deduped, ascending. Every step has its own

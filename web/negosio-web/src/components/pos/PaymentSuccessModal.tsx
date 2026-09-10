@@ -1,4 +1,4 @@
-import { Check, Printer } from 'lucide-react'
+import { Check, Printer, Truck } from 'lucide-react'
 import type { CheckoutPaymentInput, SaleResultDto } from '../../api/types'
 import { PAYMENT_METHOD_LABELS, REFERENCE_LABELS } from '../../lib/pos'
 import { formatMoney } from '../../lib/format'
@@ -13,6 +13,9 @@ interface Props {
   /** The payment actually submitted for that sale — carries the method/tendered/reference detail
    * the checkout response itself doesn't echo back. */
   payment: CheckoutPaymentInput | null
+  /** Id of the delivery receipt created for this sale, once the (post-checkout) DR POST resolves.
+   * Null for a normal sale, and briefly null on a delivery sale until the DR is created. */
+  deliveryReceiptId: string | null
   onNewTransaction: () => void
 }
 
@@ -55,7 +58,14 @@ function SummaryRow({ label, value, strong }: { label: string; value: string; st
  * checkout mutation's onSuccess, so `result`/`payment` are always the backend's real response and
  * the request that produced it — nothing here is predicted.
  */
-export function PaymentSuccessModal({ open, onClose, result, payment, onNewTransaction }: Props) {
+export function PaymentSuccessModal({
+  open,
+  onClose,
+  result,
+  payment,
+  deliveryReceiptId,
+  onNewTransaction,
+}: Props) {
   if (!result) return null
 
   const isCash = payment?.method === 'Cash'
@@ -83,10 +93,29 @@ export function PaymentSuccessModal({ open, onClose, result, payment, onNewTrans
         )}
       </dl>
 
+      {deliveryReceiptId && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl bg-primary-50 px-3 py-2.5 text-sm">
+          <Truck className="size-4 shrink-0 text-primary-700" aria-hidden="true" />
+          <span className="font-semibold text-primary-800">Delivery receipt ready</span>
+        </div>
+      )}
+
       <div className="space-y-2.5">
         <Button block size="lg" onClick={onNewTransaction}>
           New transaction
         </Button>
+        {deliveryReceiptId && (
+          <button
+            type="button"
+            onClick={() =>
+              window.open(`/delivery-receipts/${deliveryReceiptId}?print=1`, '_blank', 'noopener')
+            }
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-primary-200 bg-white text-sm font-semibold text-primary-700 transition-colors hover:bg-primary-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+          >
+            <Truck className="size-4" aria-hidden="true" />
+            Print delivery receipt
+          </button>
+        )}
         <button
           type="button"
           onClick={() => window.open(`/sales/${result.saleId}/receipt?print=1`, '_blank', 'noopener')}

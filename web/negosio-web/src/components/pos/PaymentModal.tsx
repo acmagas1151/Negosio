@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { CheckoutPaymentInput, PaymentMethod } from '../../api/types'
-import { POS_PAYMENT_METHODS, PAYMENT_METHOD_LABELS, REFERENCE_LABELS, suggestCashButtons } from '../../lib/pos'
+import {
+  POS_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  REFERENCE_LABELS,
+  suggestCashButtons,
+  type DeliveryFields,
+} from '../../lib/pos'
 import { formatMoney } from '../../lib/format'
 import { cn } from '../../lib/cn'
 import { Button, Callout, Modal, TextField } from '../ui'
+import { DeliveryDetailsFields } from './DeliveryDetailsFields'
 import { PaymentMethodIcon } from './PaymentMethodIcon'
 
 interface Props {
@@ -13,14 +20,14 @@ interface Props {
   submitting: boolean
   error: string | null
   onConfirm: (payment: CheckoutPaymentInput) => void
-  /** Whether this sale is flagged for delivery (delivery details already captured). */
+  /** Whether this sale is flagged for delivery — expands the inline delivery-details section. */
   forDelivery: boolean
-  /** Recipient name to echo once details are captured; null when none yet. */
-  deliverySummary: string | null
-  /** Tick / untick "For delivery". Ticking opens the delivery-details form; unticking clears it. */
+  /** Tick / untick "For delivery". Unticking clears the delivery fields in the parent. */
   onToggleForDelivery: (next: boolean) => void
-  /** Re-open the delivery-details form to edit the captured values. */
-  onEditDelivery: () => void
+  /** Live delivery-metadata values, owned by the parent so they survive a failed-payment retry. */
+  deliveryFields: DeliveryFields
+  /** Patch one or more delivery fields. */
+  onDeliveryFieldsChange: (patch: Partial<DeliveryFields>) => void
 }
 
 export function PaymentModal({
@@ -31,13 +38,15 @@ export function PaymentModal({
   error,
   onConfirm,
   forDelivery,
-  deliverySummary,
   onToggleForDelivery,
-  onEditDelivery,
+  deliveryFields,
+  onDeliveryFieldsChange,
 }: Props) {
   const [method, setMethod] = useState<PaymentMethod>('Cash')
   const [received, setReceived] = useState('')
   const [reference, setReference] = useState('')
+  // Delivery errors show only after a blocked confirm attempt, not while the cashier is still typing.
+  const [deliveryAttempted, setDeliveryAttempted] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -45,15 +54,38 @@ export function PaymentModal({
     setMethod('Cash')
     setReceived('')
     setReference('')
+    setDeliveryAttempted(false)
   }, [open])
 
   const receivedNum = Number(received)
   const change = method === 'Cash' ? Math.max(0, receivedNum - amountDue) : 0
-  const canConfirm =
-    !submitting && (method !== 'Cash' || (received.trim() !== '' && receivedNum >= amountDue))
+
+  const deliveryComplete =
+    !forDelivery ||
+    (deliveryFields.recipientName.trim() !== '' && deliveryFields.deliveryAddress.trim() !== '')
+  const deliveryErrors =
+    forDelivery && deliveryAttempted
+      ? {
+          recipientName: deliveryFields.recipientName.trim() ? undefined : 'Recipient name is required.',
+          deliveryAddress: deliveryFields.deliveryAddress.trim()
+            ? undefined
+            : 'Recipient address is required.',
+        }
+      : {}
+
+  const paymentComplete =
+    method !== 'Cash' || (received.trim() !== '' && receivedNum >= amountDue)
+  // The button stays enabled while delivery fields are incomplete — clicking it then surfaces the
+  // inline errors rather than silently doing nothing. It only hard-disables for an incomplete
+  // payment or an in-flight submit.
+  const canConfirm = !submitting && paymentComplete
 
   const confirm = () => {
-    if (!canConfirm) return
+    if (submitting || !paymentComplete) return
+    if (forDelivery && !deliveryComplete) {
+      setDeliveryAttempted(true)
+      return
+    }
     if (method === 'Cash') {
       onConfirm({ method: 'Cash', receivedAmount: receivedNum })
     } else {
@@ -79,106 +111,102 @@ export function PaymentModal({
     >
       {error && <Callout tone="error">{error}</Callout>}
 
-      <div className="mb-4 rounded-lg bg-surface-subtle px-3 py-3 text-center">
-        <p className="text-[12px] uppercase tracking-wide text-text-muted">Amount due</p>
-        <p className="text-2xl font-bold text-text-primary">{formatMoney(amountDue)}</p>
-      </div>
+      <div className="-mr-1 max-h-[62vh] overflow-y-auto pr-1">
+        <div className="mb-4 rounded-lg bg-surface-subtle px-3 py-3 text-center">
+          <p className="text-[12px] uppercase tracking-wide text-text-muted">Amount due</p>
+          <p className="text-2xl font-bold text-text-primary">{formatMoney(amountDue)}</p>
+        </div>
 
-      <div className="mb-4 grid grid-cols-5 gap-2">
-        {POS_PAYMENT_METHODS.map((m) => (
-          <button
-            key={m}
-            type="button"
-            aria-pressed={method === m}
-            onClick={() => setMethod(m)}
-            className={cn(
-              'flex flex-col items-center gap-1.5 rounded-xl border px-1 py-3 transition-all',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500',
-              method === m
-                ? 'border-primary-500 bg-primary-50 shadow-sm'
-                : 'border-border-strong hover:border-primary-200 hover:bg-surface-subtle',
-            )}
-          >
-            <PaymentMethodIcon
-              method={m}
-              className={cn('size-6', method === m ? 'text-primary-700' : 'text-text-muted')}
-            />
-            <span
+        <div className="mb-4 grid grid-cols-5 gap-2">
+          {POS_PAYMENT_METHODS.map((m) => (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={method === m}
+              onClick={() => setMethod(m)}
               className={cn(
-                'text-[12px] font-semibold',
-                method === m ? 'text-primary-700' : 'text-text-secondary',
+                'flex flex-col items-center gap-1.5 rounded-xl border px-1 py-3 transition-all',
+                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500',
+                method === m
+                  ? 'border-primary-500 bg-primary-50 shadow-sm'
+                  : 'border-border-strong hover:border-primary-200 hover:bg-surface-subtle',
               )}
             >
-              {PAYMENT_METHOD_LABELS[m]}
-            </span>
-          </button>
-        ))}
-      </div>
+              <PaymentMethodIcon
+                method={m}
+                className={cn('size-6', method === m ? 'text-primary-700' : 'text-text-muted')}
+              />
+              <span
+                className={cn(
+                  'text-[12px] font-semibold',
+                  method === m ? 'text-primary-700' : 'text-text-secondary',
+                )}
+              >
+                {PAYMENT_METHOD_LABELS[m]}
+              </span>
+            </button>
+          ))}
+        </div>
 
-      {method === 'Cash' ? (
-        <div className="space-y-3">
+        {method === 'Cash' ? (
+          <div className="space-y-3">
+            <TextField
+              label="Cash received"
+              name="received"
+              type="number"
+              min={0}
+              step="0.01"
+              value={received}
+              onChange={(e) => setReceived(e.target.value)}
+              autoFocus
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {suggestCashButtons(amountDue).map((amt) => (
+                <button
+                  key={amt}
+                  type="button"
+                  onClick={() => setReceived(String(amt))}
+                  className="rounded-lg border border-border-strong px-3 py-1 text-sm font-semibold text-text-secondary hover:bg-surface-subtle"
+                >
+                  {formatMoney(amt)}
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-between rounded-lg bg-surface-subtle px-3 py-2 text-sm">
+              <span className="text-text-muted">Change</span>
+              <span className="font-bold text-text-primary">{formatMoney(change)}</span>
+            </div>
+          </div>
+        ) : (
           <TextField
-            label="Cash received"
-            name="received"
-            type="number"
-            min={0}
-            step="0.01"
-            value={received}
-            onChange={(e) => setReceived(e.target.value)}
+            label={`${REFERENCE_LABELS[method] ?? 'Reference number'} (optional)`}
+            name="reference"
+            value={reference}
+            onChange={(e) => setReference(e.target.value)}
             autoFocus
           />
-          <div className="flex flex-wrap gap-1.5">
-            {suggestCashButtons(amountDue).map((amt) => (
-              <button
-                key={amt}
-                type="button"
-                onClick={() => setReceived(String(amt))}
-                className="rounded-lg border border-border-strong px-3 py-1 text-sm font-semibold text-text-secondary hover:bg-surface-subtle"
-              >
-                {formatMoney(amt)}
-              </button>
-            ))}
-          </div>
-          <div className="flex justify-between rounded-lg bg-surface-subtle px-3 py-2 text-sm">
-            <span className="text-text-muted">Change</span>
-            <span className="font-bold text-text-primary">{formatMoney(change)}</span>
-          </div>
-        </div>
-      ) : (
-        <TextField
-          label={`${REFERENCE_LABELS[method] ?? 'Reference number'} (optional)`}
-          name="reference"
-          value={reference}
-          onChange={(e) => setReference(e.target.value)}
-          autoFocus
-        />
-      )}
-
-      <div className="mt-4 rounded-lg border border-border-strong px-3 py-2.5">
-        <label className="flex items-center gap-2.5 text-sm font-semibold text-text-secondary">
-          <input
-            type="checkbox"
-            checked={forDelivery}
-            disabled={submitting}
-            onChange={(e) => onToggleForDelivery(e.target.checked)}
-            className="size-4 rounded border-border-strong text-primary-600 focus:ring-primary-500"
-          />
-          For delivery
-        </label>
-        {forDelivery && deliverySummary && (
-          <p className="mt-1.5 pl-6 text-[13px] text-text-muted">
-            Delivering to <span className="font-medium text-text-secondary">{deliverySummary}</span>
-            {' · '}
-            <button
-              type="button"
-              onClick={onEditDelivery}
-              disabled={submitting}
-              className="font-semibold text-primary-700 hover:underline"
-            >
-              Edit
-            </button>
-          </p>
         )}
+
+        <div className="mt-4 rounded-lg border border-border-strong px-3 py-2.5">
+          <label className="flex items-center gap-2.5 text-sm font-semibold text-text-secondary">
+            <input
+              type="checkbox"
+              checked={forDelivery}
+              disabled={submitting}
+              onChange={(e) => onToggleForDelivery(e.target.checked)}
+              className="size-4 rounded border-border-strong text-primary-600 focus:ring-primary-500"
+            />
+            For delivery
+          </label>
+          {forDelivery && (
+            <DeliveryDetailsFields
+              values={deliveryFields}
+              onChange={onDeliveryFieldsChange}
+              errors={deliveryErrors}
+              disabled={submitting}
+            />
+          )}
+        </div>
       </div>
     </Modal>
   )

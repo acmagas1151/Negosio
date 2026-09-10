@@ -20,8 +20,8 @@ import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { usePosShortcuts } from '../../hooks/usePosShortcuts'
 import { useTaxSettings } from '../../hooks/useTaxSettings'
 import { calcTotals } from '../../lib/saleMath'
-import type { LastSaleRef } from '../../lib/pos'
-import { VOID_INELIGIBLE_MESSAGES } from '../../lib/pos'
+import type { DeliveryFields, LastSaleRef } from '../../lib/pos'
+import { EMPTY_DELIVERY_FIELDS, VOID_INELIGIBLE_MESSAGES } from '../../lib/pos'
 import { hasReturnableQty } from '../../lib/returns'
 import { useCan } from '../../lib/useCan'
 import { ReturnModal } from '../sales/ReturnModal'
@@ -31,7 +31,6 @@ import { CancelTransactionModal } from './CancelTransactionModal'
 import { CartPanel } from './CartPanel'
 import { CategoryFilters } from './CategoryFilters'
 import { CheckPriceModal } from './CheckPriceModal'
-import { DeliveryDetailsModal, type DeliveryDetails } from './DeliveryDetailsModal'
 import { DiscountApprovalModal } from './DiscountApprovalModal'
 import { PaymentFailedModal } from './PaymentFailedModal'
 import { PaymentModal } from './PaymentModal'
@@ -99,12 +98,15 @@ export function PosTerminal({
   const [discountApprovalError, setDiscountApprovalError] = useState<string | null>(null)
   const [successResult, setSuccessResult] = useState<SaleResultDto | null>(null)
   const [successPayment, setSuccessPayment] = useState<CheckoutPaymentInput | null>(null)
-  // "For delivery" flow: details are captured before payment and held here; the delivery receipt
-  // is created only after the sale exists (in the checkout mutation's onSuccess). Kept across a
-  // cancelled/re-opened payment modal; cleared on New Transaction and after a completed sale.
+  // "For delivery": the inline delivery section in the payment modal. Values live here (not in
+  // PaymentModal) so a failed-payment retry keeps them through the modal's reopen. The delivery
+  // receipt is created only after the sale exists (checkout mutation's onSuccess). Cleared on
+  // New Transaction and after a completed sale; also cleared when "For delivery" is unticked.
   const [forDelivery, setForDelivery] = useState(false)
-  const [deliveryDetails, setDeliveryDetails] = useState<DeliveryDetails | null>(null)
-  const [deliveryDetailsOpen, setDeliveryDetailsOpen] = useState(false)
+  const [deliveryFields, setDeliveryFields] = useState<DeliveryFields>(EMPTY_DELIVERY_FIELDS)
+  // The DR id from a just-completed delivery sale — powers the success modal's "Print delivery
+  // receipt" affordance. Set when the DR POST resolves; cleared with the success modal.
+  const [successDeliveryReceiptId, setSuccessDeliveryReceiptId] = useState<string | null>(null)
   // Only for a genuine payment-attempt failure (network/connectivity, a concurrency conflict, or a
   // truly unexpected error) — insufficient inventory, discount approval, and a lost register
   // session each already have their own targeted recovery flow and never populate this.
@@ -237,52 +239,34 @@ export function PosTerminal({
     setRestoredAttempt(null)
     setNewTxnConfirmOpen(false)
     setForDelivery(false)
-    setDeliveryDetails(null)
+    setDeliveryFields(EMPTY_DELIVERY_FIELDS)
+    setSuccessDeliveryReceiptId(null)
   }, [cart])
 
-  // The payment modal and the delivery-details modal swap rather than stack (same pattern as the
-  // void-choice → void-lookup flow). Ticking "For delivery" opens the details form; it only
-  // becomes a real flag once details are saved. Unticking clears it.
+  // Ticking "For delivery" expands the inline section; unticking clears whatever was typed so a
+  // hidden payload can never be submitted, and re-ticking starts from a clean form.
   const onToggleForDelivery = useCallback((next: boolean) => {
-    if (next) {
-      setPayOpen(false)
-      setDeliveryDetailsOpen(true)
-      return
-    }
-    setForDelivery(false)
-    setDeliveryDetails(null)
+    setForDelivery(next)
+    if (!next) setDeliveryFields(EMPTY_DELIVERY_FIELDS)
   }, [])
 
-  const onEditDelivery = useCallback(() => {
-    setPayOpen(false)
-    setDeliveryDetailsOpen(true)
+  const onDeliveryFieldsChange = useCallback((patch: Partial<DeliveryFields>) => {
+    setDeliveryFields((f) => ({ ...f, ...patch }))
   }, [])
-
-  const onSaveDeliveryDetails = useCallback((details: DeliveryDetails) => {
-    setDeliveryDetails(details)
-    setForDelivery(true)
-    setDeliveryDetailsOpen(false)
-    setPayOpen(true)
-  }, [])
-
-  const onCancelDeliveryDetails = useCallback(() => {
-    setDeliveryDetailsOpen(false)
-    setPayOpen(true)
-    // If nothing was ever saved, the tick reverts; an edit of already-saved details keeps them.
-    setForDelivery((current) => current && deliveryDetails != null)
-  }, [deliveryDetails])
 
   // Creates the delivery receipt for a just-completed sale. The sale is already safe by the time
   // this runs — a failure here never unwinds it, it just tells the cashier to add the DR later.
+  // Idempotent server-side: a retry that re-runs this returns the existing DR, never a duplicate.
   const createDrMutation = useMutation({
-    mutationFn: ({ saleId, details }: { saleId: string; details: DeliveryDetails }) =>
+    mutationFn: ({ saleId, fields }: { saleId: string; fields: DeliveryFields }) =>
       deliveryReceiptsApi.createForSale(saleId, {
-        recipientName: details.recipientName,
-        deliveryAddress: details.deliveryAddress,
-        contactNumber: details.contactNumber || undefined,
-        deliveryNotes: details.deliveryNotes || undefined,
+        recipientName: fields.recipientName.trim(),
+        deliveryAddress: fields.deliveryAddress.trim(),
+        contactNumber: fields.contactNumber.trim() || undefined,
+        deliveryNotes: fields.deliveryNotes.trim() || undefined,
       }),
     onSuccess: (dr) => {
+      setSuccessDeliveryReceiptId(dr.id)
       window.open('/delivery-receipts/' + dr.id + '?print=1', '_blank', 'noopener')
     },
     onError: () => {
@@ -447,12 +431,17 @@ export function PosTerminal({
       setSuccessResult(result)
 
       // "For delivery": the sale exists now, so create its delivery receipt. Runs after the sale
-      // is confirmed safe — a DR failure only surfaces a toast, it never touches the sale.
-      if (forDelivery && deliveryDetails) {
-        createDrMutation.mutate({ saleId: result.saleId, details: deliveryDetails })
+      // is confirmed safe — a DR failure only surfaces a toast, it never touches the sale. The
+      // trim()/non-empty guard mirrors PaymentModal's confirm gate.
+      if (
+        forDelivery &&
+        deliveryFields.recipientName.trim() &&
+        deliveryFields.deliveryAddress.trim()
+      ) {
+        createDrMutation.mutate({ saleId: result.saleId, fields: deliveryFields })
       }
       setForDelivery(false)
-      setDeliveryDetails(null)
+      setDeliveryFields(EMPTY_DELIVERY_FIELDS)
     },
     onError: (err) => {
       setStatus('failed')
@@ -624,25 +613,23 @@ export function PosTerminal({
         error={payError}
         onConfirm={(payment) => mutation.mutate({ payment })}
         forDelivery={forDelivery}
-        deliverySummary={deliveryDetails?.recipientName ?? null}
         onToggleForDelivery={onToggleForDelivery}
-        onEditDelivery={onEditDelivery}
-      />
-
-      <DeliveryDetailsModal
-        open={deliveryDetailsOpen}
-        onClose={onCancelDeliveryDetails}
-        onSave={onSaveDeliveryDetails}
-        initial={deliveryDetails}
+        deliveryFields={deliveryFields}
+        onDeliveryFieldsChange={onDeliveryFieldsChange}
       />
 
       <PaymentSuccessModal
         open={successResult != null}
-        onClose={() => setSuccessResult(null)}
+        onClose={() => {
+          setSuccessResult(null)
+          setSuccessDeliveryReceiptId(null)
+        }}
         result={successResult}
         payment={successPayment}
+        deliveryReceiptId={successDeliveryReceiptId}
         onNewTransaction={() => {
           setSuccessResult(null)
+          setSuccessDeliveryReceiptId(null)
           searchInputRef.current?.focus()
         }}
       />
