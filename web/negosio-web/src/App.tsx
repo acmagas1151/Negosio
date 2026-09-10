@@ -4,6 +4,7 @@ import { ProtectedRoute } from './auth/ProtectedRoute'
 import { RequireCapability } from './auth/RequireCapability'
 import CategoriesPage from './pages/CategoriesPage'
 import DashboardPage from './pages/DashboardPage'
+import DeliveryReceiptPage from './pages/DeliveryReceiptPage'
 import InventoryPage from './pages/InventoryPage'
 import InviteAcceptPage from './pages/InviteAcceptPage'
 import LoginPage from './pages/LoginPage'
@@ -59,6 +60,7 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
     ),
   },
   { path: '/sales/:id/receipt', element: <ReceiptPage /> },
+  { path: '/delivery-receipts/:id', element: <DeliveryReceiptPage /> },
   {
     path: '/reports',
     element: (

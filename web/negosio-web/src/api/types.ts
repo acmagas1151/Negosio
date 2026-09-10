@@ -682,6 +682,52 @@ export interface ReceiptDto {
   width: ReceiptWidth
 }
 
+// ---- Delivery receipt (Plan B — persistent Delivery Receipt) ----
+// Backend contract:
+//   POST /api/sales/{id}/delivery-receipt -> 201 (created) or 200 (already exists), DeliveryReceiptDto either way.
+//   GET  /api/sales/{id}/delivery-receipt -> 200 DeliveryReceiptDto | 404 (also 404 for an unknown sale — treat as null).
+//   GET  /api/delivery-receipts/{id}      -> 200 DeliveryReceiptDto | 404 (cross-branch access -> 404).
+// There is NO delivery-receipt number. When `showPrices` is false, both `unitPrice` and `amount` are null.
+
+export interface DeliveryReceiptItemDto {
+  productName: string
+  variantName: string | null
+  quantity: number
+  unitPrice: number | null
+  amount: number | null
+}
+
+export interface DeliveryReceiptDto {
+  id: string
+  createdAtUtc: string
+  relatedSaleNumber: string | null
+  branchName: string
+  recipientName: string
+  deliveryAddress: string
+  contactNumber: string | null
+  deliveryNotes: string | null
+  preparedByName: string
+  items: DeliveryReceiptItemDto[]
+  headerText: string | null
+  footerText: string | null
+  businessName: string
+  businessAddress: string | null
+  businessContactNumber: string | null
+  taxId: string | null
+  showPrices: boolean
+  showRelatedSaleNumber: boolean
+  showContactNumber: boolean
+  showSignatureFields: boolean
+}
+
+export interface CreateDeliveryReceiptRequest {
+  recipientName: string
+  deliveryAddress: string
+  contactNumber?: string
+  deliveryNotes?: string
+  items?: { saleItemId: string; quantity: number }[]
+}
+
 // ---- Returns ----
 
 export interface ReturnLineInput {
