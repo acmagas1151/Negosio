@@ -1,87 +1,134 @@
 # Handover Summary
 
-_**Plan A (Receipt Settings) + Plan B (Delivery Receipt) both executed**, whole-branch reviewed (verdict: ship with follow-ups), final-review fixes applied. **Merged to `master` locally as `a5c2df1` (`--no-ff`); `feature/receipt-settings` deleted. NOT pushed** — `master` is 36 commits ahead of `origin/master`. Forked from `master` @ `70abed7`._
+_Session on branch `feature/pos-for-delivery` (forked from `master` @ `a8028b8`, current HEAD `ded7538`, 3 commits ahead). **Not merged, not pushed** — awaiting the user's review._
 
 ## Project Context
 
-- **Project:** Negosio — multi-tenant retail/POS platform.
-- **Stack:** Backend .NET 9 / ASP.NET Core / EF Core 9 / SQL Server (LocalDB), modular monolith (Api → Infrastructure → Application → Domain), database-per-tenant. Frontend React 19 / TS strict / Vite / React Router 7 / TanStack Query v5 / Tailwind v4. JWT, role policies (Owner/Admin/Manager/Cashier/InventoryStaff/KitchenStaff/Viewer). Currency PHP.
-- **This branch's work:** a two-plan feature — **Plan A: Receipt Settings** (configurable receipt header / footer / business-info / thermal width, tenant-default + per-branch, the Sales Receipt renders from it) and **Plan B: Delivery Receipt** (a second, persistent printable document generated from a completed Sale).
+- **Project:** Negosio — a multi-tenant retail/POS management platform.
+- **Stack:** Backend .NET 9 / ASP.NET Core Web API / EF Core 9 / SQL Server (LocalDB), modular monolith (Api → Infrastructure → Application → Domain), database-per-tenant. Frontend React 19 / TypeScript (strict) / Vite / React Router 7 / TanStack Query v5 / Tailwind v4. JWT auth, role-based policies (Owner/Admin/Manager/Cashier/InventoryStaff/KitchenStaff/Viewer). Currency fixed to PHP.
+- **Main goal of current work:** add a **"For delivery" checkbox to the POS `Take payment` modal** so a cashier can, in one flow, complete a sale *and* generate its persistent Delivery Receipt (the document type shipped in the previous session's Plan B, merged to `master` in `a5c2df1`). Frontend-only — no backend changes this session.
 
-## Where things stand
+## Current Task
 
-- Design spec: `docs/superpowers/specs/2026-09-09-receipt-settings-design.md` (APPROVED; D1–D9 resolved; **§4.3 DR numbering REMOVED 2026-09-10 at the user's instruction**).
-- Plans: `docs/superpowers/plans/2026-09-09-receipt-settings.md` (Plan A — executed) and `…-delivery-receipt.md` (Plan B — executed; carries a "DR NUMBERING REMOVED" revision banner).
-- Both executed subagent-driven, task-by-task, each task spec+quality reviewed, fix rounds where needed. SDD ledgers: `.superpowers/sdd/2026-09-09-receipt-settings/progress.md` and `.superpowers/sdd/2026-09-09-delivery-receipt/progress.md`.
-- **Tests (controller-run, authoritative): Unit 137/137, Integration 240/240, 0 failed** (HEAD `925ddf1`; +1 voided-sale guard test). Frontend `tsc --noEmit` + `npm run build` clean.
-- **Live-verified** (`:5170` API + `:5173` Vite): Plan B HTTP pass 36/36 (create → 201 + `Location`, 2nd POST → 200 same doc / data not overwritten, item snapshot survives a catalog rename, prices hidden when `DeliveryShowPrices` off then shown when on, presentation follows live settings while DR data stays immutable, blank recipient / blank address / empty `items[]` / duplicate `saleItemId` all → 400, void → status `Voided`). Headless-Chrome pass: A4 page with custom header (title only) and with null header (business block + `DELIVERY RECEIPT` title + `Unit Price`/`Amount` columns), `Contact:`/`Related Sale:` gating, stacked signature block, the create modal (Recipient name / Recipient address / Contact number / Delivery notes + per-line Deliver qty), "Print delivery receipt" → "View delivery receipt" after creation, blank-submit blocked. No JS exceptions on the DR pages.
+- **Feature:** `Take payment` modal (`web/negosio-web/src/components/pos/PaymentModal.tsx`) gets a `☐ For delivery` checkbox. Checking it expands an inline delivery-details section (Recipient name*, Recipient address*, Contact number, Delivery notes) **inside the same modal** — no second modal, no nested card.
+- **Checkout behavior:** on `Confirm payment`, the Sale is created first (unchanged checkout path); only after it succeeds does the app POST the Delivery Receipt for that sale (`recipientName`/`deliveryAddress` required, no per-line item picker — a POS delivery always covers the whole sale). A DR-creation failure never rolls back or blocks the sale — it only shows a toast telling the cashier to add the DR later from the Sale page.
+- **User requirements/design references given this session, in order:**
+  1. Initial ask + a screenshot of the `Take payment` modal (Cash/Card/GCash/Maya/InstaPay, Cash received, Change) — "add a checkbox 'For Delivery', if yes it will generate the delivery prompt to fill out details."
+  2. Clarified via Q&A: delivery is a **pure UI shortcut** (no `Sale.IsForDelivery` flag — the DR itself is the record); the delivery-details form should open **on tick, before payment is confirmed** (not after).
+  3. A second, more detailed spec (with an ASCII mockup) asked to change the "open a second modal" approach to an **inline expandable section** in the same modal, and raised acceptance tests 1–9 (see below) plus two explicit flags: (a) it referenced "allocate the real DR number" — **user confirmed "no DR #"**, i.e. keep the no-document-number design from Plan B; (b) whether the Payment-Successful screen should offer "Print delivery receipt" — **implemented**, since it fit cleanly.
+  4. A follow-up screenshot + spec asked to **remove the nested "Delivery details" card** (it had its own border/rounded corners/blue tint) so the checkbox row and the fields share **one** outer container, separated only by a subtle divider.
+  5. A one-line follow-up mid-turn: **"Remove the Delivery Details label, no need for that"** — the `Delivery details` heading text was deleted entirely (not just its card).
 
-## What shipped — Plan A (Receipt Settings)
+## Completed Work
 
-**Backend — `Application/Settings/`:**
-- `ReceiptSettings` aggregate (`Domain/Entities/Settings/ReceiptSettings.cs`) — one row per scope. `TenantId`, `Guid? BranchId` (null = tenant default), 14 presentation fields (`ReceiptWidth Width` enum `Mm80`/`Mm58`; `Sales*`/`Delivery*` header/footer text + toggles, all **non-nullable** `bool`), `UpdatedByUserId`. `CreateDefault` / `CreateFrom(seed)`; `Update(values, userId)` overwrites **every** field (whole-row snapshot); `ToValues()`.
-- `ReceiptSettingsValues` (`Domain/Common/`) — shared 14-field record + `static HardcodedDefault` (no custom header/footer, every toggle `true`, `Mm80`) = **the fallback that reproduces the pre-feature receipt exactly**.
-- `ReceiptSettingsService` — `GetAsync` / `UpdateAsync` / `ResetAsync`. **Whole-row resolution:** branch row → tenant-default row → `HardcodedDefault` (first that exists wins; no field merge). First branch write seeds the new row from the currently-effective values, then applies the request. `canEdit = roleCanManage && (IsAllBranch || branchId == assigned)`. Manager cannot write the tenant default.
-- `IReceiptSettingsResolver` — scoped, per-request memoized, `AsNoTracking`; the read-path the receipt render uses (Sales **and** Delivery).
-- `ReceiptSettingsController` — `GET /api/settings/receipts?branchId=` (`SalesView`), `PUT` + `DELETE` (`ReceiptSettingsManage` = Owner/Admin/Manager). DELETE requires `branchId` (never wipes the tenant default).
-- EF: `ReceiptSettingsConfiguration` + migration `20260909151044_AddReceiptSettings` (table + 2 filtered unique indexes).
-- **Business identity fields** (D3): `TenantProfile.ContactNumber` + `TaxId`, `Branch.ContactNumber` (migration `20260909145658_AddBusinessContactInfo`). `GET/PUT /api/settings/business-info` (`TenantSettingsService`).
-- `ReceiptDto` / `ReceiptPaymentDto` extended append-only (header/footer/business/toggles/width; per payment `ReferenceNumber`/`ReceivedAmount`/`ChangeAmount`). `BusinessContactNumber = branch?.ContactNumber ?? profile.ContactNumber`. **Authoritative sale totals unchanged** — the front end still renders persisted values verbatim.
+Three commits on `feature/pos-for-delivery`, all frontend (`web/negosio-web/`):
 
-**Frontend:** `components/receipt/` (`ReceiptHeader`, `ReceiptFooter`, `ReceiptBusinessInfo`, `receiptStyles.thermalReceiptCss(width)`); `ReceiptPage.tsx` rewired; `components/ui/TextArea.tsx`. `pages/settings/ReceiptSettingsPage.tsx` — scope `<Select>`, sub-tabs **General / Sales receipt / Delivery receipt**, client-only live preview, Reset to tenant defaults. `SettingsTabs.tsx` (Tax | Receipts). `nav.ts` `Receipt settings` item (capability `receipt:settings`). `api/receiptSettings.ts` + `useReceiptSettings`.
+| Commit | Summary |
+|---|---|
+| `5b654b0` | First pass: checkbox in `PaymentModal` opened a **second** modal (`DeliveryDetailsModal`) that swapped with the payment modal (close payment → open details → reopen payment on save/cancel), because this codebase's shared `Modal` component doesn't support two modals stacked at once (the second one visually replaces the first — confirmed by testing, not assumed). |
+| `8181dae` | **Redesign** per the user's explicit "no second modal" spec: replaced the swap-modal with an **inline expandable section** inside `PaymentModal`. Added `DeliveryDetailsFields.tsx` (presentational, the 4 inputs) and `DeliveryFields`/`EMPTY_DELIVERY_FIELDS` in `lib/pos.ts`. Deleted `DeliveryDetailsModal.tsx`. `PosTerminal.tsx` now owns `forDelivery`/`deliveryFields` state (see "Important Decisions" for why) and a `createDrMutation` fired from the checkout mutation's `onSuccess`. `PaymentSuccessModal.tsx` gained a `deliveryReceiptId` prop → "Delivery receipt ready" line + "Print delivery receipt" button. |
+| `ded7538` | **Layout cleanup** per the follow-up spec + the "remove the label" mid-turn note: flattened the nested "Delivery details" card (its own border/rounded/blue-tint/padding + heading) into the single outer "For delivery" box, separated by a plain `border-t` divider. No heading text at all now. Pure `className` changes — zero behavior touched. |
 
-_Plan A open items 1 & 2 from the first handover (tenant-contact fallback; role in `canEdit`) were **fixed** in the Plan A fix wave (`67e5d3e`). Address/TIN on the default receipt was a product call — **kept as-is** (they appear whenever the branch/tenant has them set); spec has a cross-cutting note._
+**Files modified/created this session** (all under `web/negosio-web/src/`):
+- `components/pos/PaymentModal.tsx` — checkbox, inline expand/collapse, validation gating (`Confirm payment` stays enabled so a click can surface inline errors — see decisions), the modal content wrapped in `max-h-[62vh] overflow-y-auto` so it scrolls internally while Cancel/Confirm stay pinned.
+- `components/pos/DeliveryDetailsFields.tsx` (**new**) — presentational: Recipient name*, Recipient address* (textarea), Contact number, Delivery notes, in a 2-column grid for the last two. Takes `values`/`onChange`/`errors`/`disabled` props; owns no state itself.
+- `components/pos/DeliveryDetailsModal.tsx` (**deleted** — superseded by the inline approach).
+- `components/pos/PosTerminal.tsx` — `forDelivery: boolean`, `deliveryFields: DeliveryFields` state (kept here, not in `PaymentModal`); `onToggleForDelivery`/`onDeliveryFieldsChange` handlers; `createDrMutation` (`deliveryReceiptsApi.createForSale`, fires in the checkout mutation's `onSuccess`, `onSuccess` of *that* sets `successDeliveryReceiptId` and opens the DR print tab); reset on New Transaction and after a completed sale.
+- `components/pos/PaymentSuccessModal.tsx` — new `deliveryReceiptId: string | null` prop; when set, shows a "Delivery receipt ready" banner and a "Print delivery receipt" button (opens `/delivery-receipts/<id>?print=1`) above the existing "Print receipt" button. The Sale-detail page's own delivery-receipt flow (`CreateDeliveryReceiptModal`, unrelated file) is untouched.
+- `lib/pos.ts` — added the `DeliveryFields` interface and `EMPTY_DELIVERY_FIELDS` constant (moved here from the now-deleted modal file so `DeliveryDetailsFields.tsx` could stay a components-only file for Fast Refresh).
 
-## What shipped — Plan B (Delivery Receipt)
+**Backend consumed, not modified:** `POST/GET /api/sales/{id}/delivery-receipt`, `GET /api/delivery-receipts/{id}` (all shipped in the prior session's Plan B, now on `master`).
 
-**Domain (`Domain/Entities/Delivery/`, namespace `Negosio.Domain.Entities`):**
-- `DeliveryReceipt : Entity` — `TenantId`, `BranchId`, `SaleId : Guid?`, `RelatedSaleNumber : string?`, `RecipientName`, `DeliveryAddress`, `ContactNumber : string?`, `DeliveryNotes : string?`, `PreparedByUserId`, `PreparedByNameSnapshot`, `IReadOnlyCollection<DeliveryReceiptItem> Items`. **No document number** — identified solely by `Id` (Guid). `Create(...)` trims all strings; `RecipientName` + `DeliveryAddress` required (`ArgumentException` on blank). `AddItem(productNameSnapshot, variantNameSnapshot, quantity, unitPrice)` — `quantity > 0`. Follows the `SaleReturn` aggregate pattern.
-- `DeliveryReceiptItem : Entity` — `ProductNameSnapshot`, `VariantNameSnapshot : string?`, `Quantity`, `UnitPrice : decimal?`; `internal` ctor. **Line items are snapshots** — a later catalog rename/reprice never changes an issued DR.
+## Current State
 
-**EF:** `DeliveryReceiptConfiguration` + migration `20260910045242_AddDeliveryReceipts` (2 tables; `(TenantId, SaleId)` and `(TenantId, DeliveryReceiptId)` **non-unique** lookup indexes + the EF FK-backing indexes; FK to `Sales` `OnDelete: Restrict`, items `OnDelete: Cascade`). **No unique index** — one-per-sale is a *service* rule, not a schema rule.
+**Working (verified live this session — headless Chrome + CDP against the real API/Vite dev servers, plus API cross-checks, on freshly-seeded tenants, at commit `ded7538`):**
 
-**Application (`Application/Delivery/`):**
-- `CreateDeliveryReceiptRequest { RecipientName, DeliveryAddress, ContactNumber?, DeliveryNotes?, IReadOnlyList<CreateDeliveryReceiptItemInput>? Items }` — `Items == null` ⇒ all sale lines at full quantity. `CreateDeliveryReceiptRequestValidator`: `RecipientName` NotEmpty ≤120 ("Recipient name is required."), `DeliveryAddress` NotEmpty ≤300 ("Recipient address is required." — user-facing label), `ContactNumber` ≤40, `DeliveryNotes` ≤1000, each item `Quantity > 0`.
-- `DeliveryReceiptDto` — no `Number`. `Items[]`, business fields, `HeaderText?`/`FooterText?` + `ShowPrices`/`ShowRelatedSaleNumber`/`ShowContactNumber`/`ShowSignatureFields` — **all resolved live** from the DR branch's current `ReceiptSettings` `Delivery*` fields on every GET.
-- `DeliveryReceiptService` (mirrors `ReceiptService`/`ReturnService`): `CreateOrGetForSaleAsync` — load sale + branch-guard (cross-branch → 404); **if a DR already exists for `(TenantId, SaleId)`, return it unchanged (200)** — this is the only one-per-sale enforcement; else validate, resolve items (each `SaleItemId` must be on the sale and `qty ≤ sold`; **non-null empty `Items` → 400**; **duplicate `SaleItemId` → 400**), snapshot lines, single `SaveChanges` (no transaction, no number to allocate). `GetForSaleAsync` / `GetAsync(id)` branch-guarded. `Amount = Money.Round(qty * unitPrice)`; `!DeliveryShowPrices` ⇒ item `UnitPrice` **and** `Amount` are `null`. Line order `OrderBy(CreatedAtUtc).ThenBy(Id)` for a stable reprint.
+All 9 of the spec's acceptance scenarios passed:
+1. Normal sale (`For delivery` unchecked) — no delivery fields rendered, no delivery validation, checkout unchanged, **no DR created**.
+2. Checking the box expands the section inline — confirmed exactly **one** `[role=dialog]` element exists (no second modal).
+3. Validation — blank Recipient name/address blocks proceeding and shows inline "…is required." errors under the two fields.
+4. Unchecking after entering data collapses the section and **clears** the fields; re-checking starts empty (nothing stale resubmitted).
+5. Full delivery checkout — Sale created, then DR created with the exact typed metadata (verified via `GET /api/sales/{id}/delivery-receipt`), Payment-Successful screen shows "Delivery receipt ready" + "Print delivery receipt".
+6. A **forced real failure** (checkout with quantity > available stock → server 409 `INSUFFICIENT_INVENTORY`) — no Sale, no DR created; the `For delivery` checkbox and typed fields survive the payment modal closing and reopening.
+7. Retrying after that failure (fixing the quantity, no retyping delivery fields) succeeds and creates **exactly one** Sale and **one** DR — confirmed by counting via the API (no duplicate).
+8. `npx tsc --noEmit` and `npm run build` both clean.
+9. Zero **JS exceptions** in the console on every path; the one browser network-log line seen (`409` from the deliberately-forced stock failure in scenario 6) is Chrome's own network panel noting a legitimate server error response, not a script error — and it would appear for any failed POS checkout with or without this feature.
 
-**API:** `SalesController` — `GET /api/sales/{id}/delivery-receipt` (200 `DeliveryReceiptDto` | 404), `POST` (201 + `Location: /api/delivery-receipts/{id}` on create, 200 on already-exists). New `DeliveryReceiptsController` — `GET /api/delivery-receipts/{id}` (200 | 404; cross-branch → 404). Both gated by `SalesView`; branch scope enforced in the service.
+Layout re-verified after the `ded7538` cleanup at **1366×768** and **1920×1080**: modal panel stays within the viewport, content scrolls internally, `Cancel`/`Confirm payment` stay reachable, no page-level horizontal scroll.
 
-**Frontend:** `api/deliveryReceipts.ts` (`.getForSale` 404→null, `.createForSale`, `.get`), `api/types.ts` (3 interfaces, no `number`). `components/receipt/deliveryReceiptStyles.ts` — A4 CSS (`@page A4`, ruled signature lines). `pages/DeliveryReceiptPage.tsx` (`/delivery-receipts/:id`, `?print=1` auto-print) — `Recipient:` + `Address:` always; `Contact:` / `Related Sale:` gated; items header `Qty | Product | Unit Price | Amount` with the price columns gated on `showPrices`; stacked signature block; null header ⇒ business block + `DELIVERY RECEIPT` title, custom header ⇒ just the custom text; null footer renders nothing. `components/sales/CreateDeliveryReceiptModal.tsx` + a `SaleDetailPage` button — **"Print delivery receipt"** (no DR yet, status ∈ {Completed, PartiallyRefunded, Refunded}) → modal; **"View delivery receipt"** (DR exists) → opens the print page; no button on a voided sale that has no DR (a DR created before the void still shows "View" — see follow-ups).
+**Partially working / needs re-verification:** nothing known — the layout cleanup (`ded7538`) was re-tested end-to-end (validation-blocked, fill, confirm, success screen with the DR button) after the style change and behavior was unchanged. The next session should still eyeball it live at least once since this handover is being written instead of a final user sign-off.
 
-## Key contracts / rules (do not break)
+**What still needs the user's decision, not code:** none — this was the last of the requested changes; the ball is in the user's court to review.
 
-- **Fallback is mandatory.** A tenant with zero `ReceiptSettings` rows prints exactly as before (`HardcodedDefault`).
-- **Whole-row snapshot** for `ReceiptSettings` — no nullable/tri-state toggles; `PUT` carries all 14 fields; "Reset" = `DELETE` the branch row.
-- **DeliveryReceipt: identity + transactional data frozen at creation** (`Id`, linked Sale, recipient, address/contact, notes, prepared-by, snapshotted item name/qty/price). **Presentation is NOT frozen** — header/footer/toggles/width resolve from current `ReceiptSettings` on every reprint. Do **not** add a presentation snapshot to the schema.
-- **No DeliveryReceipt document number** anywhere (schema, DTO, UI). Printed reference = creation date + related Sale #.
-- **One DR per sale** enforced only in `DeliveryReceiptService` (no DB unique index). Concurrent first-POSTs could double-insert — accepted v1 (UI serialises via the button).
-- Delivery receipt access = any `SalesView` role; branch scope enforced server-side (cross-branch GET → 404).
-- **A DR can only be *created* for a sale in `Completed` / `PartiallyRefunded` / `Refunded`** — the service rejects a `Voided` sale with 400 (`DELIVERY_RECEIPT_NOT_ALLOWED`), mirroring `ReturnService`. An already-created DR stays retrievable even if its sale is voided afterwards.
+## Known Issues / Bugs
 
-## Open follow-ups for the user (non-blocking — from the final whole-branch review)
+None found or left open from this session's work. Two things worth flagging, both **pre-existing / by design, not regressions**:
+- The single console "error" during live testing is a `409 Conflict` network-log entry from a deliberately-triggered insufficient-stock checkout failure (scenario 6) — expected, handled gracefully by the existing UI, not introduced by this feature.
+- A stale background task notification (`b0dpbv81g`, the local `dotnet run` API server) reported "stopped" because the previous Claude session's process ended — this is just dev-server lifecycle, not an app bug. **The API (`:5170`) and Vite dev server (`:5173`) are very likely NOT running right now** — start them before doing any more live verification (see Dev environment below).
 
-- **DR reprint carries no void marking.** If a sale is voided *after* its DR exists, the Sale-detail page still shows "View delivery receipt" and the printed DR looks normal. The sales receipt shows a `VOID — SALE CANCELLED` banner in the same situation; the DR has no equivalent. Data is correct (the DR is immutable and unaffected) — this is only about what the reprint says. Fix would add `saleStatus` to `DeliveryReceiptDto` + a banner.
-- **Printed line order is arbitrary vs the sale.** `DeliveryReceiptItem`s added in one loop share a `CreatedAtUtc` (Windows `DateTime.UtcNow` ~15 ms resolution), so ordering falls to `ThenBy(Id)` on random Guids. Reprints are *stable* (Ids are persisted) but a multi-line DR prints its lines shuffled. Fix needs a `LineNumber`/`SortOrder` column on `DeliveryReceiptItem` (schema change). `ReceiptService` has the same latent tie on sale lines — pre-existing, not introduced here.
-- **`CreateDeliveryReceiptModal` button keys on `deliveryReceiptQuery.data`, not `.isSuccess`.** If that query is slow or errors, the button shows "Print delivery receipt" even when a DR exists; the user can fill the form, submit, and the server correctly returns the *existing* DR (200) — but the modal treats 200/201 alike, closes, and opens a DR showing a different recipient than the one just typed, with no message. Fix: gate the button on `isSuccess`; have `createForSale` surface the status so `onSuccess` can toast "already exists — opening it" on a 200.
-- Minor cosmetics: `DeliveryReceiptPage` "Back" calls `navigate(-1)` on a page usually opened via `window.open(_blank)` (no history) — a `window.close()` when `window.opener` is set would be better; `key={i}` on the items rows (static list, harmless). Both copied from `ReceiptPage`.
-- Plan A deferred polish still open: `ReceiptSettingsForm` ~470 lines; the sales-preview mock numbers are internally inconsistent; the legacy `.Tenant` vs `.TenantDb` migration-namespace split (10 legacy files — this feature standardised on `.TenantDb`).
+## Important Decisions
 
-_(The final review also flagged: a missing `.dr .bold` CSS rule, an unreachable empty-set guard in `ResolveItems`, and the missing voided-sale server guard — all **fixed** in commit `925ddf1`.)_
+- **No DR (Delivery Receipt) document number, still.** The user's spec for this feature mentioned "allocate the real DR number," but Plan B (previous session, already merged to `master`) explicitly **removed** DR numbering at the user's own earlier instruction. This session's user confirmed **"no DR #"** when asked — the design stays as-is: a `DeliveryReceipt` is identified only by its `Id`; one-per-sale is enforced by a server-side create-or-get rule (a retry POST returns the same existing DR, never a duplicate), not by a reserved number.
+- **This codebase's `Modal` component does not support two modals open at once** — opening a second one visually replaces the first rather than stacking. Discovered by testing (`5b654b0`'s swap-modal approach), not assumed. This is why `8181dae` moved to an inline section instead of trying to stack modals.
+- **Delivery field state lives in `PosTerminal`, not in `PaymentModal`.** `PaymentModal` resets its own local state (cash received, payment method, etc.) every time it re-opens (`useEffect([open])`). Since a failed payment closes and reopens the modal, and the spec requires the delivery fields to **survive** that round-trip for a retry, the `forDelivery`/`deliveryFields` state had to live one level up, in the parent that never unmounts.
+- **`Confirm payment` is not `disabled` just because delivery fields are incomplete.** Early on this caused a bug where clicking a disabled button did nothing and showed no feedback. Fixed so the button only hard-disables for incomplete *payment* (e.g. insufficient cash) or while submitting; an incomplete *delivery* section instead lets the click through to a validation check that shows the inline errors.
+- **Rejected design:** a nested "Delivery details" card (its own border, rounded corners, light-blue background, padding) inside the outer "For delivery" box. The user asked for **one** flat container with just a divider line, and — as a final tweak — **no heading text** at all for that section.
+- **Rejected design (implicit, from the first Q&A round):** recording a `Sale.IsForDelivery` flag in the backend. The user chose the pure-UI-shortcut approach — do not add this without a fresh design conversation, since it would touch the checkout API contract.
 
-## Next steps
+## Files to Review
 
-1. **`master` is 36 commits ahead of `origin/master` and unpushed** — push when ready (`git push origin master`).
-2. Optionally pick up the open follow-ups above (void banner on the DR reprint; `LineNumber` column for stable print order; modal `isSuccess` gating).
-3. Phase D items from the original spec remain deferred (no Customer entity, no delivery tracking/status, no digital signature — signature block is blank ruled lines by design).
+Frontend (this session's changes):
+- `web/negosio-web/src/components/pos/PaymentModal.tsx`
+- `web/negosio-web/src/components/pos/DeliveryDetailsFields.tsx`
+- `web/negosio-web/src/components/pos/PosTerminal.tsx`
+- `web/negosio-web/src/components/pos/PaymentSuccessModal.tsx`
+- `web/negosio-web/src/lib/pos.ts`
 
-## Dev environment
+Backend context (unchanged this session, but is what the frontend calls — read if anything about DR creation/validation needs to change):
+- `src/Negosio.Application/Delivery/DeliveryReceiptService.cs`
+- `src/Negosio.Application/Delivery/DeliveryReceiptContracts.cs` / `DeliveryReceiptValidators.cs`
+- `src/Negosio.Api/Controllers/SalesController.cs` (the `/delivery-receipt` endpoints) and `DeliveryReceiptsController.cs`
+- `src/Negosio.Domain/Entities/Delivery/DeliveryReceipt.cs`
 
-- API `http://localhost:5170` (`dotnet run --project src/Negosio.Api`). Frontend `http://localhost:5173` (`npm run dev` from `web/negosio-web`).
-- Integration tests spin up their own per-run tenant DBs; the full suite is ~14 min.
+## Next Steps
 
----
+1. **User reviews `feature/pos-for-delivery`** (3 commits: `5b654b0`, `8181dae`, `ded7538`) — live in the app and/or as a diff against `master`.
+2. **Decide whether to squash** the 3 commits into one before merging (they represent iteration, not independent units of work) — offered to the user, not yet decided.
+3. **Merge decision** once approved: merge to `master` locally / push + open a PR / keep the branch as-is. Nothing has been merged or pushed this session.
+4. Before any further live testing, **restart the dev servers** (see below) — they are not confirmed running in a fresh session.
+5. No known bugs to fix. If the user wants further polish, likely candidates (not requested yet, do not build speculatively): a "creating delivery receipt…" loading state between payment success and the DR POST resolving; surfacing the DR-creation failure toast more prominently.
 
-## Prior session (historical context) — Reports module
+## Prompt for Next Claude Session
 
-The `master` branch this feature is built on already contains the **Reports module Phase B** (Overview KPIs / sales trend / payment breakdown / top products / category performance at `/reports`) merged as `70abed7`, plus `SaleReturn.ApprovedByUserId`. Reports **Phase C** (Branch / Register / Cashier performance) was planned but not built. Reports timezone handling is a fixed Asia/Manila (UTC+8) v1 simplification.
+```
+I'm continuing work on Negosio (multi-tenant retail/POS platform — .NET 9 / EF Core 9 /
+SQL Server backend, React 19 / TS / Vite / TanStack Query frontend). Read
+docs/handover.md first for full context.
+
+Current branch: feature/pos-for-delivery (NOT merged, NOT pushed), 3 commits ahead of
+master (5b654b0, 8181dae, ded7538). This branch adds a "For delivery" checkbox to the
+POS Take-payment modal: checking it expands an inline delivery-details section (no
+second modal, no nested card — just the checkbox row + a divider + Recipient name*,
+Recipient address*, Contact number, Delivery notes inside ONE bordered box). On
+Confirm payment, the Sale is created first, then its Delivery Receipt (no DR number —
+that was deliberately removed from the design in an earlier session; one-per-sale is
+enforced server-side via create-or-get). A DR-creation failure never blocks or rolls
+back the sale.
+
+All 9 of the user's acceptance scenarios were verified live last session (normal sale,
+expand/collapse, validation, uncheck-clears, full delivery checkout, a forced payment
+failure that preserves the checkbox+fields, retry-creates-exactly-one, tsc/build clean,
+zero JS console errors). Layout was also verified at 1366x768 and 1920x1080.
+
+Key files: web/negosio-web/src/components/pos/{PaymentModal,DeliveryDetailsFields,
+PosTerminal,PaymentSuccessModal}.tsx and lib/pos.ts.
+
+Before doing anything: start the dev servers (dotnet run --project src/Negosio.Api for
+:5170; npm run dev in web/negosio-web for :5173) if you need to verify anything live —
+they are not running by default in a fresh session.
+
+The ball is in the user's court for review/merge — do not assume approval. If they ask
+for changes, make them; if they say it's approved, use the finishing-a-development-
+branch pattern (merge locally / push+PR / keep as-is) rather than pushing on your own
+initiative. Needs verification: whether the user has since tested this themselves.
+```
