@@ -14,7 +14,10 @@ namespace Negosio.Application.Reports;
 ///  - Gross sales    = Σ Sale.Subtotal            (before discount, before tax)
 ///  - Discounts      = Σ Sale.DiscountTotal
 ///  - Tax            = Σ Sale.TaxTotal
-///  - Net sales      = Σ Sale.GrandTotal           (after discount/tax, before returns)
+///  - Net sales      = Σ Sale.GrandTotal           (after discount/tax, before returns; as of the
+///                      DeliveryCharge feature this also includes any delivery fee — GrandTotal is
+///                      saleTotal + DeliveryCharge — this was not a deliberate revenue-classification
+///                      decision and may need revisiting)
 ///  - Returns        = Σ SaleReturn.TotalRefund, attributed to the RETURN's own date, not the
 ///                      original sale's date
 ///  - Net collected  = Net sales − Returns
@@ -193,7 +196,7 @@ public sealed class ReportsService : IReportsService
         // its own copy, so they're joined here rather than duplicated at write time.
         var joined =
             from dr in receipts
-            join s in _db.Sales.AsNoTracking().Where(x => x.TenantId == tenantId) on dr.SaleId equals s.Id
+            join s in _db.Sales.AsNoTracking().Where(x => x.TenantId == tenantId && x.Status != SaleStatus.Voided) on dr.SaleId equals s.Id
             select new { dr, s };
 
         var chargesQuery = joined.Select(x => x.s.DeliveryCharge);

@@ -138,6 +138,35 @@ public class DeliveryReportTests : IntegrationTest
     }
 
     [Fact]
+    public async Task Voided_delivery_sale_disappears_from_rows_and_totals()
+    {
+        var login = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(login);
+        var (b, session, variant) = await ArrangeAsync(branchId, price: 100m);
+
+        var saleId = await DeliverySaleAsync(b, session, variant, 100m, 60m);
+
+        var before = await Client.GetFromJsonAsync<DeliveryReportResultDto>("/api/reports/deliveries", TestJson.Options);
+        before!.Page.TotalCount.Should().Be(1);
+        before.Totals.TotalDeliveries.Should().Be(1);
+        before.Totals.ChargedDeliveries.Should().Be(1);
+        before.Totals.TotalDeliveryCharges.Should().Be(60m);
+
+        var voidResponse = await Client.PostAsJsonAsync(
+            $"/api/sales/{saleId}/void", new VoidSaleRequest("Customer cancelled delivery"));
+        voidResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var after = await Client.GetFromJsonAsync<DeliveryReportResultDto>("/api/reports/deliveries", TestJson.Options);
+        after!.Page.TotalCount.Should().Be(0);
+        after.Page.Items.Should().BeEmpty();
+        after.Totals.TotalDeliveries.Should().Be(0);
+        after.Totals.FreeDeliveries.Should().Be(0);
+        after.Totals.ChargedDeliveries.Should().Be(0);
+        after.Totals.TotalDeliveryCharges.Should().Be(0m);
+        after.Totals.AverageDeliveryCharge.Should().Be(0m);
+    }
+
+    [Fact]
     public async Task Cashier_cannot_reach_the_delivery_report()
     {
         var owner = await RegisterLoginAndAuthorizeAsync();
