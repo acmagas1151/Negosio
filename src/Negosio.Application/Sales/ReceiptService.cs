@@ -75,7 +75,7 @@ public sealed class ReceiptService : IReceiptService
         return new ReceiptDto(
             profile.Name, branchName, registerName, sale.SaleNumber, cashierName,
             sale.CompletedAtUtc ?? sale.CreatedAtUtc, lines,
-            sale.Subtotal, sale.DiscountTotal, sale.TaxTotal, sale.GrandTotal,
+            sale.Subtotal, sale.DiscountTotal, sale.TaxTotal, sale.DeliveryCharge, sale.GrandTotal,
             payments, sale.ChangeDue, sale.Status,
             HeaderText: settings.SalesHeaderText,
             FooterText: settings.SalesFooterText,

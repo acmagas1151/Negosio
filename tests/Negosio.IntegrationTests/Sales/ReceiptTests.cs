@@ -105,4 +105,26 @@ public class ReceiptTests : IntegrationTest
 
         receipt!.BusinessAddress.Should().BeNull();
     }
+
+    [Fact]
+    public async Task Receipt_includes_the_delivery_charge_in_the_grand_total()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 10m);
+
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 1m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 200m) },
+            DeliveryCharge: 60m));
+
+        var receipt = await Client.GetFromJsonAsync<ReceiptDto>($"/api/sales/{sale.SaleId}/receipt", TestJson.Options);
+
+        receipt!.DeliveryCharge.Should().Be(60m);
+        receipt.GrandTotal.Should().Be(160m);
+    }
 }

@@ -151,7 +151,7 @@ public sealed class SaleQueryService : ISaleQueryService
             : null;
 
         return new SaleDetailDto(
-            summary, sale.RegisterSessionId, sale.Subtotal, sale.DiscountTotal, sale.TaxTotal,
+            summary, sale.RegisterSessionId, sale.Subtotal, sale.DiscountTotal, sale.TaxTotal, sale.DeliveryCharge,
             sale.AmountPaid, sale.ChangeDue, sale.CompletedAtUtc, items, payments, returns,
             sale.VoidedByUserId, voidedByName, sale.ApprovedByUserId, approvedByName,
             sale.VoidReason, sale.VoidedAtUtc, eligibility.CanVoid, eligibility.IneligibilityCode);

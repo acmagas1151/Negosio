@@ -74,4 +74,20 @@ public class SaleQueryTests : IntegrationTest
         var cashierView = await Client.GetFromJsonAsync<SaleDetailDto>($"/api/sales/{sale.SaleId}", TestJson.Options);
         cashierView!.Items.Single().CostPriceSnapshot.Should().BeNull();
     }
+
+    [Fact]
+    public async Task Detail_reflects_the_delivery_charge()
+    {
+        var (branchId, sessionId, variantId) = await ArrangeAsync();
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, sessionId, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 1m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 100m) },
+            DeliveryCharge: 20m));
+
+        var detail = await Client.GetFromJsonAsync<SaleDetailDto>($"/api/sales/{sale.SaleId}", TestJson.Options);
+
+        detail!.DeliveryCharge.Should().Be(20m);
+        detail.Sale.GrandTotal.Should().Be(60m); // 40 (price) + 20 delivery
+    }
 }
