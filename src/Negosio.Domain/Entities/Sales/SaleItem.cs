@@ -31,7 +31,8 @@ public class SaleItem : Entity
         decimal discountAmount,
         decimal taxAmount,
         decimal netAmount,
-        decimal? costPriceSnapshot)
+        decimal? costPriceSnapshot,
+        decimal deliveryRequiredQuantity)
     {
         TenantId = tenantId;
         SaleId = saleId;
@@ -50,6 +51,7 @@ public class SaleItem : Entity
         NetAmount = netAmount;
         CostPriceSnapshot = costPriceSnapshot;
         ReturnedQuantity = 0m;
+        DeliveryRequiredQuantity = deliveryRequiredQuantity;
     }
 
     public Guid TenantId { get; private set; }
@@ -88,6 +90,15 @@ public class SaleItem : Entity
     public decimal ReturnedQuantity { get; private set; }
 
     public decimal ReturnableQuantity => Quantity - ReturnedQuantity;
+
+    /// <summary>Set once, at checkout, from the client's requested delivery quantity for this line —
+    /// never mutated afterward. A future correction (e.g. the cashier mis-split delivery vs. take-now)
+    /// must go through a deliberate adjustment workflow, not a setter on this property; none exists
+    /// today, matching the plan's explicit "no silent change after checkout" constraint.</summary>
+    public decimal DeliveryRequiredQuantity { get; private set; }
+
+    /// <summary>Computed, never persisted — the portion of this line the customer takes at checkout.</summary>
+    public decimal TakeNowQuantity => Quantity - DeliveryRequiredQuantity;
 
     public void RecordReturn(decimal quantity)
     {
