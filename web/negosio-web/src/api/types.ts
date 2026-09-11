@@ -482,6 +482,8 @@ export interface CheckoutRequest {
   clientRequestId: string
   items: CheckoutItemInput[]
   payments: CheckoutPaymentInput[]
+  /** The delivery fee for a "for delivery" sale, 0 for a normal sale. */
+  deliveryCharge: number
   /** Manager/Admin/Owner approval — only sent when retrying after a DISCOUNT_APPROVAL_REQUIRED
    * rejection (the sale carries a line discount the cashier can't apply directly). */
   approval?: VoidSaleApprovalInput
@@ -494,6 +496,7 @@ export interface SaleResultDto {
   subtotal: number
   discountTotal: number
   taxTotal: number
+  deliveryCharge: number
   grandTotal: number
   amountPaid: number
   changeDue: number
@@ -616,6 +619,7 @@ export interface SaleDetailDto {
   subtotal: number
   discountTotal: number
   taxTotal: number
+  deliveryCharge: number
   amountPaid: number
   changeDue: number
   completedAtUtc: string | null
@@ -665,6 +669,7 @@ export interface ReceiptDto {
   subtotal: number
   discountTotal: number
   taxTotal: number
+  deliveryCharge: number
   grandTotal: number
   payments: ReceiptPaymentDto[]
   changeDue: number
@@ -708,6 +713,7 @@ export interface DeliveryReceiptDto {
   deliveryNotes: string | null
   preparedByName: string
   items: DeliveryReceiptItemDto[]
+  deliveryCharge: number
   headerText: string | null
   footerText: string | null
   businessName: string

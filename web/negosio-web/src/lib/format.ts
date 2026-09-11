@@ -9,6 +9,13 @@ export function formatMoney(n: number): string {
   return `₱${pesoFormatter.format(n)}`
 }
 
+/** Same as formatMoney, but renders exactly 0 as "Free" — used only where a $0 value is known to
+ * mean free delivery (a DeliveryReceipt only ever exists for a delivery sale), never on a plain
+ * sales total where 0 could just as easily mean "not a delivery sale at all". */
+export function formatDeliveryCharge(n: number): string {
+  return n <= 0 ? 'Free' : formatMoney(n)
+}
+
 export function formatRange(min: number, max: number, fmt: (n: number) => string): string {
   return min === max ? fmt(min) : `${fmt(min)} – ${fmt(max)}`
 }

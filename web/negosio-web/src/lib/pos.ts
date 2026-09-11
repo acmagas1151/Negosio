@@ -87,6 +87,29 @@ export const EMPTY_DELIVERY_FIELDS: DeliveryFields = {
   deliveryNotes: '',
 }
 
+/** Default/reset value for the delivery-charge input — a formatted string so the field always
+ * starts showing "0.00", matching how a cashier would type a peso amount. */
+export const EMPTY_DELIVERY_CHARGE = '0.00'
+
+const DELIVERY_CHARGE_PATTERN = /^\d+(\.\d{1,2})?$/
+
+/** True only for a non-negative amount with at most 2 decimal places — the same rule the backend
+ * enforces in CheckoutRequestValidator. Checked against the raw string (not a parsed float) so a
+ * value like "10.005" is rejected exactly, with no floating-point rounding ambiguity. */
+export function isValidDeliveryChargeInput(raw: string): boolean {
+  return DELIVERY_CHARGE_PATTERN.test(raw.trim())
+}
+
+/** The delivery charge to actually use for live total/change math: 0 whenever delivery isn't
+ * selected or the typed value isn't a valid non-negative number yet (mid-typing), so the running
+ * total never shows NaN or a negative figure — Confirm payment is separately blocked until the
+ * value passes isValidDeliveryChargeInput. */
+export function parseDeliveryCharge(forDelivery: boolean, raw: string): number {
+  if (!forDelivery) return 0
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
 /**
  * Quick-cash suggestions for a cash payment: the exact amount, then the next round PHP note
  * above it (50 / 100 / 500 / 1000 boundaries), deduped, ascending. Every step has its own
