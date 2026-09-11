@@ -912,6 +912,43 @@ export interface ReportFilterParams {
   cashierId?: string
 }
 
+export interface DeliveryReportRowDto {
+  deliveryReceiptId: string
+  saleId: string
+  saleNumber: string
+  createdAtUtc: string
+  recipientName: string
+  deliveryAddress: string
+  contactNumber: string | null
+  deliveryNotes: string | null
+  deliveryCharge: number
+  saleGrandTotal: number
+  paymentSummary: string
+  preparedByName: string
+}
+
+export interface DeliveryReportTotalsDto {
+  totalDeliveries: number
+  freeDeliveries: number
+  chargedDeliveries: number
+  totalDeliveryCharges: number
+  averageDeliveryCharge: number
+}
+
+export interface DeliveryReportResultDto {
+  page: PagedResult<DeliveryReportRowDto>
+  totals: DeliveryReportTotalsDto
+}
+
+export interface DeliveryReportParams {
+  branchId?: string
+  fromUtc?: string
+  toUtc?: string
+  search?: string
+  page?: number
+  pageSize?: number
+}
+
 export interface ReportKpiDto {
   grossSales: number
   discounts: number

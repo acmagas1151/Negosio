@@ -10,6 +10,7 @@ import {
   Settings,
   ShoppingCart,
   Tag,
+  Truck,
   Users,
   Warehouse,
 } from 'lucide-react'
@@ -73,6 +74,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       { label: 'Reports', icon: BarChart3, to: '/reports', enabled: true, capability: 'reports:view' },
+      { label: 'Delivery Reports', icon: Truck, to: '/reports/delivery', enabled: true, capability: 'reports:view' },
       { label: 'Staff', icon: Users, to: '/staff', enabled: true, capability: ['staff:manage', 'staff:permissions'] },
       { label: 'Branches', icon: Building2, to: '/branches', enabled: true, capability: 'branch:manage' },
       {

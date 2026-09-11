@@ -1,6 +1,13 @@
 import { apiRequest } from './client'
 import { qs } from './query-string'
-import type { CategoryPerformanceDto, ReportFilterParams, ReportsOverviewDto, TopProductDto } from './types'
+import type {
+  CategoryPerformanceDto,
+  DeliveryReportParams,
+  DeliveryReportResultDto,
+  ReportFilterParams,
+  ReportsOverviewDto,
+  TopProductDto,
+} from './types'
 
 export const reportsApi = {
   overview: (params: ReportFilterParams) =>
@@ -11,4 +18,7 @@ export const reportsApi = {
 
   categories: (params: ReportFilterParams) =>
     apiRequest<CategoryPerformanceDto[]>(`/api/reports/categories${qs({ ...params })}`),
+
+  deliveries: (params: DeliveryReportParams) =>
+    apiRequest<DeliveryReportResultDto>(`/api/reports/deliveries${qs({ ...params })}`),
 }

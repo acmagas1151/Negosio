@@ -5,6 +5,7 @@ import { RequireCapability } from './auth/RequireCapability'
 import CategoriesPage from './pages/CategoriesPage'
 import DashboardPage from './pages/DashboardPage'
 import DeliveryReceiptPage from './pages/DeliveryReceiptPage'
+import DeliveryReportsPage from './pages/DeliveryReportsPage'
 import InventoryPage from './pages/InventoryPage'
 import InviteAcceptPage from './pages/InviteAcceptPage'
 import LoginPage from './pages/LoginPage'
@@ -66,6 +67,14 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
     element: (
       <RequireCapability capability="reports:view" title="Reports">
         <ReportsPage />
+      </RequireCapability>
+    ),
+  },
+  {
+    path: '/reports/delivery',
+    element: (
+      <RequireCapability capability="reports:view" title="Delivery Reports">
+        <DeliveryReportsPage />
       </RequireCapability>
     ),
   },
