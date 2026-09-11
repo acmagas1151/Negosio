@@ -4,6 +4,8 @@ import {
   POS_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
   REFERENCE_LABELS,
+  isValidDeliveryChargeInput,
+  parseDeliveryCharge,
   suggestCashButtons,
   type DeliveryFields,
 } from '../../lib/pos'
@@ -28,6 +30,10 @@ interface Props {
   deliveryFields: DeliveryFields
   /** Patch one or more delivery fields. */
   onDeliveryFieldsChange: (patch: Partial<DeliveryFields>) => void
+  /** The typed delivery-charge string, owned by the parent for the same reason deliveryFields is —
+   * it must survive the modal closing and reopening after a failed-payment retry. */
+  deliveryCharge: string
+  onDeliveryChargeChange: (value: string) => void
 }
 
 export function PaymentModal({
@@ -41,6 +47,8 @@ export function PaymentModal({
   onToggleForDelivery,
   deliveryFields,
   onDeliveryFieldsChange,
+  deliveryCharge,
+  onDeliveryChargeChange,
 }: Props) {
   const [method, setMethod] = useState<PaymentMethod>('Cash')
   const [received, setReceived] = useState('')
@@ -58,11 +66,15 @@ export function PaymentModal({
   }, [open])
 
   const receivedNum = Number(received)
-  const change = method === 'Cash' ? Math.max(0, receivedNum - amountDue) : 0
+  const deliveryChargeValid = !forDelivery || isValidDeliveryChargeInput(deliveryCharge)
+  const effectiveAmountDue = amountDue + parseDeliveryCharge(forDelivery, deliveryCharge)
+  const change = method === 'Cash' ? Math.max(0, receivedNum - effectiveAmountDue) : 0
 
   const deliveryComplete =
     !forDelivery ||
-    (deliveryFields.recipientName.trim() !== '' && deliveryFields.deliveryAddress.trim() !== '')
+    (deliveryFields.recipientName.trim() !== '' &&
+      deliveryFields.deliveryAddress.trim() !== '' &&
+      deliveryChargeValid)
   const deliveryErrors =
     forDelivery && deliveryAttempted
       ? {
@@ -70,11 +82,14 @@ export function PaymentModal({
           deliveryAddress: deliveryFields.deliveryAddress.trim()
             ? undefined
             : 'Recipient address is required.',
+          deliveryCharge: deliveryChargeValid
+            ? undefined
+            : 'Enter a valid amount (0 or more, up to 2 decimal places).',
         }
       : {}
 
   const paymentComplete =
-    method !== 'Cash' || (received.trim() !== '' && receivedNum >= amountDue)
+    method !== 'Cash' || (received.trim() !== '' && receivedNum >= effectiveAmountDue)
   // The button stays enabled while delivery fields are incomplete — clicking it then surfaces the
   // inline errors rather than silently doing nothing. It only hard-disables for an incomplete
   // payment or an in-flight submit.
@@ -89,7 +104,7 @@ export function PaymentModal({
     if (method === 'Cash') {
       onConfirm({ method: 'Cash', receivedAmount: receivedNum })
     } else {
-      onConfirm({ method, amount: amountDue, referenceNumber: reference.trim() || null })
+      onConfirm({ method, amount: effectiveAmountDue, referenceNumber: reference.trim() || null })
     }
   }
 
@@ -114,7 +129,7 @@ export function PaymentModal({
       <div className="-mr-1 max-h-[62vh] overflow-y-auto pr-1">
         <div className="mb-4 rounded-lg bg-surface-subtle px-3 py-3 text-center">
           <p className="text-[12px] uppercase tracking-wide text-text-muted">Amount due</p>
-          <p className="text-2xl font-bold text-text-primary">{formatMoney(amountDue)}</p>
+          <p className="text-2xl font-bold text-text-primary">{formatMoney(effectiveAmountDue)}</p>
         </div>
 
         <div className="mb-4 grid grid-cols-5 gap-2">
@@ -161,7 +176,7 @@ export function PaymentModal({
               autoFocus
             />
             <div className="flex flex-wrap gap-1.5">
-              {suggestCashButtons(amountDue).map((amt) => (
+              {suggestCashButtons(effectiveAmountDue).map((amt) => (
                 <button
                   key={amt}
                   type="button"
@@ -207,6 +222,8 @@ export function PaymentModal({
             <DeliveryDetailsFields
               values={deliveryFields}
               onChange={onDeliveryFieldsChange}
+              deliveryCharge={deliveryCharge}
+              onDeliveryChargeChange={onDeliveryChargeChange}
               errors={deliveryErrors}
               disabled={submitting}
             />
