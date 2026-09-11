@@ -33,8 +33,8 @@ public class DeliveryReceiptSchemaTests : IntegrationTest
                 preparedByUserId: userId,
                 preparedByNameSnapshot: "Ace Agas");
 
-            receipt.AddItem("Coke 1.5L", null, 2m, 75m);
-            receipt.AddItem("Pandesal", "Dozen", 3m, null);
+            receipt.AddItem(Guid.NewGuid(), "Coke 1.5L", null, 2m, 75m);
+            receipt.AddItem(Guid.NewGuid(), "Pandesal", "Dozen", 3m, null);
 
             db.DeliveryReceipts.Add(receipt);
             await db.SaveChangesAsync();

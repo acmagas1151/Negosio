@@ -88,6 +88,8 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             sale.BranchId,
             sale.Id,
             sale.SaleNumber,
+            sequenceNumber: 1,
+            scheduledDeliveryDate: DateOnly.FromDateTime(DateTime.UtcNow),
             request.RecipientName,
             request.DeliveryAddress,
             request.ContactNumber,
@@ -97,7 +99,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
 
         foreach (var (saleItem, quantity) in lines)
         {
-            dr.AddItem(saleItem.ProductNameSnapshot, saleItem.VariantNameSnapshot, quantity, saleItem.UnitPrice);
+            dr.AddItem(saleItem.Id, saleItem.ProductNameSnapshot, saleItem.VariantNameSnapshot, quantity, saleItem.UnitPrice);
         }
 
         _db.DeliveryReceipts.Add(dr);

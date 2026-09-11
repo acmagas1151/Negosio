@@ -41,13 +41,16 @@ public class DeliveryReceiptEntityTests
     public void AddItem_snapshots_line_and_rejects_zero_qty()
     {
         var dr = Make();
-        dr.AddItem("Coke 1.5L", null, 3m, 85m);
+        var saleItemId = Guid.NewGuid();
+
+        dr.AddItem(saleItemId, "Coke 1.5L", null, 3m, 85m);
         dr.Items.Should().ContainSingle();
+        dr.Items.Single().SaleItemId.Should().Be(saleItemId);
         dr.Items.Single().UnitPrice.Should().Be(85m);
         dr.Items.Single().ProductNameSnapshot.Should().Be("Coke 1.5L");
         dr.Items.Single().Quantity.Should().Be(3m);
 
-        var act = () => dr.AddItem("Bad", null, 0m, null);
+        var act = () => dr.AddItem(Guid.NewGuid(), "Bad", null, 0m, null);
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
 
