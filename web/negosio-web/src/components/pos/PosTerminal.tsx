@@ -19,9 +19,9 @@ import { useBarcodeScanner } from '../../hooks/useBarcodeScanner'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { usePosShortcuts } from '../../hooks/usePosShortcuts'
 import { useTaxSettings } from '../../hooks/useTaxSettings'
-import { calcTotals } from '../../lib/saleMath'
+import { calcTotals, roundMoney } from '../../lib/saleMath'
 import type { DeliveryFields, LastSaleRef } from '../../lib/pos'
-import { EMPTY_DELIVERY_FIELDS, VOID_INELIGIBLE_MESSAGES } from '../../lib/pos'
+import { EMPTY_DELIVERY_CHARGE, EMPTY_DELIVERY_FIELDS, parseDeliveryCharge, VOID_INELIGIBLE_MESSAGES } from '../../lib/pos'
 import { hasReturnableQty } from '../../lib/returns'
 import { useCan } from '../../lib/useCan'
 import { ReturnModal } from '../sales/ReturnModal'
@@ -104,6 +104,7 @@ export function PosTerminal({
   // New Transaction and after a completed sale; also cleared when "For delivery" is unticked.
   const [forDelivery, setForDelivery] = useState(false)
   const [deliveryFields, setDeliveryFields] = useState<DeliveryFields>(EMPTY_DELIVERY_FIELDS)
+  const [deliveryCharge, setDeliveryCharge] = useState(EMPTY_DELIVERY_CHARGE)
   // The DR id from a just-completed delivery sale — powers the success modal's "Print delivery
   // receipt" affordance. Set when the DR POST resolves; cleared with the success modal.
   const [successDeliveryReceiptId, setSuccessDeliveryReceiptId] = useState<string | null>(null)
@@ -240,6 +241,7 @@ export function PosTerminal({
     setNewTxnConfirmOpen(false)
     setForDelivery(false)
     setDeliveryFields(EMPTY_DELIVERY_FIELDS)
+    setDeliveryCharge(EMPTY_DELIVERY_CHARGE)
     setSuccessDeliveryReceiptId(null)
   }, [cart])
 
@@ -247,11 +249,18 @@ export function PosTerminal({
   // hidden payload can never be submitted, and re-ticking starts from a clean form.
   const onToggleForDelivery = useCallback((next: boolean) => {
     setForDelivery(next)
-    if (!next) setDeliveryFields(EMPTY_DELIVERY_FIELDS)
+    if (!next) {
+      setDeliveryFields(EMPTY_DELIVERY_FIELDS)
+      setDeliveryCharge(EMPTY_DELIVERY_CHARGE)
+    }
   }, [])
 
   const onDeliveryFieldsChange = useCallback((patch: Partial<DeliveryFields>) => {
     setDeliveryFields((f) => ({ ...f, ...patch }))
+  }, [])
+
+  const onDeliveryChargeChange = useCallback((value: string) => {
+    setDeliveryCharge(value)
   }, [])
 
   // Creates the delivery receipt for a just-completed sale. The sale is already safe by the time
@@ -404,6 +413,7 @@ export function PosTerminal({
           discount: l.discount.type === 'None' ? null : l.discount,
         })),
         payments: [payment],
+        deliveryCharge: roundMoney(parseDeliveryCharge(forDelivery, deliveryCharge)),
         approval,
       }
       return checkoutApi.checkout(body)
@@ -442,6 +452,7 @@ export function PosTerminal({
       }
       setForDelivery(false)
       setDeliveryFields(EMPTY_DELIVERY_FIELDS)
+      setDeliveryCharge(EMPTY_DELIVERY_CHARGE)
     },
     onError: (err) => {
       setStatus('failed')
@@ -616,6 +627,8 @@ export function PosTerminal({
         onToggleForDelivery={onToggleForDelivery}
         deliveryFields={deliveryFields}
         onDeliveryFieldsChange={onDeliveryFieldsChange}
+        deliveryCharge={deliveryCharge}
+        onDeliveryChargeChange={onDeliveryChargeChange}
       />
 
       <PaymentSuccessModal
@@ -641,7 +654,7 @@ export function PosTerminal({
           setPaymentFailure(null)
           setPayOpen(true)
         }}
-        amount={totals.grandTotal}
+        amount={totals.grandTotal + roundMoney(parseDeliveryCharge(forDelivery, deliveryCharge))}
         payment={pendingPaymentRef.current}
         message={paymentFailure?.message ?? ''}
         certainNotCharged={paymentFailure?.certainNotCharged ?? false}
