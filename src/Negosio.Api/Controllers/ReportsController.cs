@@ -39,4 +39,10 @@ public sealed class ReportsController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<CategoryPerformanceDto>>> Categories(
         [FromQuery] ReportFilter filter, CancellationToken cancellationToken)
         => Ok(await _reports.GetCategoryPerformanceAsync(filter, cancellationToken));
+
+    [HttpGet("deliveries")]
+    [ProducesResponseType(typeof(DeliveryReportResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<DeliveryReportResultDto>> Deliveries(
+        [FromQuery] DeliveryReportQuery query, CancellationToken cancellationToken)
+        => Ok(await _reports.GetDeliveriesAsync(query, cancellationToken));
 }

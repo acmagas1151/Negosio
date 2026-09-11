@@ -155,6 +155,79 @@ public sealed class ReportsService : IReportsService
             .ToList();
     }
 
+    public async Task<DeliveryReportResultDto> GetDeliveriesAsync(DeliveryReportQuery query, CancellationToken cancellationToken = default)
+    {
+        RequireAuthenticated();
+        var tenantId = _currentUser.TenantId;
+        var branchFilter = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken);
+
+        var receipts = _db.DeliveryReceipts.AsNoTracking()
+            .Where(d => d.TenantId == tenantId && d.SaleId != null);
+
+        if (branchFilter is { } b)
+        {
+            receipts = receipts.Where(d => d.BranchId == b);
+        }
+
+        if (query.FromUtc is { } fromUtc)
+        {
+            receipts = receipts.Where(d => d.CreatedAtUtc >= fromUtc);
+        }
+
+        if (query.ToUtc is { } toUtc)
+        {
+            receipts = receipts.Where(d => d.CreatedAtUtc <= toUtc);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            receipts = receipts.Where(d =>
+                (d.RelatedSaleNumber != null && d.RelatedSaleNumber.Contains(term)) ||
+                d.RecipientName.Contains(term) ||
+                d.DeliveryAddress.Contains(term) ||
+                (d.ContactNumber != null && d.ContactNumber.Contains(term)));
+        }
+
+        // The delivery charge and sale total are read live from Sale — DeliveryReceipt never stores
+        // its own copy, so they're joined here rather than duplicated at write time.
+        var joined =
+            from dr in receipts
+            join s in _db.Sales.AsNoTracking().Where(x => x.TenantId == tenantId) on dr.SaleId equals s.Id
+            select new { dr, s };
+
+        var chargesQuery = joined.Select(x => x.s.DeliveryCharge);
+        var totalDeliveries = await chargesQuery.CountAsync(cancellationToken);
+        var freeDeliveries = await chargesQuery.CountAsync(c => c == 0m, cancellationToken);
+        var totalCharges = totalDeliveries == 0 ? 0m : await chargesQuery.SumAsync(cancellationToken);
+        var averageCharge = totalDeliveries == 0 ? 0m : Money.Round(totalCharges / totalDeliveries);
+        var totals = new DeliveryReportTotalsDto(totalDeliveries, freeDeliveries, totalDeliveries - freeDeliveries, totalCharges, averageCharge);
+
+        var projected = joined
+            .OrderByDescending(x => x.dr.CreatedAtUtc)
+            .Select(x => new DeliveryReportRow(
+                x.dr.Id, x.s.Id, x.s.SaleNumber, x.dr.CreatedAtUtc,
+                x.dr.RecipientName, x.dr.DeliveryAddress, x.dr.ContactNumber, x.dr.DeliveryNotes,
+                x.s.DeliveryCharge, x.s.GrandTotal, x.dr.PreparedByNameSnapshot,
+                _db.Payments.Where(p => p.SaleId == x.s.Id).Select(p => p.Method).Distinct().ToList()));
+
+        var rows = await PagedResult<DeliveryReportRow>.CreateAsync(projected, query.Page, query.PageSize, cancellationToken);
+        var items = rows.Items.Select(r => new DeliveryReportRowDto(
+            r.DeliveryReceiptId, r.SaleId, r.SaleNumber, r.CreatedAtUtc,
+            r.RecipientName, r.DeliveryAddress, r.ContactNumber, r.DeliveryNotes,
+            r.DeliveryCharge, r.SaleGrandTotal, string.Join(" + ", r.Methods.Select(m => m.ToString())), r.PreparedByName))
+            .ToList();
+
+        return new DeliveryReportResultDto(
+            new PagedResult<DeliveryReportRowDto>(items, rows.Page, rows.PageSize, rows.TotalCount, rows.TotalPages),
+            totals);
+    }
+
+    private sealed record DeliveryReportRow(
+        Guid DeliveryReceiptId, Guid SaleId, string SaleNumber, DateTime CreatedAtUtc,
+        string RecipientName, string DeliveryAddress, string? ContactNumber, string? DeliveryNotes,
+        decimal DeliveryCharge, decimal SaleGrandTotal, string PreparedByName, List<PaymentMethod> Methods);
+
     // ---- shared filtering ----
 
     private async Task<IQueryable<Sale>> BaseSalesAsync(ReportFilter filter, CancellationToken cancellationToken)

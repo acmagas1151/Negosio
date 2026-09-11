@@ -1,3 +1,4 @@
+using Negosio.Application.Common;
 using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Reports;
@@ -107,6 +108,44 @@ public sealed record CategoryPerformanceDto(
     decimal SalesAmount,
     decimal PercentageOfSales);
 
+public sealed record DeliveryReportQuery(
+    Guid? BranchId = null,
+    DateTime? FromUtc = null,
+    DateTime? ToUtc = null,
+    string? Search = null,
+    int Page = 1,
+    int PageSize = PagedResult<DeliveryReportRowDto>.DefaultPageSize);
+
+/// <summary>One delivered sale. <see cref="DeliveryCharge"/> and <see cref="SaleGrandTotal"/> are
+/// read live from the linked Sale — DeliveryReceipt never stores its own copy of either, so this
+/// row can never drift from the Sale that is the actual source of truth (see the plan's Global
+/// Constraints).</summary>
+public sealed record DeliveryReportRowDto(
+    Guid DeliveryReceiptId,
+    Guid SaleId,
+    string SaleNumber,
+    DateTime CreatedAtUtc,
+    string RecipientName,
+    string DeliveryAddress,
+    string? ContactNumber,
+    string? DeliveryNotes,
+    decimal DeliveryCharge,
+    decimal SaleGrandTotal,
+    string PaymentSummary,
+    string PreparedByName);
+
+/// <summary>Aggregates over the FULL filtered set, not just the current page — computed the same
+/// way <see cref="ReportsService"/>'s KPI queries are: separate SUM/COUNT queries against the same
+/// filtered base, before paging is applied.</summary>
+public sealed record DeliveryReportTotalsDto(
+    int TotalDeliveries,
+    int FreeDeliveries,
+    int ChargedDeliveries,
+    decimal TotalDeliveryCharges,
+    decimal AverageDeliveryCharge);
+
+public sealed record DeliveryReportResultDto(PagedResult<DeliveryReportRowDto> Page, DeliveryReportTotalsDto Totals);
+
 public interface IReportsService
 {
     Task<ReportsOverviewDto> GetOverviewAsync(ReportFilter filter, CancellationToken cancellationToken = default);
@@ -114,4 +153,6 @@ public interface IReportsService
     Task<IReadOnlyList<TopProductDto>> GetTopProductsAsync(ReportFilter filter, int top, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<CategoryPerformanceDto>> GetCategoryPerformanceAsync(ReportFilter filter, CancellationToken cancellationToken = default);
+
+    Task<DeliveryReportResultDto> GetDeliveriesAsync(DeliveryReportQuery query, CancellationToken cancellationToken = default);
 }
