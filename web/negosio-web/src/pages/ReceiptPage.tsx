@@ -120,6 +120,12 @@ export default function ReceiptPage() {
             <span className="r">{formatMoney(r.taxTotal)}</span>
           </div>
         )}
+        {r.deliveryCharge > 0 && (
+          <div className="row">
+            <span>Delivery charge</span>
+            <span className="r">{formatMoney(r.deliveryCharge)}</span>
+          </div>
+        )}
         <div className="row bold">
           <span>TOTAL</span>
           <span className="r">{formatMoney(r.grandTotal)}</span>

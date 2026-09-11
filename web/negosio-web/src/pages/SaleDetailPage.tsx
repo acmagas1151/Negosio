@@ -201,6 +201,12 @@ export default function SaleDetailPage() {
                       <dt>Tax</dt>
                       <dd>{formatMoney(d.taxTotal)}</dd>
                     </div>
+                    {d.deliveryCharge > 0 && (
+                      <div className="flex justify-between text-text-secondary">
+                        <dt>Delivery charge</dt>
+                        <dd>{formatMoney(d.deliveryCharge)}</dd>
+                      </div>
+                    )}
                     <div className="flex justify-between border-t border-border pt-1.5 text-base font-bold text-text-primary">
                       <dt>Total</dt>
                       <dd>{formatMoney(d.sale.grandTotal)}</dd>
