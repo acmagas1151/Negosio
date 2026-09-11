@@ -19,6 +19,10 @@ public sealed record CheckoutRequest(
     Guid ClientRequestId,
     IReadOnlyList<CheckoutItemInput> Items,
     IReadOnlyList<CheckoutPaymentInput> Payments,
+    /// <summary>The delivery fee for a "for delivery" sale, 0 for a normal sale. Added to the
+    /// server-computed sale total to form <see cref="SaleResultDto.GrandTotal"/> — the client never
+    /// sends a total, only this raw fee.</summary>
+    decimal DeliveryCharge = 0m,
     /// <summary>Manager/Admin/Owner approval — only used when a Cashier without the DiscountApply
     /// grant submits a sale that carries any line discount. Reuses Void's approval shape.</summary>
     VoidSaleApprovalInput? Approval = null);
@@ -30,6 +34,7 @@ public sealed record SaleResultDto(
     decimal Subtotal,
     decimal DiscountTotal,
     decimal TaxTotal,
+    decimal DeliveryCharge,
     decimal GrandTotal,
     decimal AmountPaid,
     decimal ChangeDue,

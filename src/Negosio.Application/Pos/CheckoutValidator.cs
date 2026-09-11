@@ -16,5 +16,9 @@ public sealed class CheckoutRequestValidator : AbstractValidator<CheckoutRequest
             item.RuleFor(i => i.Quantity).GreaterThan(0).WithMessage("Item quantity must be greater than zero.");
         });
         RuleFor(x => x.Payments).NotEmpty().WithMessage("At least one payment is required.");
+        RuleFor(x => x.DeliveryCharge)
+            .GreaterThanOrEqualTo(0m).WithMessage("Delivery charge cannot be negative.")
+            .Must(v => v == Math.Round(v, 2, MidpointRounding.AwayFromZero))
+            .WithMessage("Delivery charge can have at most 2 decimal places.");
     }
 }

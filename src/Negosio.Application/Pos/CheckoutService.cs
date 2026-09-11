@@ -153,11 +153,13 @@ public sealed class CheckoutService : ICheckoutService
         var subtotal = Money.Round(lines.Sum(l => l.Amounts.Gross));
         var discountTotal = Money.Round(lines.Sum(l => l.Amounts.Discount));
         var taxTotal = Money.Round(lines.Sum(l => l.Amounts.Tax));
-        var grandTotal = tenant.PricesIncludeTax
+        var deliveryCharge = Money.Round(request.DeliveryCharge);
+        var saleTotal = tenant.PricesIncludeTax
             ? subtotal - discountTotal
             : subtotal - discountTotal + taxTotal;
+        var grandTotal = saleTotal + deliveryCharge;
 
-        // 5. Resolve payments against the grand total.
+        // 5. Resolve payments against the grand total (sale total + delivery charge).
         var payments = ResolvePayments(request.Payments, grandTotal);
 
         // 6-10. One transaction: number, sale, items, payments, inventory, movements.
@@ -179,7 +181,7 @@ public sealed class CheckoutService : ICheckoutService
             sale.AddPayment(p.Method, p.Amount, p.ReferenceNumber, p.ReceivedAmount, p.ChangeAmount);
         }
 
-        sale.Complete(subtotal, discountTotal, taxTotal, grandTotal, payments.Sum(p => p.Amount), Money.Round(payments.Sum(p => p.ChangeAmount ?? 0m)));
+        sale.Complete(subtotal, discountTotal, taxTotal, deliveryCharge, grandTotal, payments.Sum(p => p.Amount), Money.Round(payments.Sum(p => p.ChangeAmount ?? 0m)));
         _db.Sales.Add(sale);
 
         try
@@ -297,7 +299,7 @@ public sealed class CheckoutService : ICheckoutService
 
     private static SaleResultDto ToResult(Sale sale, bool wasExisting) => new(
         sale.Id, sale.SaleNumber, sale.Status, sale.Subtotal, sale.DiscountTotal, sale.TaxTotal,
-        sale.GrandTotal, sale.AmountPaid, sale.ChangeDue, wasExisting);
+        sale.DeliveryCharge, sale.GrandTotal, sale.AmountPaid, sale.ChangeDue, wasExisting);
 
     private Guid RequireTenant()
     {
