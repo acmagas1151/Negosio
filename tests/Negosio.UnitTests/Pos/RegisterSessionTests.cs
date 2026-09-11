@@ -71,7 +71,7 @@ public class SaleAggregateTests
     {
         var sale = Sale.Begin(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "0000001", Guid.NewGuid(), Guid.NewGuid());
         var item = sale.AddItem(Guid.NewGuid(), "Coke", null, "SKU", null, 75m, 2m, DiscountType.None, 0m, 150m, 0m, 0m, 150m, 40m);
-        sale.Complete(150m, 0m, 0m, 150m, 150m, 0m);
+        sale.Complete(150m, 0m, 0m, 0m, 150m, 150m, 0m);
 
         item.RecordReturn(1m);
         sale.MarkReturned();

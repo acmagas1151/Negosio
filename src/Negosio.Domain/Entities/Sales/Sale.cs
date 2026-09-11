@@ -53,6 +53,8 @@ public class Sale : Entity
 
     public decimal TaxTotal { get; private set; }
 
+    public decimal DeliveryCharge { get; private set; }
+
     public decimal GrandTotal { get; private set; }
 
     public decimal AmountPaid { get; private set; }
@@ -130,11 +132,12 @@ public class Sale : Entity
         return payment;
     }
 
-    public void Complete(decimal subtotal, decimal discountTotal, decimal taxTotal, decimal grandTotal, decimal amountPaid, decimal changeDue)
+    public void Complete(decimal subtotal, decimal discountTotal, decimal taxTotal, decimal deliveryCharge, decimal grandTotal, decimal amountPaid, decimal changeDue)
     {
         Subtotal = subtotal;
         DiscountTotal = discountTotal;
         TaxTotal = taxTotal;
+        DeliveryCharge = deliveryCharge;
         GrandTotal = grandTotal;
         AmountPaid = amountPaid;
         ChangeDue = changeDue;
