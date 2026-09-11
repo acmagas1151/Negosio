@@ -24,6 +24,8 @@ public class DeliveryReceiptSchemaTests : IntegrationTest
                 branchId,
                 saleId: null,
                 relatedSaleNumber: "S-0001",
+                sequenceNumber: 1,
+                scheduledDeliveryDate: new DateOnly(2026, 9, 15),
                 recipientName: "Juan Dela Cruz",
                 deliveryAddress: "123 Rizal St, Odiongan, Romblon",
                 contactNumber: "09171234567",
