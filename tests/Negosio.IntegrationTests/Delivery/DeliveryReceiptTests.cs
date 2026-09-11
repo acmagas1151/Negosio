@@ -22,7 +22,7 @@ public class DeliveryReceiptTests : IntegrationTest
         new("Juan Dela Cruz", "123 Ayala Ave, Makati", "0917 111 2222", "Leave at guardhouse", items);
 
     /// <summary>One completed cash sale: <paramref name="qty"/> @ <paramref name="price"/>, tendered with change.</summary>
-    private async Task<DrScene> ArrangeSaleAsync(decimal qty = 1m, decimal price = 100m)
+    private async Task<DrScene> ArrangeSaleAsync(decimal qty = 1m, decimal price = 100m, decimal deliveryCharge = 0m)
     {
         if (CurrentTenantId == Guid.Empty)
         {
@@ -40,7 +40,8 @@ public class DeliveryReceiptTests : IntegrationTest
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
             new[] { new CheckoutItemInput(variantId, qty, null) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + 100m) }));
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + deliveryCharge + 100m) },
+            DeliveryCharge: deliveryCharge));
 
         return new DrScene(sale.SaleId, sale.SaleNumber, productId);
     }
@@ -174,5 +175,37 @@ public class DeliveryReceiptTests : IntegrationTest
         var other = await CreateBranchAsync("BGC", "BGC");
         Authorize(await AddTenantUserTokenAsync("mgr@example.com", UserRole.Manager, other.Id));
         (await Client.GetAsync($"/api/delivery-receipts/{dr.Id}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Delivery_receipt_reflects_the_linked_sales_delivery_charge()
+    {
+        var scene = await ArrangeSaleAsync(price: 100m, deliveryCharge: 60m);
+
+        var dr = (await (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipt", Req()))
+            .Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+
+        dr.DeliveryCharge.Should().Be(60m);
+    }
+
+    [Fact]
+    public async Task A_rejected_delivery_receipt_attempt_leaves_the_completed_sale_and_its_charge_intact()
+    {
+        var scene = await ArrangeSaleAsync(price: 100m, deliveryCharge: 60m);
+
+        (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipt",
+            new CreateDeliveryReceiptRequest("  ", "123 Ayala Ave", null, null, null)))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        await InScopeAsync(async db =>
+        {
+            var sale = await db.Sales.SingleAsync(s => s.Id == scene.SaleId);
+            sale.Status.Should().Be(SaleStatus.Completed);
+            sale.DeliveryCharge.Should().Be(60m);
+            return true;
+        });
+
+        var retried = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipt", Req());
+        retried.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 }

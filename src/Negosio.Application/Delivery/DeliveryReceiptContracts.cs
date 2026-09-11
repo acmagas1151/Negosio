@@ -29,6 +29,9 @@ public sealed record DeliveryReceiptDto(
     string? DeliveryNotes,
     string PreparedByName,
     IReadOnlyList<DeliveryReceiptItemDto> Items,
+    /// <summary>Read live from the linked Sale (never a stored copy on this entity) — see the plan's
+    /// Global Constraints. 0 for a delivery receipt with no linked sale (there is no charge to show).</summary>
+    decimal DeliveryCharge,
     string? HeaderText,
     string? FooterText,
     string BusinessName,

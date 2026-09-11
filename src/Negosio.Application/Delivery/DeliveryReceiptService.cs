@@ -141,6 +141,10 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             .Select(b => new { b.Name, b.AddressLine1, b.City, b.Province, b.ContactNumber })
             .FirstOrDefaultAsync(ct);
 
+        var deliveryCharge = dr.SaleId is { } saleId
+            ? await _db.Sales.AsNoTracking().Where(s => s.Id == saleId).Select(s => s.DeliveryCharge).FirstOrDefaultAsync(ct)
+            : 0m;
+
         var addressParts = new[] { branch?.AddressLine1, branch?.City, branch?.Province }
             .Where(part => !string.IsNullOrWhiteSpace(part))
             .Select(part => part!.Trim())
@@ -172,6 +176,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             dr.DeliveryNotes,
             dr.PreparedByNameSnapshot,
             items,
+            deliveryCharge,
             HeaderText: settings.DeliveryHeaderText,
             FooterText: settings.DeliveryFooterText,
             BusinessName: profile.Name,
