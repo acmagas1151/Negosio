@@ -4,14 +4,25 @@ import { TextArea, TextField } from '../ui'
 interface Props {
   values: DeliveryFields
   onChange: (patch: Partial<DeliveryFields>) => void
-  errors: { recipientName?: string; deliveryAddress?: string }
+  deliveryCharge: string
+  onDeliveryChargeChange: (value: string) => void
+  errors: { recipientName?: string; deliveryAddress?: string; deliveryCharge?: string }
   disabled?: boolean
 }
 
-/** Presentational: the four delivery inputs, rendered directly inside the payment modal's
+/** Presentational: the delivery inputs, rendered directly inside the payment modal's
  * "For delivery" section (no card of their own). All state and validation live in the parent
  * (PaymentModal) so the values survive a failed-payment retry. */
-export function DeliveryDetailsFields({ values, onChange, errors, disabled }: Props) {
+export function DeliveryDetailsFields({
+  values,
+  onChange,
+  deliveryCharge,
+  onDeliveryChargeChange,
+  errors,
+  disabled,
+}: Props) {
+  const isFree = errors.deliveryCharge == null && Number(deliveryCharge) === 0
+
   return (
     <div className="mt-3 space-y-3 border-t border-border pt-3">
       <TextField
@@ -33,6 +44,20 @@ export function DeliveryDetailsFields({ values, onChange, errors, disabled }: Pr
         error={errors.deliveryAddress || undefined}
         disabled={disabled}
       />
+      <div>
+        <TextField
+          label="Delivery charge (₱)"
+          name="deliveryCharge"
+          type="number"
+          min={0}
+          step="0.01"
+          value={deliveryCharge}
+          onChange={(e) => onDeliveryChargeChange(e.target.value)}
+          error={errors.deliveryCharge || undefined}
+          disabled={disabled}
+        />
+        {isFree && <p className="mt-1 text-[12px] text-text-muted">Free delivery</p>}
+      </div>
       <div className="grid gap-x-3 sm:grid-cols-2">
         <TextField
           label="Contact number"
