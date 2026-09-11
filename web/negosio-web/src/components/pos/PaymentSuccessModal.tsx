@@ -1,7 +1,7 @@
 import { Check, Printer, Truck } from 'lucide-react'
 import type { CheckoutPaymentInput, SaleResultDto } from '../../api/types'
 import { PAYMENT_METHOD_LABELS, REFERENCE_LABELS } from '../../lib/pos'
-import { formatMoney } from '../../lib/format'
+import { formatDeliveryCharge, formatMoney } from '../../lib/format'
 import { Button, Modal } from '../ui'
 
 interface Props {
@@ -83,6 +83,9 @@ export function PaymentSuccessModal({
 
       <dl className="my-5 divide-y divide-border-light rounded-2xl bg-surface-subtle px-4 py-1">
         <SummaryRow label="Amount paid" value={formatMoney(result.amountPaid)} strong />
+        {deliveryReceiptId && (
+          <SummaryRow label="Delivery charge" value={formatDeliveryCharge(result.deliveryCharge)} />
+        )}
         {payment && <SummaryRow label="Payment method" value={PAYMENT_METHOD_LABELS[payment.method]} />}
         {isCash && payment?.receivedAmount != null && (
           <SummaryRow label="Tendered" value={formatMoney(payment.receivedAmount)} />
