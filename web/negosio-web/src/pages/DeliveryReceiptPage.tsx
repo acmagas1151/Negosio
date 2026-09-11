@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { deliveryReceiptsApi } from '../api/deliveryReceipts'
-import { formatMoney, formatQty } from '../lib/format'
+import { formatDeliveryCharge, formatMoney, formatQty } from '../lib/format'
 import { Button, ErrorState, LoadingState } from '../components/ui'
 import { deliveryReceiptCss } from '../components/receipt/deliveryReceiptStyles'
 import { ReceiptHeader } from '../components/receipt/ReceiptHeader'
@@ -119,6 +119,12 @@ export default function DeliveryReceiptPage() {
             ))}
           </tbody>
         </table>
+
+        {showPriceColumns && (
+          <div className="dr-line">
+            <span className="label">Delivery fee:</span> {formatDeliveryCharge(d.deliveryCharge)}
+          </div>
+        )}
 
         {d.deliveryNotes && d.deliveryNotes.trim() && (
           <div className="dr-notes">
