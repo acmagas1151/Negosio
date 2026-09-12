@@ -467,6 +467,9 @@ export interface CheckoutItemInput {
   productVariantId: string
   quantity: number
   discount: CheckoutDiscountInput | null
+  /** How much of this line is not taken at the counter today — defaults to 0 (all Take-now) when
+   * omitted. Never negative, never more than `quantity`. */
+  deliveryRequiredQuantity: number
 }
 
 export interface CheckoutPaymentInput {
@@ -489,6 +492,15 @@ export interface CheckoutRequest {
   approval?: VoidSaleApprovalInput
 }
 
+export interface SaleResultItemDto {
+  saleItemId: string
+  productVariantId: string
+  productName: string
+  variantName: string | null
+  quantity: number
+  deliveryRequiredQuantity: number
+}
+
 export interface SaleResultDto {
   saleId: string
   saleNumber: string
@@ -501,6 +513,9 @@ export interface SaleResultDto {
   amountPaid: number
   changeDue: number
   wasExistingRequest: boolean
+  /** The SaleItems this checkout just created — needed to submit the follow-up delivery-schedule
+   * batch for any line with deliveryRequiredQuantity > 0. */
+  items: SaleResultItemDto[]
 }
 
 // ---- Sales history & detail ----
@@ -522,6 +537,7 @@ export interface SaleItemDto {
   netAmount: number
   costPriceSnapshot: number | null
   returnedQuantity: number
+  deliveryRequiredQuantity: number
 }
 
 export interface SalePaymentDto {
@@ -687,14 +703,22 @@ export interface ReceiptDto {
   width: ReceiptWidth
 }
 
-// ---- Delivery receipt (Plan B — persistent Delivery Receipt) ----
-// Backend contract:
-//   POST /api/sales/{id}/delivery-receipt -> 201 (created) or 200 (already exists), DeliveryReceiptDto either way.
-//   GET  /api/sales/{id}/delivery-receipt -> 200 DeliveryReceiptDto | 404 (also 404 for an unknown sale — treat as null).
-//   GET  /api/delivery-receipts/{id}      -> 200 DeliveryReceiptDto | 404 (cross-branch access -> 404).
-// There is NO delivery-receipt number. When `showPrices` is false, both `unitPrice` and `amount` are null.
+// ---- Delivery fulfillment ----
+// Backend contract (SalesController / DeliveryReceiptsController):
+//   POST /api/sales/{saleId}/delivery-receipts/batch -> 201, DeliveryReceiptBatchResultDto
+//   POST /api/sales/{saleId}/delivery-receipts        -> 201, DeliveryReceiptDto
+//   GET  /api/sales/{saleId}/delivery-receipts        -> 200, DeliveryReceiptDto[]
+//   GET  /api/sales/{saleId}/delivery-summary         -> 200, SaleDeliverySummaryDto
+//   GET  /api/delivery-receipts/{id}                  -> 200 | 404
+//   POST /api/delivery-receipts/{id}/deliver          -> 200, DeliveryReceiptDto
+//   POST /api/delivery-receipts/{id}/cancel           -> 200, DeliveryReceiptDto (Owner/Admin/Manager only)
+// A Sale may now have MULTIPLE DeliveryReceipts ("Delivery 1", "Delivery 2", ...); each shows only
+// its own assigned items, never the whole sale.
+
+export type DeliveryStatus = 'Pending' | 'Delivered' | 'Cancelled'
 
 export interface DeliveryReceiptItemDto {
+  saleItemId: string
   productName: string
   variantName: string | null
   quantity: number
@@ -704,14 +728,23 @@ export interface DeliveryReceiptItemDto {
 
 export interface DeliveryReceiptDto {
   id: string
-  createdAtUtc: string
+  saleId: string | null
   relatedSaleNumber: string | null
+  sequenceNumber: number
+  scheduledDeliveryDate: string // yyyy-MM-dd
+  status: DeliveryStatus
+  createdAtUtc: string
   branchName: string
   recipientName: string
   deliveryAddress: string
   contactNumber: string | null
   deliveryNotes: string | null
   preparedByName: string
+  deliveredAtUtc: string | null
+  deliveredByName: string | null
+  cancelledAtUtc: string | null
+  cancelledByName: string | null
+  cancellationReason: string | null
   items: DeliveryReceiptItemDto[]
   deliveryCharge: number
   headerText: string | null
@@ -726,12 +759,79 @@ export interface DeliveryReceiptDto {
   showSignatureFields: boolean
 }
 
+export interface CreateDeliveryReceiptItemInput {
+  saleItemId: string
+  quantity: number
+}
+
 export interface CreateDeliveryReceiptRequest {
+  scheduledDeliveryDate: string // yyyy-MM-dd
   recipientName: string
   deliveryAddress: string
-  contactNumber?: string
-  deliveryNotes?: string
-  items?: { saleItemId: string; quantity: number }[]
+  contactNumber: string | null
+  deliveryNotes: string | null
+  items: CreateDeliveryReceiptItemInput[]
+}
+
+export interface CreateDeliveryReceiptBatchRequest {
+  batchRequestId: string
+  schedules: CreateDeliveryReceiptRequest[]
+}
+
+export interface DeliveryReceiptBatchResultDto {
+  created: DeliveryReceiptDto[]
+  wasExistingBatch: boolean
+}
+
+export interface CancelDeliveryReceiptRequest {
+  reason: string
+}
+
+export type SaleFulfillmentStatus =
+  | 'NotApplicable'
+  | 'Unscheduled'
+  | 'PartiallyScheduled'
+  | 'FullyScheduled'
+  | 'PartiallyDelivered'
+  | 'FullyDelivered'
+  | 'NeedsRescheduling'
+
+export interface SaleItemFulfillmentDto {
+  saleItemId: string
+  productName: string
+  variantName: string | null
+  quantity: number
+  takeNowQuantity: number
+  deliveryRequiredQuantity: number
+  pendingQuantity: number
+  deliveredQuantity: number
+  /** Never trust a frontend-computed version of this for a write — always send only what this field
+   * currently says, and let the backend re-validate at submit time regardless. */
+  availableToScheduleQuantity: number
+}
+
+export interface DeliveryReceiptSummaryDto {
+  id: string
+  sequenceNumber: number
+  scheduledDeliveryDate: string
+  status: DeliveryStatus
+  recipientName: string
+  deliveryAddress: string
+  contactNumber: string | null
+  deliveryNotes: string | null
+  deliveredAtUtc: string | null
+  cancelledAtUtc: string | null
+  cancellationReason: string | null
+  items: DeliveryReceiptItemDto[]
+}
+
+export interface SaleDeliverySummaryDto {
+  saleId: string
+  fulfillmentStatus: SaleFulfillmentStatus
+  deliveryCharge: number
+  items: SaleItemFulfillmentDto[]
+  deliveries: DeliveryReceiptSummaryDto[]
+  canCreateDelivery: boolean
 }
 
 // ---- Returns ----
@@ -912,10 +1012,16 @@ export interface ReportFilterParams {
   cashierId?: string
 }
 
+export type DeliveryReportPreset = 'All' | 'Today' | 'Upcoming' | 'Overdue' | 'Delivered' | 'Cancelled' | 'NeedsRescheduling'
+
 export interface DeliveryReportRowDto {
   deliveryReceiptId: string
   saleId: string
   saleNumber: string
+  sequenceNumber: number
+  scheduledDeliveryDate: string
+  status: DeliveryStatus
+  isOverdue: boolean
   createdAtUtc: string
   recipientName: string
   deliveryAddress: string
@@ -925,14 +1031,18 @@ export interface DeliveryReportRowDto {
   saleGrandTotal: number
   paymentSummary: string
   preparedByName: string
+  deliveredAtUtc: string | null
+  cancelledAtUtc: string | null
+  cancellationReason: string | null
 }
 
 export interface DeliveryReportTotalsDto {
-  totalDeliveries: number
-  freeDeliveries: number
-  chargedDeliveries: number
+  totalSchedules: number
+  distinctSalesCount: number
+  freeDeliverySalesCount: number
+  chargedDeliverySalesCount: number
   totalDeliveryCharges: number
-  averageDeliveryCharge: number
+  averageDeliveryChargePerSale: number
 }
 
 export interface DeliveryReportResultDto {
@@ -942,8 +1052,41 @@ export interface DeliveryReportResultDto {
 
 export interface DeliveryReportParams {
   branchId?: string
-  fromUtc?: string
-  toUtc?: string
+  preset?: DeliveryReportPreset
+  fromDate?: string
+  toDate?: string
+  status?: DeliveryStatus
+  search?: string
+  page?: number
+  pageSize?: number
+}
+
+export interface DeliveryFulfillmentReportRowDto {
+  saleId: string
+  saleNumber: string
+  saleCreatedAtUtc: string
+  fulfillmentStatus: SaleFulfillmentStatus
+  deliveryCharge: number
+  totalDeliveryRequiredQuantity: number
+  totalPendingQuantity: number
+  totalDeliveredQuantity: number
+  totalUnscheduledQuantity: number
+  scheduleCount: number
+}
+
+export interface DeliveryFulfillmentReportTotalsDto {
+  totalSales: number
+  totalDeliveryCharges: number
+}
+
+export interface DeliveryFulfillmentReportResultDto {
+  page: PagedResult<DeliveryFulfillmentReportRowDto>
+  totals: DeliveryFulfillmentReportTotalsDto
+}
+
+export interface DeliveryFulfillmentReportParams {
+  branchId?: string
+  status?: SaleFulfillmentStatus
   search?: string
   page?: number
   pageSize?: number

@@ -2,6 +2,8 @@ import { apiRequest } from './client'
 import { qs } from './query-string'
 import type {
   CategoryPerformanceDto,
+  DeliveryFulfillmentReportParams,
+  DeliveryFulfillmentReportResultDto,
   DeliveryReportParams,
   DeliveryReportResultDto,
   ReportFilterParams,
@@ -21,4 +23,9 @@ export const reportsApi = {
 
   deliveries: (params: DeliveryReportParams) =>
     apiRequest<DeliveryReportResultDto>(`/api/reports/deliveries${qs({ ...params })}`),
+
+  deliveryFulfillment: (params: DeliveryFulfillmentReportParams) =>
+    apiRequest<DeliveryFulfillmentReportResultDto>(
+      `/api/reports/delivery-fulfillment${qs({ ...params })}`,
+    ),
 }

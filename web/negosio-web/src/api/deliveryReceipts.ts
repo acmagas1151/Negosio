@@ -1,26 +1,36 @@
-import { ApiError, apiRequest } from './client'
-import type { CreateDeliveryReceiptRequest, DeliveryReceiptDto } from './types'
+import { apiRequest } from './client'
+import type {
+  CancelDeliveryReceiptRequest,
+  CreateDeliveryReceiptBatchRequest,
+  CreateDeliveryReceiptRequest,
+  DeliveryReceiptBatchResultDto,
+  DeliveryReceiptDto,
+  SaleDeliverySummaryDto,
+} from './types'
 
-/** Persistent Delivery Receipt (Plan B) — one DR per sale, printed on A4. */
+/** Scheduled, partial, multi-delivery fulfillment. See the DTO block in types.ts for the full
+ * backend-route contract. */
 export const deliveryReceiptsApi = {
-  /**
-   * GET /api/sales/{id}/delivery-receipt.
-   * 404 is returned both when no DR exists yet and when the sale id is unknown —
-   * callers cannot tell the two apart, so both map to `null`.
-   */
-  getForSale: async (saleId: string): Promise<DeliveryReceiptDto | null> => {
-    try {
-      return await apiRequest<DeliveryReceiptDto>(`/api/sales/${saleId}/delivery-receipt`)
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) return null
-      throw err
-    }
-  },
+  createBatch: (saleId: string, body: CreateDeliveryReceiptBatchRequest) =>
+    apiRequest<DeliveryReceiptBatchResultDto>(`/api/sales/${saleId}/delivery-receipts/batch`, {
+      method: 'POST',
+      body,
+    }),
 
-  /** POST /api/sales/{id}/delivery-receipt — creates (201) or returns the existing DR (200). */
-  createForSale: (saleId: string, body: CreateDeliveryReceiptRequest) =>
-    apiRequest<DeliveryReceiptDto>(`/api/sales/${saleId}/delivery-receipt`, { method: 'POST', body }),
+  create: (saleId: string, body: CreateDeliveryReceiptRequest) =>
+    apiRequest<DeliveryReceiptDto>(`/api/sales/${saleId}/delivery-receipts`, { method: 'POST', body }),
 
-  /** GET /api/delivery-receipts/{id}. */
+  listForSale: (saleId: string) =>
+    apiRequest<DeliveryReceiptDto[]>(`/api/sales/${saleId}/delivery-receipts`),
+
+  getSaleSummary: (saleId: string) =>
+    apiRequest<SaleDeliverySummaryDto>(`/api/sales/${saleId}/delivery-summary`),
+
   get: (id: string) => apiRequest<DeliveryReceiptDto>(`/api/delivery-receipts/${id}`),
+
+  markDelivered: (id: string) =>
+    apiRequest<DeliveryReceiptDto>(`/api/delivery-receipts/${id}/deliver`, { method: 'POST' }),
+
+  cancel: (id: string, body: CancelDeliveryReceiptRequest) =>
+    apiRequest<DeliveryReceiptDto>(`/api/delivery-receipts/${id}/cancel`, { method: 'POST', body }),
 }

@@ -17,7 +17,8 @@ public sealed record SaleItemDto(
     decimal TaxAmount,
     decimal NetAmount,
     decimal? CostPriceSnapshot,
-    decimal ReturnedQuantity);
+    decimal ReturnedQuantity,
+    decimal DeliveryRequiredQuantity);
 
 public sealed record SalePaymentDto(
     Guid Id,
