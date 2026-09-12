@@ -65,12 +65,17 @@ export default function DeliveryReceiptPage() {
             showBranch: false,
           }}
         />
-        {!hasCustomHeader && <p className="dr-title">DELIVERY RECEIPT</p>}
+        {!hasCustomHeader && <p className="dr-title">DELIVERY RECEIPT — Delivery {d.sequenceNumber}</p>}
         <hr />
 
         <div className="dr-meta">
-          <span>Date: {when}</span>
+          <span>Prepared: {when}</span>
+          <span>Scheduled for: {new Date(d.scheduledDeliveryDate).toLocaleDateString()}</span>
           <span>Branch: {d.branchName}</span>
+        </div>
+
+        <div className="dr-line">
+          <span className="label">Status:</span> {d.status}
         </div>
 
         <div className="dr-recipient">
@@ -119,6 +124,20 @@ export default function DeliveryReceiptPage() {
             ))}
           </tbody>
         </table>
+
+        {d.status === 'Delivered' && d.deliveredAtUtc && (
+          <div className="dr-line">
+            <span className="label">Delivered:</span> {new Date(d.deliveredAtUtc).toLocaleString()}
+            {d.deliveredByName ? ` by ${d.deliveredByName}` : ''}
+          </div>
+        )}
+        {d.status === 'Cancelled' && d.cancelledAtUtc && (
+          <div className="dr-line">
+            <span className="label">Cancelled:</span> {new Date(d.cancelledAtUtc).toLocaleString()}
+            {d.cancelledByName ? ` by ${d.cancelledByName}` : ''}
+            {d.cancellationReason ? ` — ${d.cancellationReason}` : ''}
+          </div>
+        )}
 
         {showPriceColumns && (
           <div className="dr-line">
