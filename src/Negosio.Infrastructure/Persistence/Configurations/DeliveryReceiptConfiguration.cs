@@ -55,12 +55,16 @@ public sealed class DeliveryReceiptConfiguration : IEntityTypeConfiguration<Deli
         b.HasIndex(x => new { x.TenantId, x.SaleId })
             .HasDatabaseName("IX_DeliveryReceipts_TenantId_SaleId");
 
-        // Batch-create idempotency: a retry with the same BatchRequestId must find (not duplicate) the
-        // batch's own rows. Filtered so ad-hoc (non-batch) deliveries, which leave this null, never
-        // collide with each other under SQL Server's NULL-is-distinct default — the filter here makes
-        // that explicit and matches the "no allocation" intent for those rows either way.
+        // Batch-create idempotency lookup: a retry with the same BatchRequestId must find (not
+        // duplicate) the batch's own rows. Deliberately NOT unique — one batch legitimately writes N
+        // rows that all share its BatchRequestId, so a unique index here cannot express this at all
+        // (it permits at most one row per key value). Idempotency is instead enforced in
+        // DeliveryReceiptService.CreateBatchAsync by re-checking for an existing batch inside the
+        // transaction, after LockSaleItemsAsync's pessimistic lock has serialized concurrent attempts
+        // against the same sale — a stronger guarantee than a unique index could give here. This index
+        // remains purely to make those two lookups fast. Filtered so ad-hoc (non-batch) deliveries,
+        // which leave this null, are kept out of it entirely.
         b.HasIndex(x => new { x.TenantId, x.BatchRequestId })
-            .IsUnique()
             .HasFilter("[BatchRequestId] IS NOT NULL")
             .HasDatabaseName("IX_DeliveryReceipts_TenantId_BatchRequestId");
 
