@@ -1,4 +1,5 @@
 using Negosio.Application.Common;
+using Negosio.Application.Delivery;
 using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Reports;
@@ -108,22 +109,45 @@ public sealed record CategoryPerformanceDto(
     decimal SalesAmount,
     decimal PercentageOfSales);
 
+public enum DeliveryReportPreset
+{
+    All = 1,
+    Today = 2,
+    Upcoming = 3,
+    Overdue = 4,
+    Delivered = 5,
+    Cancelled = 6,
+    NeedsRescheduling = 7,
+}
+
+/// <summary>
+/// When <see cref="Preset"/> is anything but <see cref="DeliveryReportPreset.All"/>, it resolves to a
+/// concrete date range / status / overdue-only filter server-side and <see cref="FromDate"/>,
+/// <see cref="ToDate"/>, <see cref="Status"/> are ignored — pass either a preset OR explicit filters,
+/// not both.
+/// </summary>
 public sealed record DeliveryReportQuery(
     Guid? BranchId = null,
-    DateTime? FromUtc = null,
-    DateTime? ToUtc = null,
+    DeliveryReportPreset Preset = DeliveryReportPreset.All,
+    DateOnly? FromDate = null,
+    DateOnly? ToDate = null,
+    DeliveryStatus? Status = null,
     string? Search = null,
     int Page = 1,
     int PageSize = PagedResult<DeliveryReportRowDto>.DefaultPageSize);
 
-/// <summary>One delivered sale. <see cref="DeliveryCharge"/> and <see cref="SaleGrandTotal"/> are
-/// read live from the linked Sale — DeliveryReceipt never stores its own copy of either, so this
-/// row can never drift from the Sale that is the actual source of truth (see the plan's Global
-/// Constraints).</summary>
+/// <summary>One delivery schedule row. <see cref="DeliveryCharge"/> and <see cref="SaleGrandTotal"/>
+/// are read live from the linked Sale — never a per-schedule copy (see the plan's Global
+/// Constraints) — so the SAME sale's charge appears identically on every one of its schedule rows;
+/// <see cref="DeliveryReportTotalsDto"/> is what avoids double-counting it in the summary.</summary>
 public sealed record DeliveryReportRowDto(
     Guid DeliveryReceiptId,
     Guid SaleId,
     string SaleNumber,
+    int SequenceNumber,
+    DateOnly ScheduledDeliveryDate,
+    DeliveryStatus Status,
+    bool IsOverdue,
     DateTime CreatedAtUtc,
     string RecipientName,
     string DeliveryAddress,
@@ -132,19 +156,50 @@ public sealed record DeliveryReportRowDto(
     decimal DeliveryCharge,
     decimal SaleGrandTotal,
     string PaymentSummary,
-    string PreparedByName);
+    string PreparedByName,
+    DateTime? DeliveredAtUtc,
+    DateTime? CancelledAtUtc,
+    string? CancellationReason);
 
-/// <summary>Aggregates over the FULL filtered set, not just the current page — computed the same
-/// way <see cref="ReportsService"/>'s KPI queries are: separate SUM/COUNT queries against the same
-/// filtered base, before paging is applied.</summary>
+/// <summary>Aggregates over the FULL filtered set, not just the current page. <see cref="TotalSchedules"/>
+/// counts DeliveryReceipt rows (how many schedules matched); every charge-related figure is computed
+/// over the filtered set's DISTINCT sales instead — the fix for the bug this task addresses: summing
+/// DeliveryCharge per DR row double/triple-counts a sale with more than one schedule.</summary>
 public sealed record DeliveryReportTotalsDto(
-    int TotalDeliveries,
-    int FreeDeliveries,
-    int ChargedDeliveries,
+    int TotalSchedules,
+    int DistinctSalesCount,
+    int FreeDeliverySalesCount,
+    int ChargedDeliverySalesCount,
     decimal TotalDeliveryCharges,
-    decimal AverageDeliveryCharge);
+    decimal AverageDeliveryChargePerSale);
 
 public sealed record DeliveryReportResultDto(PagedResult<DeliveryReportRowDto> Page, DeliveryReportTotalsDto Totals);
+
+// ---- Sale fulfillment view ----
+
+public sealed record DeliveryFulfillmentReportQuery(
+    Guid? BranchId = null,
+    SaleFulfillmentStatus? Status = null,
+    string? Search = null,
+    int Page = 1,
+    int PageSize = PagedResult<DeliveryFulfillmentReportRowDto>.DefaultPageSize);
+
+public sealed record DeliveryFulfillmentReportRowDto(
+    Guid SaleId,
+    string SaleNumber,
+    DateTime SaleCreatedAtUtc,
+    SaleFulfillmentStatus FulfillmentStatus,
+    decimal DeliveryCharge,
+    decimal TotalDeliveryRequiredQuantity,
+    decimal TotalPendingQuantity,
+    decimal TotalDeliveredQuantity,
+    decimal TotalUnscheduledQuantity,
+    int ScheduleCount);
+
+public sealed record DeliveryFulfillmentReportTotalsDto(int TotalSales, decimal TotalDeliveryCharges);
+
+public sealed record DeliveryFulfillmentReportResultDto(
+    PagedResult<DeliveryFulfillmentReportRowDto> Page, DeliveryFulfillmentReportTotalsDto Totals);
 
 public interface IReportsService
 {
@@ -155,4 +210,6 @@ public interface IReportsService
     Task<IReadOnlyList<CategoryPerformanceDto>> GetCategoryPerformanceAsync(ReportFilter filter, CancellationToken cancellationToken = default);
 
     Task<DeliveryReportResultDto> GetDeliveriesAsync(DeliveryReportQuery query, CancellationToken cancellationToken = default);
+
+    Task<DeliveryFulfillmentReportResultDto> GetDeliveryFulfillmentAsync(DeliveryFulfillmentReportQuery query, CancellationToken cancellationToken = default);
 }

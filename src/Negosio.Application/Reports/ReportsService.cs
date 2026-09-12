@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
 using Negosio.Application.Branches;
 using Negosio.Application.Common;
+using Negosio.Application.Delivery;
 using Negosio.Domain.Entities;
 using Negosio.Domain.Enums;
 
@@ -163,24 +164,19 @@ public sealed class ReportsService : IReportsService
         RequireAuthenticated();
         var tenantId = _currentUser.TenantId;
         var branchFilter = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken);
+        var todayLocal = DateOnly.FromDateTime(DateTime.UtcNow + ReportPeriodResolver.BusinessOffset);
 
-        var receipts = _db.DeliveryReceipts.AsNoTracking()
-            .Where(d => d.TenantId == tenantId && d.SaleId != null);
-
+        var receipts = _db.DeliveryReceipts.AsNoTracking().Where(d => d.TenantId == tenantId && d.SaleId != null);
         if (branchFilter is { } b)
         {
             receipts = receipts.Where(d => d.BranchId == b);
         }
 
-        if (query.FromUtc is { } fromUtc)
-        {
-            receipts = receipts.Where(d => d.CreatedAtUtc >= fromUtc);
-        }
-
-        if (query.ToUtc is { } toUtc)
-        {
-            receipts = receipts.Where(d => d.CreatedAtUtc <= toUtc);
-        }
+        var (effectiveFrom, effectiveTo, effectiveStatus, overdueOnly) = ResolveDeliveryPreset(query, todayLocal);
+        if (effectiveFrom is { } from) receipts = receipts.Where(d => d.ScheduledDeliveryDate >= from);
+        if (effectiveTo is { } to) receipts = receipts.Where(d => d.ScheduledDeliveryDate <= to);
+        if (effectiveStatus is { } status) receipts = receipts.Where(d => d.Status == status);
+        if (overdueOnly) receipts = receipts.Where(d => d.Status == DeliveryStatus.Pending && d.ScheduledDeliveryDate < todayLocal);
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
@@ -192,33 +188,41 @@ public sealed class ReportsService : IReportsService
                 (d.ContactNumber != null && d.ContactNumber.Contains(term)));
         }
 
-        // The delivery charge and sale total are read live from Sale — DeliveryReceipt never stores
-        // its own copy, so they're joined here rather than duplicated at write time.
         var joined =
             from dr in receipts
             join s in _db.Sales.AsNoTracking().Where(x => x.TenantId == tenantId && x.Status != SaleStatus.Voided) on dr.SaleId equals s.Id
             select new { dr, s };
 
-        var chargesQuery = joined.Select(x => x.s.DeliveryCharge);
-        var totalDeliveries = await chargesQuery.CountAsync(cancellationToken);
-        var freeDeliveries = await chargesQuery.CountAsync(c => c == 0m, cancellationToken);
-        var totalCharges = totalDeliveries == 0 ? 0m : await chargesQuery.SumAsync(cancellationToken);
-        var averageCharge = totalDeliveries == 0 ? 0m : Money.Round(totalCharges / totalDeliveries);
-        var totals = new DeliveryReportTotalsDto(totalDeliveries, freeDeliveries, totalDeliveries - freeDeliveries, totalCharges, averageCharge);
+        // Fix: aggregate charge-related totals over DISTINCT sales, never per joined DR row — a sale
+        // with N schedules must contribute its DeliveryCharge exactly once (see Global Constraints).
+        var distinctSales = joined.Select(x => new { x.s.Id, x.s.DeliveryCharge }).Distinct();
+        var distinctSalesCount = await distinctSales.CountAsync(cancellationToken);
+        var freeSalesCount = await distinctSales.CountAsync(x => x.DeliveryCharge == 0m, cancellationToken);
+        var totalCharges = distinctSalesCount == 0 ? 0m : await distinctSales.SumAsync(x => x.DeliveryCharge, cancellationToken);
+        var averageChargePerSale = distinctSalesCount == 0 ? 0m : Money.Round(totalCharges / distinctSalesCount);
+        var totalSchedules = await joined.CountAsync(cancellationToken);
 
+        var totals = new DeliveryReportTotalsDto(
+            totalSchedules, distinctSalesCount, freeSalesCount, distinctSalesCount - freeSalesCount, totalCharges, averageChargePerSale);
+
+        // Recommended ordering: Pending first, earliest scheduled date, newest-created tiebreak.
         var projected = joined
-            .OrderByDescending(x => x.dr.CreatedAtUtc)
+            .OrderBy(x => x.dr.Status == DeliveryStatus.Pending ? 0 : 1)
+            .ThenBy(x => x.dr.ScheduledDeliveryDate)
+            .ThenByDescending(x => x.dr.CreatedAtUtc)
             .Select(x => new DeliveryReportRow(
-                x.dr.Id, x.s.Id, x.s.SaleNumber, x.dr.CreatedAtUtc,
-                x.dr.RecipientName, x.dr.DeliveryAddress, x.dr.ContactNumber, x.dr.DeliveryNotes,
+                x.dr.Id, x.s.Id, x.s.SaleNumber, x.dr.SequenceNumber, x.dr.ScheduledDeliveryDate, x.dr.Status,
+                x.dr.Status == DeliveryStatus.Pending && x.dr.ScheduledDeliveryDate < todayLocal,
+                x.dr.CreatedAtUtc, x.dr.RecipientName, x.dr.DeliveryAddress, x.dr.ContactNumber, x.dr.DeliveryNotes,
                 x.s.DeliveryCharge, x.s.GrandTotal, x.dr.PreparedByNameSnapshot,
+                x.dr.DeliveredAtUtc, x.dr.CancelledAtUtc, x.dr.CancellationReason,
                 _db.Payments.Where(p => p.SaleId == x.s.Id).Select(p => p.Method).Distinct().ToList()));
 
         var rows = await PagedResult<DeliveryReportRow>.CreateAsync(projected, query.Page, query.PageSize, cancellationToken);
         var items = rows.Items.Select(r => new DeliveryReportRowDto(
-            r.DeliveryReceiptId, r.SaleId, r.SaleNumber, r.CreatedAtUtc,
-            r.RecipientName, r.DeliveryAddress, r.ContactNumber, r.DeliveryNotes,
-            r.DeliveryCharge, r.SaleGrandTotal, string.Join(" + ", r.Methods.Select(m => m.ToString())), r.PreparedByName))
+            r.DeliveryReceiptId, r.SaleId, r.SaleNumber, r.SequenceNumber, r.ScheduledDeliveryDate, r.Status, r.IsOverdue,
+            r.CreatedAtUtc, r.RecipientName, r.DeliveryAddress, r.ContactNumber, r.DeliveryNotes, r.DeliveryCharge, r.SaleGrandTotal,
+            string.Join(" + ", r.Methods.Select(m => m.ToString())), r.PreparedByName, r.DeliveredAtUtc, r.CancelledAtUtc, r.CancellationReason))
             .ToList();
 
         return new DeliveryReportResultDto(
@@ -226,10 +230,101 @@ public sealed class ReportsService : IReportsService
             totals);
     }
 
+    private static (DateOnly? From, DateOnly? To, DeliveryStatus? Status, bool OverdueOnly) ResolveDeliveryPreset(
+        DeliveryReportQuery query, DateOnly todayLocal) => query.Preset switch
+    {
+        DeliveryReportPreset.Today => (todayLocal, todayLocal, DeliveryStatus.Pending, false),
+        DeliveryReportPreset.Upcoming => (todayLocal.AddDays(1), null, DeliveryStatus.Pending, false),
+        DeliveryReportPreset.Overdue => (null, null, null, true),
+        DeliveryReportPreset.NeedsRescheduling => (null, null, null, true),
+        DeliveryReportPreset.Delivered => (null, null, DeliveryStatus.Delivered, false),
+        DeliveryReportPreset.Cancelled => (null, null, DeliveryStatus.Cancelled, false),
+        _ => (query.FromDate, query.ToDate, query.Status, false),
+    };
+
     private sealed record DeliveryReportRow(
-        Guid DeliveryReceiptId, Guid SaleId, string SaleNumber, DateTime CreatedAtUtc,
+        Guid DeliveryReceiptId, Guid SaleId, string SaleNumber, int SequenceNumber, DateOnly ScheduledDeliveryDate,
+        DeliveryStatus Status, bool IsOverdue, DateTime CreatedAtUtc,
         string RecipientName, string DeliveryAddress, string? ContactNumber, string? DeliveryNotes,
-        decimal DeliveryCharge, decimal SaleGrandTotal, string PreparedByName, List<PaymentMethod> Methods);
+        decimal DeliveryCharge, decimal SaleGrandTotal, string PreparedByName,
+        DateTime? DeliveredAtUtc, DateTime? CancelledAtUtc, string? CancellationReason, List<PaymentMethod> Methods);
+
+    public async Task<DeliveryFulfillmentReportResultDto> GetDeliveryFulfillmentAsync(
+        DeliveryFulfillmentReportQuery query, CancellationToken cancellationToken = default)
+    {
+        RequireAuthenticated();
+        var tenantId = _currentUser.TenantId;
+        var branchFilter = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken);
+        var todayLocal = DateOnly.FromDateTime(DateTime.UtcNow + ReportPeriodResolver.BusinessOffset);
+
+        var qualifyingSales = _db.Sales.AsNoTracking().Where(s => s.TenantId == tenantId && s.Status != SaleStatus.Voided
+            && _db.SaleItems.Any(i => i.SaleId == s.Id && i.DeliveryRequiredQuantity > 0m));
+        if (branchFilter is { } b)
+        {
+            qualifyingSales = qualifyingSales.Where(s => s.BranchId == b);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            qualifyingSales = qualifyingSales.Where(s => s.SaleNumber.Contains(term));
+        }
+
+        // Aggregated in SQL, but the FulfillmentStatus derivation itself is arithmetic-only and cannot
+        // be translated into a single EF-queryable predicate — so it's computed in memory over this
+        // already tenant/branch/search-narrowed (delivery-bearing sales only) candidate set, never the
+        // whole Sales table. Acceptable for this report's realistic scale; revisit if a tenant's
+        // delivery-bearing sale count ever grows large enough for this to matter.
+        var rows = await qualifyingSales
+            .Select(s => new
+            {
+                s.Id,
+                s.SaleNumber,
+                s.CreatedAtUtc,
+                s.DeliveryCharge,
+                TotalRequired = _db.SaleItems.Where(i => i.SaleId == s.Id).Sum(i => i.DeliveryRequiredQuantity),
+                TotalPending = _db.DeliveryReceiptItems.Where(dri => _db.DeliveryReceipts
+                        .Any(d => d.Id == dri.DeliveryReceiptId && d.SaleId == s.Id && d.Status == DeliveryStatus.Pending))
+                    .Sum(dri => (decimal?)dri.Quantity) ?? 0m,
+                TotalDelivered = _db.DeliveryReceiptItems.Where(dri => _db.DeliveryReceipts
+                        .Any(d => d.Id == dri.DeliveryReceiptId && d.SaleId == s.Id && d.Status == DeliveryStatus.Delivered))
+                    .Sum(dri => (decimal?)dri.Quantity) ?? 0m,
+                ScheduleCount = _db.DeliveryReceipts.Count(d => d.SaleId == s.Id),
+                HasOverduePending = _db.DeliveryReceipts.Any(d => d.SaleId == s.Id
+                    && d.Status == DeliveryStatus.Pending && d.ScheduledDeliveryDate < todayLocal),
+            })
+            .ToListAsync(cancellationToken);
+
+        var mapped = rows.Select(r =>
+        {
+            var available = r.TotalRequired - r.TotalPending - r.TotalDelivered;
+            var status = SaleFulfillmentCalculator.Derive(r.TotalRequired, r.TotalPending, r.TotalDelivered, available, r.HasOverduePending);
+            return new DeliveryFulfillmentReportRowDto(
+                r.Id, r.SaleNumber, r.CreatedAtUtc, status, r.DeliveryCharge,
+                r.TotalRequired, r.TotalPending, r.TotalDelivered, available, r.ScheduleCount);
+        });
+
+        if (query.Status is { } statusFilter)
+        {
+            mapped = mapped.Where(m => m.FulfillmentStatus == statusFilter);
+        }
+
+        var ordered = mapped
+            .OrderBy(m => m.FulfillmentStatus == SaleFulfillmentStatus.NeedsRescheduling ? 0 : 1)
+            .ThenByDescending(m => m.SaleCreatedAtUtc)
+            .ToList();
+
+        var totals = new DeliveryFulfillmentReportTotalsDto(ordered.Count, ordered.Sum(m => m.DeliveryCharge));
+
+        var pageSize = query.PageSize <= 0 ? PagedResult<DeliveryFulfillmentReportRowDto>.DefaultPageSize : query.PageSize;
+        var page = Math.Max(query.Page, 1);
+        var pageItems = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        var totalPages = ordered.Count == 0 ? 0 : (int)Math.Ceiling(ordered.Count / (double)pageSize);
+
+        return new DeliveryFulfillmentReportResultDto(
+            new PagedResult<DeliveryFulfillmentReportRowDto>(pageItems, page, pageSize, ordered.Count, totalPages),
+            totals);
+    }
 
     // ---- shared filtering ----
 

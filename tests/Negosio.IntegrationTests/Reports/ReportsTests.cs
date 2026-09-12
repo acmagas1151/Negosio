@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Negosio.Application.Delivery;
 using Negosio.Application.Pos;
 using Negosio.Application.Registers;
 using Negosio.Application.Reports;
@@ -276,5 +277,124 @@ public class ReportsTests : IntegrationTest
         last7!.TrendIsHourly.Should().BeFalse();
         last7.Trend.Should().HaveCount(7);
         last7.Trend.Sum(t => t.NetSales).Should().Be(100m);
+    }
+
+    // ---- Delivery report ----
+
+    [Fact]
+    public async Task Delivery_report_totals_charge_a_multi_schedule_sale_exactly_once()
+    {
+        var login = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(login);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 20m);
+
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 10m, null, 6m) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1160m) },
+            DeliveryCharge: 60m));
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+        var saleItemId = sale.Items[0].SaleItemId;
+        await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
+            new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null,
+                new[] { new CreateDeliveryReceiptItemInput(saleItemId, 4m) }));
+        await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
+            new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null,
+                new[] { new CreateDeliveryReceiptItemInput(saleItemId, 2m) }));
+
+        var report = await Client.GetFromJsonAsync<DeliveryReportResultDto>("/api/reports/deliveries", TestJson.Options);
+
+        report!.Page.Items.Should().HaveCount(2); // two schedule rows
+        report.Totals.TotalSchedules.Should().Be(2);
+        report.Totals.DistinctSalesCount.Should().Be(1);
+        report.Totals.TotalDeliveryCharges.Should().Be(60m); // NOT 120m — charged once per sale, not per schedule
+        report.Totals.AverageDeliveryChargePerSale.Should().Be(60m);
+    }
+
+    [Fact]
+    public async Task Delivery_report_filters_by_status()
+    {
+        var login = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(login);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 20m);
+
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 10m, null, 6m) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1100m) }));
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+        var drResp = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
+            new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null,
+                new[] { new CreateDeliveryReceiptItemInput(sale.Items[0].SaleItemId, 4m) }));
+        var dr = (await drResp.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+        await Client.PostAsync($"/api/delivery-receipts/{dr.Id}/deliver", null);
+
+        var deliveredOnly = await Client.GetFromJsonAsync<DeliveryReportResultDto>(
+            $"/api/reports/deliveries?Status={(int)DeliveryStatus.Delivered}", TestJson.Options);
+        deliveredOnly!.Page.Items.Should().ContainSingle(r => r.DeliveryReceiptId == dr.Id);
+
+        var pendingOnly = await Client.GetFromJsonAsync<DeliveryReportResultDto>(
+            $"/api/reports/deliveries?Status={(int)DeliveryStatus.Pending}", TestJson.Options);
+        pendingOnly!.Page.Items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Delivery_fulfillment_report_shows_one_row_per_sale_with_aggregated_quantities()
+    {
+        var login = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(login);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 20m);
+
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 10m, null, 6m) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1000m) }));
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+        await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
+            new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null,
+                new[] { new CreateDeliveryReceiptItemInput(sale.Items[0].SaleItemId, 4m) }));
+
+        var report = await Client.GetFromJsonAsync<DeliveryFulfillmentReportResultDto>(
+            "/api/reports/delivery-fulfillment", TestJson.Options);
+
+        var row = report!.Page.Items.Should().ContainSingle(r => r.SaleId == sale.SaleId).Subject;
+        row.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PartiallyScheduled);
+        row.TotalDeliveryRequiredQuantity.Should().Be(6m);
+        row.TotalPendingQuantity.Should().Be(4m);
+        row.TotalUnscheduledQuantity.Should().Be(2m);
+        row.ScheduleCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task A_sale_with_nothing_marked_for_delivery_never_appears_in_the_fulfillment_report()
+    {
+        var login = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(login);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 20m);
+
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 10m, null, 0m) }, // nothing for delivery
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1000m) }));
+
+        var report = await Client.GetFromJsonAsync<DeliveryFulfillmentReportResultDto>(
+            "/api/reports/delivery-fulfillment", TestJson.Options);
+
+        report!.Page.Items.Should().NotContain(r => r.SaleId == sale.SaleId);
     }
 }
