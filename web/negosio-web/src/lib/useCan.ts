@@ -19,6 +19,7 @@ export type Capability =
   | 'register:cash-movement'
   | 'reports:view'
   | 'receipt:settings'
+  | 'delivery:cancel'
 
 // Mirrors src/Negosio.Application/Catalog/CatalogAccess.cs — keep in sync if the backend sets change.
 // 'catalog:write'   -> CatalogWriterRoles       (CategoriesController / ProductsController write policies)
@@ -60,6 +61,8 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   'reports:view': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
   // Mirrors AuthorizationPolicies.ReceiptSettingsManage — Owner/Admin/Manager.
   'receipt:settings': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
+  // Mirrors AuthorizationPolicies.DeliveryCancel — Owner/Admin/Manager only.
+  'delivery:cancel': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
 }
 
 /**

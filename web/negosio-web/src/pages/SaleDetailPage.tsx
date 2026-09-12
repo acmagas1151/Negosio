@@ -1,30 +1,36 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { branchesApi } from '../api/branches'
 import { deliveryReceiptsApi } from '../api/deliveryReceipts'
 import { salesApi } from '../api/pos'
-import { PAYMENT_METHOD_LABELS, VOID_INELIGIBLE_MESSAGES } from '../lib/pos'
-import { formatMoney } from '../lib/format'
+import { PAYMENT_METHOD_LABELS, SALE_FULFILLMENT_STATUS_LABELS, VOID_INELIGIBLE_MESSAGES, saleFulfillmentStatusTone } from '../lib/pos'
+import { formatMoney, formatQty } from '../lib/format'
 import { hasReturnableQty } from '../lib/returns'
 import { useCan } from '../lib/useCan'
-import { CreateDeliveryReceiptModal } from '../components/sales/CreateDeliveryReceiptModal'
+import { CancelDeliveryModal } from '../components/sales/CancelDeliveryModal'
+import { CreateDeliveryReceiptModal, type DeliveryPrefill } from '../components/sales/CreateDeliveryReceiptModal'
+import { DeliveryStatusBadge } from '../components/sales/DeliveryStatusBadge'
 import { ReturnModal } from '../components/sales/ReturnModal'
 import { SaleItemsTable } from '../components/sales/SaleItemsTable'
 import { SaleReturnsList } from '../components/sales/SaleReturnsList'
 import { StatusBadge } from '../components/sales/StatusBadge'
 import { VoidSaleModal } from '../components/sales/VoidSaleModal'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
-import { Button, ErrorState, LoadingState } from '../components/ui'
+import { Badge, Button, ConfirmDialog, ErrorState, LoadingState } from '../components/ui'
 
 export default function SaleDetailPage() {
   const { id = '' } = useParams()
   const canRefund = useCan('sales:return')
   const canVoidCapability = useCan('sales:void')
+  const canCancelDelivery = useCan('delivery:cancel')
   const [returnOpen, setReturnOpen] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)
-  const [deliveryReceiptOpen, setDeliveryReceiptOpen] = useState(false)
+  const [createDeliveryOpen, setCreateDeliveryOpen] = useState(false)
+  const [reschedulePrefill, setReschedulePrefill] = useState<DeliveryPrefill | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<{ id: string; sequenceNumber: number } | null>(null)
+  const [deliverTarget, setDeliverTarget] = useState<{ id: string; sequenceNumber: number } | null>(null)
 
   const query = useQuery({
     queryKey: ['sales', id],
@@ -35,11 +41,20 @@ export default function SaleDetailPage() {
     queryKey: ['branches', 'sales-filter'],
     queryFn: () => branchesApi.list({ includeInactive: true }),
   })
-  const deliveryReceiptQuery = useQuery({
-    queryKey: ['sales', id, 'delivery-receipt'],
-    queryFn: () => deliveryReceiptsApi.getForSale(id),
+  const deliverySummaryQuery = useQuery({
+    queryKey: ['sales', id, 'delivery-summary'],
+    queryFn: () => deliveryReceiptsApi.getSaleSummary(id),
     enabled: !!id,
   })
+
+  const markDeliveredMutation = useMutation({
+    mutationFn: (deliveryReceiptId: string) => deliveryReceiptsApi.markDelivered(deliveryReceiptId),
+    onSuccess: () => {
+      deliverySummaryQuery.refetch()
+      setDeliverTarget(null)
+    },
+  })
+
   const multiBranch = (branchesQuery.data?.length ?? 0) > 1
 
   return (
@@ -64,12 +79,6 @@ export default function SaleDetailPage() {
               canRefund &&
               (d.sale.status === 'Completed' || d.sale.status === 'PartiallyRefunded') &&
               hasReturnableQty(d.items)
-            const deliveryReceipt = deliveryReceiptQuery.data
-            const canPrintDeliveryReceipt =
-              !deliveryReceipt &&
-              (d.sale.status === 'Completed' ||
-                d.sale.status === 'PartiallyRefunded' ||
-                d.sale.status === 'Refunded')
             return (
               <>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -100,29 +109,6 @@ export default function SaleDetailPage() {
                           Print receipt
                         </Button>
                       </Link>
-                      {deliveryReceipt ? (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() =>
-                            window.open(
-                              '/delivery-receipts/' + deliveryReceipt.id + '?print=1',
-                              '_blank',
-                              'noopener',
-                            )
-                          }
-                        >
-                          View delivery receipt
-                        </Button>
-                      ) : canPrintDeliveryReceipt ? (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => setDeliveryReceiptOpen(true)}
-                        >
-                          Print delivery receipt
-                        </Button>
-                      ) : null}
                     </div>
                     {canVoidCapability && d.sale.status === 'Completed' && !d.canVoid && d.voidIneligibilityCode && (
                       <p className="text-[13px] text-text-muted">
@@ -229,11 +215,154 @@ export default function SaleDetailPage() {
                   </div>
                 )}
 
+                {deliverySummaryQuery.data && deliverySummaryQuery.data.fulfillmentStatus !== 'NotApplicable' && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-lg font-bold text-text-primary">Delivery fulfillment</h2>
+                      <Badge tone={saleFulfillmentStatusTone(deliverySummaryQuery.data.fulfillmentStatus)}>
+                        {SALE_FULFILLMENT_STATUS_LABELS[deliverySummaryQuery.data.fulfillmentStatus]}
+                      </Badge>
+                    </div>
+
+                    <div className="overflow-x-auto rounded-xl border border-border bg-surface">
+                      <table className="w-full text-left text-[13px]">
+                        <thead className="border-b border-border text-text-muted">
+                          <tr>
+                            <th className="px-3 py-2 font-medium">Item</th>
+                            <th className="px-3 py-2 text-right font-medium">Sold</th>
+                            <th className="px-3 py-2 text-right font-medium">Take-now</th>
+                            <th className="px-3 py-2 text-right font-medium">Required</th>
+                            <th className="px-3 py-2 text-right font-medium">Pending</th>
+                            <th className="px-3 py-2 text-right font-medium">Delivered</th>
+                            <th className="px-3 py-2 text-right font-medium">Available</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {deliverySummaryQuery.data.items.map((i) => (
+                            <tr key={i.saleItemId} className="border-b border-border-light last:border-0">
+                              <td className="px-3 py-2 text-text-primary">
+                                {i.productName}
+                                {i.variantName && <span className="text-text-muted"> · {i.variantName}</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right">{formatQty(i.quantity)}</td>
+                              <td className="px-3 py-2 text-right">{formatQty(i.takeNowQuantity)}</td>
+                              <td className="px-3 py-2 text-right">{formatQty(i.deliveryRequiredQuantity)}</td>
+                              <td className="px-3 py-2 text-right">{formatQty(i.pendingQuantity)}</td>
+                              <td className="px-3 py-2 text-right">{formatQty(i.deliveredQuantity)}</td>
+                              <td className="px-3 py-2 text-right">{formatQty(i.availableToScheduleQuantity)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {deliverySummaryQuery.data.canCreateDelivery ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setReschedulePrefill(null)
+                          setCreateDeliveryOpen(true)
+                        }}
+                      >
+                        Create delivery
+                      </Button>
+                    ) : (
+                      <p className="text-[13px] text-text-muted">
+                        All delivery items have already been scheduled or delivered.
+                      </p>
+                    )}
+
+                    <div className="space-y-2">
+                      {deliverySummaryQuery.data.deliveries.map((dr) => (
+                        <div key={dr.id} className="rounded-xl border border-border bg-surface p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-text-primary">Delivery {dr.sequenceNumber}</span>
+                              <DeliveryStatusBadge status={dr.status} />
+                              <span className="text-[12px] text-text-muted">
+                                {new Date(dr.scheduledDeliveryDate).toLocaleDateString()}
+                              </span>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => window.open(`/delivery-receipts/${dr.id}?print=1`, '_blank', 'noopener')}
+                              >
+                                View
+                              </Button>
+                              {dr.status === 'Pending' && (
+                                <Button size="sm" onClick={() => setDeliverTarget({ id: dr.id, sequenceNumber: dr.sequenceNumber })}>
+                                  Mark delivered
+                                </Button>
+                              )}
+                              {dr.status === 'Pending' && canCancelDelivery && (
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => setCancelTarget({ id: dr.id, sequenceNumber: dr.sequenceNumber })}
+                                >
+                                  Cancel
+                                </Button>
+                              )}
+                              {dr.status === 'Cancelled' && deliverySummaryQuery.data!.canCreateDelivery && (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => {
+                                    setReschedulePrefill({
+                                      recipientName: dr.recipientName,
+                                      deliveryAddress: dr.deliveryAddress,
+                                      contactNumber: dr.contactNumber ?? '',
+                                      deliveryNotes: dr.deliveryNotes ?? '',
+                                      itemQuantities: Object.fromEntries(dr.items.map((i) => [i.saleItemId, i.quantity])),
+                                    })
+                                    setCreateDeliveryOpen(true)
+                                  }}
+                                >
+                                  Schedule again
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          <p className="mt-1 text-[13px] text-text-secondary">
+                            {dr.recipientName} · {dr.deliveryAddress}
+                          </p>
+                          {dr.status === 'Cancelled' && dr.cancellationReason && (
+                            <p className="mt-1 text-[12px] text-text-muted">Cancelled: {dr.cancellationReason}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <ReturnModal open={returnOpen} onClose={() => setReturnOpen(false)} sale={d} />
                 <CreateDeliveryReceiptModal
-                  open={deliveryReceiptOpen}
-                  onClose={() => setDeliveryReceiptOpen(false)}
-                  sale={d}
+                  open={createDeliveryOpen}
+                  onClose={() => setCreateDeliveryOpen(false)}
+                  saleId={d.sale.id}
+                  availableItems={(deliverySummaryQuery.data?.items ?? []).filter((i) => i.availableToScheduleQuantity > 0)}
+                  prefill={reschedulePrefill ?? undefined}
+                />
+                {cancelTarget && (
+                  <CancelDeliveryModal
+                    open
+                    onClose={() => setCancelTarget(null)}
+                    saleId={d.sale.id}
+                    deliveryReceiptId={cancelTarget.id}
+                    sequenceNumber={cancelTarget.sequenceNumber}
+                  />
+                )}
+                <ConfirmDialog
+                  open={deliverTarget != null}
+                  onClose={() => setDeliverTarget(null)}
+                  onConfirm={() => deliverTarget && markDeliveredMutation.mutate(deliverTarget.id)}
+                  title={`Mark Delivery ${deliverTarget?.sequenceNumber ?? ''} as delivered?`}
+                  message="This completes every item on this delivery. It cannot be undone from here — a mistaken delivery would need to be corrected as a fresh workflow, not reopened."
+                  confirmLabel="Mark delivered"
+                  loading={markDeliveredMutation.isPending}
                 />
                 <VoidSaleModal
                   open={voidOpen}

@@ -1,4 +1,4 @@
-import type { PaymentMethod, SaleStatus } from '../api/types'
+import type { DeliveryStatus, PaymentMethod, SaleFulfillmentStatus, SaleStatus } from '../api/types'
 
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   Cash: 'Cash',
@@ -37,6 +37,49 @@ export function saleStatusTone(s: SaleStatus): 'neutral' | 'success' | 'warning'
     case 'Refunded':
       return 'danger'
     case 'Voided':
+      return 'neutral'
+  }
+}
+
+export const DELIVERY_STATUS_LABELS: Record<DeliveryStatus, string> = {
+  Pending: 'Pending',
+  Delivered: 'Delivered',
+  Cancelled: 'Cancelled',
+}
+
+export function deliveryStatusTone(s: DeliveryStatus): 'neutral' | 'success' | 'warning' | 'danger' {
+  switch (s) {
+    case 'Pending':
+      return 'warning'
+    case 'Delivered':
+      return 'success'
+    case 'Cancelled':
+      return 'neutral'
+  }
+}
+
+export const SALE_FULFILLMENT_STATUS_LABELS: Record<SaleFulfillmentStatus, string> = {
+  NotApplicable: 'Not applicable',
+  Unscheduled: 'Unscheduled',
+  PartiallyScheduled: 'Partially scheduled',
+  FullyScheduled: 'Fully scheduled',
+  PartiallyDelivered: 'Partially delivered',
+  FullyDelivered: 'Fully delivered',
+  NeedsRescheduling: 'Needs rescheduling',
+}
+
+export function saleFulfillmentStatusTone(s: SaleFulfillmentStatus): 'neutral' | 'success' | 'warning' | 'danger' {
+  switch (s) {
+    case 'FullyDelivered':
+      return 'success'
+    case 'PartiallyDelivered':
+    case 'FullyScheduled':
+    case 'PartiallyScheduled':
+      return 'warning'
+    case 'NeedsRescheduling':
+      return 'danger'
+    case 'Unscheduled':
+    case 'NotApplicable':
       return 'neutral'
   }
 }
