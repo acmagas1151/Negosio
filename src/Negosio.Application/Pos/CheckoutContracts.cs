@@ -5,7 +5,15 @@ namespace Negosio.Application.Pos;
 
 public sealed record CheckoutDiscountInput(DiscountType Type = DiscountType.None, decimal Value = 0m);
 
-public sealed record CheckoutItemInput(Guid ProductVariantId, decimal Quantity, CheckoutDiscountInput? Discount);
+public sealed record CheckoutItemInput(
+    Guid ProductVariantId,
+    decimal Quantity,
+    CheckoutDiscountInput? Discount,
+    /// <summary>How much of this line is not taken at the counter today. Defaults to 0 — the whole
+    /// line is Take-now unless the cashier explicitly marks part of it for delivery. Never negative,
+    /// never more than <see cref="Quantity"/> (validated below and, as a backstop, by
+    /// <c>Sale.AddItem</c>).</summary>
+    decimal DeliveryRequiredQuantity = 0m);
 
 public sealed record CheckoutPaymentInput(
     PaymentMethod Method,
@@ -27,6 +35,14 @@ public sealed record CheckoutRequest(
     /// grant submits a sale that carries any line discount. Reuses Void's approval shape.</summary>
     VoidSaleApprovalInput? Approval = null);
 
+public sealed record SaleResultItemDto(
+    Guid SaleItemId,
+    Guid ProductVariantId,
+    string ProductName,
+    string? VariantName,
+    decimal Quantity,
+    decimal DeliveryRequiredQuantity);
+
 public sealed record SaleResultDto(
     Guid SaleId,
     string SaleNumber,
@@ -38,7 +54,11 @@ public sealed record SaleResultDto(
     decimal GrandTotal,
     decimal AmountPaid,
     decimal ChangeDue,
-    bool WasExistingRequest);
+    bool WasExistingRequest,
+    /// <summary>The SaleItems this checkout created (or, on an idempotent replay, the SaleItems the
+    /// original request created) — the frontend needs these ids to submit the follow-up delivery
+    /// schedule batch for any line that carries a DeliveryRequiredQuantity > 0.</summary>
+    IReadOnlyList<SaleResultItemDto> Items);
 
 public interface ICheckoutService
 {

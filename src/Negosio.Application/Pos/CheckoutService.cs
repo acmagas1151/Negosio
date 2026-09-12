@@ -48,7 +48,7 @@ public sealed class CheckoutService : ICheckoutService
     }
 
     private sealed record ResolvedLine(
-        Guid ProductVariantId, decimal Quantity, DiscountType DiscountType, decimal DiscountValue,
+        Guid ProductVariantId, decimal Quantity, decimal DeliveryRequiredQuantity, DiscountType DiscountType, decimal DiscountValue,
         string ProductNameSnapshot, string? VariantNameSnapshot, string? SkuSnapshot, string? BarcodeSnapshot,
         decimal UnitPrice, decimal CostPrice, bool TrackInventory, SaleLineCalculator.Line Amounts);
 
@@ -59,6 +59,7 @@ public sealed class CheckoutService : ICheckoutService
 
         // 1. Idempotency pre-check: a repeat of the same request returns the same sale.
         var existing = await _db.Sales.AsNoTracking()
+            .Include(s => s.Items)
             .FirstOrDefaultAsync(s => s.TenantId == tenantId && s.ClientRequestId == request.ClientRequestId, cancellationToken);
         if (existing is not null)
         {
@@ -108,7 +109,7 @@ public sealed class CheckoutService : ICheckoutService
             {
                 var discount = g.Select(x => x.Discount).FirstOrDefault(d => d is { Type: not DiscountType.None })
                                ?? new CheckoutDiscountInput();
-                return new CheckoutItemInput(g.Key, g.Sum(x => x.Quantity), discount);
+                return new CheckoutItemInput(g.Key, g.Sum(x => x.Quantity), discount, g.Sum(x => x.DeliveryRequiredQuantity));
             })
             .ToList();
 
@@ -145,7 +146,7 @@ public sealed class CheckoutService : ICheckoutService
                 tenant.TaxRatePercent, tenant.PricesIncludeTax);
 
             lines.Add(new ResolvedLine(
-                variant.Id, item.Quantity, discount.Type, discount.Value,
+                variant.Id, item.Quantity, item.DeliveryRequiredQuantity, discount.Type, discount.Value,
                 product.Name, variant.IsDefault ? null : variant.Name, variant.Sku, variant.Barcode,
                 variant.SellingPrice, variant.CostPrice, product.TrackInventory, amounts));
         }
@@ -168,12 +169,15 @@ public sealed class CheckoutService : ICheckoutService
         var saleNumber = await _documentNumbers.NextAsync(tenantId, branch.Id, DocumentNumberType.Sale, branch.Code, cancellationToken);
 
         var sale = Sale.Begin(tenantId, branch.Id, session.Id, saleNumber, request.ClientRequestId, _currentUser.UserId);
+        var createdItems = new List<SaleItem>(lines.Count);
         foreach (var line in lines)
         {
-            sale.AddItem(
+            var saleItem = sale.AddItem(
                 line.ProductVariantId, line.ProductNameSnapshot, line.VariantNameSnapshot, line.SkuSnapshot, line.BarcodeSnapshot,
                 line.UnitPrice, line.Quantity, line.DiscountType, line.DiscountValue,
-                line.Amounts.Gross, line.Amounts.Discount, line.Amounts.Tax, line.Amounts.Net, line.CostPrice);
+                line.Amounts.Gross, line.Amounts.Discount, line.Amounts.Tax, line.Amounts.Net, line.CostPrice,
+                line.DeliveryRequiredQuantity);
+            createdItems.Add(saleItem);
         }
 
         foreach (var p in payments)
@@ -196,6 +200,7 @@ public sealed class CheckoutService : ICheckoutService
             if (name?.Contains("ClientRequestId", StringComparison.OrdinalIgnoreCase) == true)
             {
                 var winner = await _db.Sales.AsNoTracking()
+                    .Include(s => s.Items)
                     .FirstAsync(s => s.TenantId == tenantId && s.ClientRequestId == request.ClientRequestId, cancellationToken);
                 return ToResult(winner, wasExisting: true);
             }
@@ -299,7 +304,12 @@ public sealed class CheckoutService : ICheckoutService
 
     private static SaleResultDto ToResult(Sale sale, bool wasExisting) => new(
         sale.Id, sale.SaleNumber, sale.Status, sale.Subtotal, sale.DiscountTotal, sale.TaxTotal,
-        sale.DeliveryCharge, sale.GrandTotal, sale.AmountPaid, sale.ChangeDue, wasExisting);
+        sale.DeliveryCharge, sale.GrandTotal, sale.AmountPaid, sale.ChangeDue, wasExisting,
+        sale.Items
+            .OrderBy(i => i.CreatedAtUtc)
+            .Select(i => new SaleResultItemDto(
+                i.Id, i.ProductVariantId, i.ProductNameSnapshot, i.VariantNameSnapshot, i.Quantity, i.DeliveryRequiredQuantity))
+            .ToList());
 
     private Guid RequireTenant()
     {

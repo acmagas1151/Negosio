@@ -14,6 +14,10 @@ public sealed class CheckoutRequestValidator : AbstractValidator<CheckoutRequest
         {
             item.RuleFor(i => i.ProductVariantId).NotEmpty().WithMessage("Each item needs a product variant.");
             item.RuleFor(i => i.Quantity).GreaterThan(0).WithMessage("Item quantity must be greater than zero.");
+            item.RuleFor(i => i.DeliveryRequiredQuantity)
+                .GreaterThanOrEqualTo(0m).WithMessage("Delivery-required quantity cannot be negative.")
+                .Must((i, deliveryQty) => deliveryQty <= i.Quantity)
+                .WithMessage("Delivery-required quantity cannot exceed the item quantity.");
         });
         RuleFor(x => x.Payments).NotEmpty().WithMessage("At least one payment is required.");
         RuleFor(x => x.DeliveryCharge)
