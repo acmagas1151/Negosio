@@ -66,6 +66,11 @@ public static class AuthorizationPolicies
     /// Manager only their own branch (service-enforced via IBranchAccessResolver).</summary>
     public const string ReceiptSettingsManage = "ReceiptSettingsManage";
 
+    /// <summary>Cancel a Pending delivery — Owner/Admin/Manager only (spec: "Owner, Admin, Manager, or
+    /// equivalent"). View/Create/MarkDelivered stay on the broader SalesView (PosRoles) policy — only
+    /// cancellation gets its own gate.</summary>
+    public const string DeliveryCancel = "DeliveryCancel";
+
     private static readonly UserRole[] OwnerAdmin = [UserRole.Owner, UserRole.Admin];
     private static readonly UserRole[] ManagementRoles = [UserRole.Owner, UserRole.Admin, UserRole.Manager];
     private static readonly UserRole[] PosRoles = [UserRole.Owner, UserRole.Admin, UserRole.Manager, UserRole.Cashier];
@@ -126,6 +131,10 @@ public static class AuthorizationPolicies
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
 
         options.AddPolicy(ReceiptSettingsManage, policy =>
+            policy.RequireAuthenticatedUser()
+                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
+
+        options.AddPolicy(DeliveryCancel, policy =>
             policy.RequireAuthenticatedUser()
                   .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
 
