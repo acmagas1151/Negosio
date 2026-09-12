@@ -98,16 +98,21 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         var tenantId = RequireTenant();
         await _batchValidator.ValidateAndThrowAppAsync(request, ct);
 
+        // Branch/tenant/sale-status guard runs first, before any idempotency shortcut — a
+        // branch-scoped caller must never be able to read another branch's DeliveryReceiptDto rows
+        // just by replaying a BatchRequestId it happens to know, even for a genuine sale id.
+        var sale = await LoadDeliverableSaleAsync(tenantId, saleId, ct);
+
         // Idempotency fast path — a retry arriving after the original batch already fully committed
         // returns the same rows without paying for a lock acquisition. This check alone is NOT
         // race-proof (it runs outside the transaction); the authoritative one is re-run below, after
-        // the lock is held.
-        if (await TryGetExistingBatchAsync(tenantId, saleId, request.BatchRequestId, ct) is { } alreadyApplied)
+        // the lock is held. Deliberately placed after LoadDeliverableSaleAsync (not before) so the
+        // branch guard above always runs first — see TryGetExistingBatchAsync's doc comment.
+        if (await TryGetExistingBatchAsync(tenantId, sale.Id, request.BatchRequestId, ct) is { } alreadyApplied)
         {
             return alreadyApplied;
         }
 
-        var sale = await LoadDeliverableSaleAsync(tenantId, saleId, ct);
         foreach (var schedule in request.Schedules)
         {
             EnsureNotPastBusinessToday(schedule.ScheduledDeliveryDate);
@@ -350,10 +355,11 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
     /// with the sale-items lock held — the latter is the call that actually makes batch creation
     /// idempotent under concurrency.
     /// <para>Scoped to <paramref name="saleId"/>, not just the tenant: a batch is always route-scoped to
-    /// one sale, so a stale or reused BatchRequestId must never return a different sale's rows. This is
-    /// also a security boundary — the fast path runs before <c>LoadDeliverableSaleAsync</c>, so without
-    /// this clause a branch-scoped caller replaying another branch's BatchRequestId would receive that
-    /// branch's delivery details without ever passing <see cref="GuardBranchAsync"/>.</para></summary>
+    /// one sale, so a stale or reused BatchRequestId must never return a different sale's rows. Both call
+    /// sites in <see cref="CreateBatchAsync"/> run AFTER <c>LoadDeliverableSaleAsync</c>, which already
+    /// enforces tenant+branch+sale-status via <see cref="GuardBranchAsync"/> — so even a caller who knows
+    /// a specific out-of-branch <paramref name="saleId"/> and its exact BatchRequestId cannot reach this
+    /// fast path without first clearing the branch guard.</para></summary>
     private async Task<DeliveryReceiptBatchResultDto?> TryGetExistingBatchAsync(
         Guid tenantId, Guid saleId, Guid batchRequestId, CancellationToken ct)
     {

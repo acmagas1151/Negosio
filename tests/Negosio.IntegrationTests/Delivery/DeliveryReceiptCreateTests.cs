@@ -180,6 +180,49 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         });
     }
 
+    // Final whole-branch review, Finding 3: the batch idempotency fast path used to run BEFORE
+    // LoadDeliverableSaleAsync (and therefore before GuardBranchAsync). A branch-scoped caller who
+    // knew both a foreign SaleId and the exact BatchRequestId originally used against it could hit
+    // the fast path and receive that batch's full DeliveryReceiptDto rows without ever being
+    // branch-checked. The fix reorders CreateBatchAsync so the branch guard always runs first.
+    [Fact]
+    public async Task Batch_fast_path_never_bypasses_the_branch_guard_for_a_known_BatchRequestId()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
+        var bgc = await CreateBranchAsync("BGC", "BGC");
+        var register = await CreateRegisterAsync(mainId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(mainId, category.Id, sellingPrice: 100m, openingStock: 20m);
+
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            mainId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 10m, null, 6m) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) }));
+
+        var batchId = Guid.NewGuid();
+        var request = new CreateDeliveryReceiptBatchRequest(batchId, new[]
+        {
+            new CreateDeliveryReceiptRequest(Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
+                new[] { new CreateDeliveryReceiptItemInput(sale.Items[0].SaleItemId, 4m) }),
+        });
+
+        // Owner (unrestricted) creates the real batch at MAIN first.
+        var original = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts/batch", request);
+        original.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // A cashier scoped to a DIFFERENT branch somehow learns this exact SaleId + BatchRequestId and
+        // replays the identical request. Before the fix, this hit the pre-guard fast path and returned
+        // MAIN's DeliveryReceiptDto rows (recipient, address, delivery charge, etc.) as a 201 without
+        // ever passing GuardBranchAsync. It must now be rejected as if the sale doesn't exist.
+        var bgcCashierToken = await AddTenantUserTokenAsync("bgc.cashier@example.com", UserRole.Cashier, bgc.Id);
+        Authorize(bgcCashierToken);
+
+        var replay = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts/batch", request);
+        replay.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
     [Fact]
     public async Task Retrying_the_same_BatchRequestId_returns_the_original_rows_without_duplicating()
     {

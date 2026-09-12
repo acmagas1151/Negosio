@@ -28,6 +28,7 @@ import {
   scheduledQuantityFor,
   VOID_INELIGIBLE_MESSAGES,
   type DeliverySchedule,
+  type DeliveryScheduleItemAllocation,
 } from '../../lib/pos'
 import { hasReturnableQty } from '../../lib/returns'
 import { useCan } from '../../lib/useCan'
@@ -309,27 +310,113 @@ export function PosTerminal({
     [],
   )
 
+  // deliveryRequiredByVariant/schedules deliberately survive a failed-payment retry (see the comment
+  // on their declarations above) — nothing else resets them when the CART changes. But a line removed
+  // (or its quantity reduced) after being marked for delivery leaves them stale: a removed variant's
+  // schedule item would still be submitted to the batch-create mutation post-checkout even though
+  // checkout itself never sent that line (CheckoutRequest.items comes from cart.lines), and a reduced
+  // quantity could leave deliveryRequiredByVariant[v] > the line's own quantity, which the backend
+  // correctly 400s but in a way the cashier can't easily connect to the cart edit they just made.
+  // This only reacts to cart.lines itself — reading deliveryRequiredByVariant/schedules directly
+  // (rather than via a functional updater) is safe because this render's closure already has their
+  // latest values; depending on them too would re-run this effect on every delivery-form edit.
+  useEffect(() => {
+    const cartQty = new Map(cart.lines.map((l) => [l.variantId, l.quantity]))
+
+    // Drop any variant no longer on the cart; clamp a surviving one down to the line's current qty.
+    const reconciledRequired: Record<string, number> = {}
+    let requiredChanged = false
+    for (const [variantId, required] of Object.entries(deliveryRequiredByVariant)) {
+      const lineQty = cartQty.get(variantId)
+      if (lineQty == null) {
+        requiredChanged = true
+        continue
+      }
+      const clamped = Math.min(required, lineQty)
+      if (clamped !== required) requiredChanged = true
+      if (clamped > 0) reconciledRequired[variantId] = clamped
+      else requiredChanged = true
+    }
+
+    // Reconcile every schedule's items against that same reconciled map, spending a shared per-variant
+    // budget across schedules in encounter order (mirrors onDeliveryRequiredChange's allocation model).
+    const remaining = { ...reconciledRequired }
+    let schedulesChanged = false
+    const reconciledSchedules = schedules.map((s) => {
+      const items: DeliveryScheduleItemAllocation[] = []
+      for (const item of s.items) {
+        const budget = remaining[item.variantId] ?? 0
+        if (budget <= 0) {
+          schedulesChanged = true
+          continue
+        }
+        if (item.quantity <= budget) {
+          remaining[item.variantId] = budget - item.quantity
+          items.push(item)
+        } else {
+          schedulesChanged = true
+          remaining[item.variantId] = 0
+          items.push({ ...item, quantity: budget })
+        }
+      }
+      return { ...s, items }
+    })
+
+    if (requiredChanged) {
+      // oxlint-disable-next-line set-state-in-effect
+      setDeliveryRequiredByVariant(reconciledRequired)
+    }
+    if (schedulesChanged) {
+      // oxlint-disable-next-line set-state-in-effect
+      setSchedules(reconciledSchedules)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart.lines])
+
   // Schedules the sale's delivery-required quantities right after checkout succeeds. A failure here
   // never unwinds the sale — it stays Completed — it only tells the cashier to finish scheduling from
   // the Sale page. Idempotent server-side via batchIdRef's BatchRequestId: retrying (e.g. the cashier
   // clicking retry after seeing the toast) resubmits the SAME batch id and returns the original rows.
   const createDeliveryBatchMutation = useMutation({
     mutationFn: ({ saleId, resultItems }: { saleId: string; resultItems: SaleResultDto['items'] }) => {
-      const activeSchedules = schedules.filter((s) => s.items.some((i) => i.quantity > 0))
+      // Defense in depth only — the cart-reconciliation effect above should already guarantee every
+      // schedule item's variantId is still on the sale that was just checked out. If a lookup ever
+      // misses anyway, drop just that one item (never throw): the sale is already completed and paid
+      // for by this point, so a non-null assertion here would take down an otherwise-valid batch over
+      // one stale entry. A miss means the reconciliation has a gap, so it's surfaced via a toast.
+      let droppedStaleItem = false
+      const resolvedSchedules = schedules
+        .map((s) => ({
+          ...s,
+          items: s.items
+            .filter((i) => i.quantity > 0)
+            .flatMap((i) => {
+              const match = resultItems.find((ri) => ri.productVariantId === i.variantId)
+              if (!match) {
+                droppedStaleItem = true
+                return []
+              }
+              return [{ saleItemId: match.saleItemId, quantity: i.quantity }]
+            }),
+        }))
+        .filter((s) => s.items.length > 0)
+
+      if (droppedStaleItem) {
+        toast(
+          'error',
+          'One or more delivery items no longer matched the completed sale and were skipped. Please verify the delivery schedule.',
+        )
+      }
+
       return deliveryReceiptsApi.createBatch(saleId, {
         batchRequestId: ensureBatchId(),
-        schedules: activeSchedules.map((s) => ({
+        schedules: resolvedSchedules.map((s) => ({
           scheduledDeliveryDate: s.scheduledDeliveryDate,
           recipientName: s.recipientName.trim(),
           deliveryAddress: s.deliveryAddress.trim(),
           contactNumber: s.contactNumber.trim() || null,
           deliveryNotes: s.deliveryNotes.trim() || null,
-          items: s.items
-            .filter((i) => i.quantity > 0)
-            .map((i) => ({
-              saleItemId: resultItems.find((ri) => ri.productVariantId === i.variantId)!.saleItemId,
-              quantity: i.quantity,
-            })),
+          items: s.items,
         })),
       })
     },

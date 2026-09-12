@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { branchesApi } from '../api/branches'
+import { ApiError } from '../api/client'
 import { deliveryReceiptsApi } from '../api/deliveryReceipts'
 import { salesApi } from '../api/pos'
 import { PAYMENT_METHOD_LABELS, SALE_FULFILLMENT_STATUS_LABELS, VOID_INELIGIBLE_MESSAGES, saleFulfillmentStatusTone } from '../lib/pos'
@@ -18,10 +19,11 @@ import { SaleReturnsList } from '../components/sales/SaleReturnsList'
 import { StatusBadge } from '../components/sales/StatusBadge'
 import { VoidSaleModal } from '../components/sales/VoidSaleModal'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
-import { Badge, Button, ConfirmDialog, ErrorState, LoadingState } from '../components/ui'
+import { Badge, Button, ConfirmDialog, ErrorState, LoadingState, useToast } from '../components/ui'
 
 export default function SaleDetailPage() {
   const { id = '' } = useParams()
+  const { toast } = useToast()
   const canRefund = useCan('sales:return')
   const canVoidCapability = useCan('sales:void')
   const canCancelDelivery = useCan('delivery:cancel')
@@ -50,6 +52,21 @@ export default function SaleDetailPage() {
   const markDeliveredMutation = useMutation({
     mutationFn: (deliveryReceiptId: string) => deliveryReceiptsApi.markDelivered(deliveryReceiptId),
     onSuccess: () => {
+      deliverySummaryQuery.refetch()
+      setDeliverTarget(null)
+    },
+    onError: (err) => {
+      // Mirrors CancelDeliveryModal's handling of the same conflict — this delivery has a
+      // RowVersion, so a concurrent status change (another tab/user) is a real, expected outcome,
+      // not an unmapped error. This mutation drives a bare ConfirmDialog (no inline error slot of
+      // its own), so it reports through the page's toast mechanism instead. Either way, close the
+      // dialog and refetch so the UI reflects the current (possibly-changed-by-someone-else) state
+      // rather than leaving the confirm dialog open with no explanation.
+      if (err instanceof ApiError && err.code === 'DELIVERY_RECEIPT_CONCURRENCY_CONFLICT') {
+        toast('error', 'This delivery was changed by someone else. Please refresh and try again.')
+      } else {
+        toast('error', err instanceof ApiError ? err.message : 'Could not mark this delivery as delivered.')
+      }
       deliverySummaryQuery.refetch()
       setDeliverTarget(null)
     },
