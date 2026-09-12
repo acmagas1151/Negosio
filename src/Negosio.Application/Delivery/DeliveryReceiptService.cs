@@ -218,11 +218,78 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         return await MapToDtoAsync(dr, ct);
     }
 
-    public Task<DeliveryReceiptDto> MarkDeliveredAsync(Guid id, CancellationToken ct = default) =>
-        throw new NotImplementedException("Implemented in Task 10.");
+    public async Task<DeliveryReceiptDto> MarkDeliveredAsync(Guid id, CancellationToken ct = default)
+    {
+        var tenantId = RequireTenant();
 
-    public Task<DeliveryReceiptDto> CancelAsync(Guid id, CancelDeliveryReceiptRequest request, CancellationToken ct = default) =>
-        throw new NotImplementedException("Implemented in Task 10.");
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+
+        var dr = await _db.DeliveryReceipts.Include(d => d.Items)
+            .SingleOrDefaultAsync(d => d.TenantId == tenantId && d.Id == id, ct)
+            ?? throw new NotFoundException(ErrorCodes.DeliveryReceiptNotFound, "Delivery receipt not found.");
+        await GuardBranchAsync(dr.BranchId, ErrorCodes.DeliveryReceiptNotFound, "Delivery receipt not found.", ct);
+
+        if (dr.Status != DeliveryStatus.Pending)
+        {
+            throw new BusinessRuleException(ErrorCodes.DeliveryReceiptNotPending, "Only a pending delivery can be marked delivered.");
+        }
+
+        dr.MarkDelivered(_currentUser.UserId, _timeProvider.GetUtcNow().UtcDateTime);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Another status change (a race from a second tab/user) committed between our load and
+            // our write — roll back, then report a conflict rather than silently overwriting it.
+            await transaction.RollbackAsync(ct);
+            throw new ConflictException(ErrorCodes.DeliveryReceiptConcurrencyConflict,
+                "This delivery was changed by someone else. Please refresh and try again.");
+        }
+
+        await transaction.CommitAsync(ct);
+        return await MapToDtoAsync(dr, ct);
+    }
+
+    public async Task<DeliveryReceiptDto> CancelAsync(Guid id, CancelDeliveryReceiptRequest request, CancellationToken ct = default)
+    {
+        var tenantId = RequireTenant();
+        await _cancelValidator.ValidateAndThrowAppAsync(request, ct);
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+
+        var dr = await _db.DeliveryReceipts.Include(d => d.Items)
+            .SingleOrDefaultAsync(d => d.TenantId == tenantId && d.Id == id, ct)
+            ?? throw new NotFoundException(ErrorCodes.DeliveryReceiptNotFound, "Delivery receipt not found.");
+        await GuardBranchAsync(dr.BranchId, ErrorCodes.DeliveryReceiptNotFound, "Delivery receipt not found.", ct);
+
+        if (dr.Status != DeliveryStatus.Pending)
+        {
+            throw new BusinessRuleException(ErrorCodes.DeliveryReceiptNotPending, "Only a pending delivery can be cancelled.");
+        }
+
+        // Cancelling never touches the Sale or its DeliveryCharge, and this DR's own item rows are left
+        // exactly as they are — they stay forever as audit history. Quantities are "released" only in
+        // the sense that ComputeAvailabilityAsync excludes Cancelled rows from its Pending/Delivered
+        // sums, so a future Create call sees them as available again automatically.
+        dr.Cancel(_currentUser.UserId, request.Reason, _timeProvider.GetUtcNow().UtcDateTime);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await transaction.RollbackAsync(ct);
+            throw new ConflictException(ErrorCodes.DeliveryReceiptConcurrencyConflict,
+                "This delivery was changed by someone else. Please refresh and try again.");
+        }
+
+        await transaction.CommitAsync(ct);
+        return await MapToDtoAsync(dr, ct);
+    }
 
     public async Task<SaleDeliverySummaryDto> GetSaleFulfillmentAsync(Guid saleId, CancellationToken ct = default)
     {
