@@ -20,8 +20,15 @@ import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { usePosShortcuts } from '../../hooks/usePosShortcuts'
 import { useTaxSettings } from '../../hooks/useTaxSettings'
 import { calcTotals, roundMoney } from '../../lib/saleMath'
-import type { DeliveryFields, LastSaleRef } from '../../lib/pos'
-import { EMPTY_DELIVERY_CHARGE, EMPTY_DELIVERY_FIELDS, parseDeliveryCharge, VOID_INELIGIBLE_MESSAGES } from '../../lib/pos'
+import type { LastSaleRef } from '../../lib/pos'
+import {
+  EMPTY_DELIVERY_CHARGE,
+  emptyDeliverySchedule,
+  parseDeliveryCharge,
+  scheduledQuantityFor,
+  VOID_INELIGIBLE_MESSAGES,
+  type DeliverySchedule,
+} from '../../lib/pos'
 import { hasReturnableQty } from '../../lib/returns'
 import { useCan } from '../../lib/useCan'
 import { ReturnModal } from '../sales/ReturnModal'
@@ -100,14 +107,15 @@ export function PosTerminal({
   const [successPayment, setSuccessPayment] = useState<CheckoutPaymentInput | null>(null)
   // "For delivery": the inline delivery section in the payment modal. Values live here (not in
   // PaymentModal) so a failed-payment retry keeps them through the modal's reopen. The delivery
-  // receipt is created only after the sale exists (checkout mutation's onSuccess). Cleared on
+  // schedules are submitted only after the sale exists (checkout mutation's onSuccess). Cleared on
   // New Transaction and after a completed sale; also cleared when "For delivery" is unticked.
   const [forDelivery, setForDelivery] = useState(false)
-  const [deliveryFields, setDeliveryFields] = useState<DeliveryFields>(EMPTY_DELIVERY_FIELDS)
   const [deliveryCharge, setDeliveryCharge] = useState(EMPTY_DELIVERY_CHARGE)
-  // The DR id from a just-completed delivery sale — powers the success modal's "Print delivery
-  // receipt" affordance. Set when the DR POST resolves; cleared with the success modal.
-  const [successDeliveryReceiptId, setSuccessDeliveryReceiptId] = useState<string | null>(null)
+  const [deliveryRequiredByVariant, setDeliveryRequiredByVariant] = useState<Record<string, number>>({})
+  const [schedules, setSchedules] = useState<DeliverySchedule[]>([emptyDeliverySchedule()])
+  // How many delivery schedules were created for a just-completed delivery sale — powers the
+  // success modal's "View N delivery schedules" affordance. Cleared with the success modal.
+  const [successDeliveryCount, setSuccessDeliveryCount] = useState(0)
   // Only for a genuine payment-attempt failure (network/connectivity, a concurrency conflict, or a
   // truly unexpected error) — insufficient inventory, discount approval, and a lost register
   // session each already have their own targeted recovery flow and never populate this.
@@ -116,6 +124,7 @@ export function PosTerminal({
   >(null)
 
   const idRef = useRef<string | null>(null)
+  const batchIdRef = useRef<string | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   // The payment the cashier already confirmed — kept so a DISCOUNT_APPROVAL_REQUIRED retry can
   // resubmit the exact same charge with the approval attached, without re-prompting for payment.
@@ -229,6 +238,110 @@ export function PosTerminal({
     setNewTxnConfirmOpen(true)
   }, [cart.isEmpty])
 
+  const ensureBatchId = useCallback(() => {
+    if (!batchIdRef.current) batchIdRef.current = crypto.randomUUID()
+    return batchIdRef.current
+  }, [])
+
+  const resetDeliveryState = useCallback(() => {
+    setForDelivery(false)
+    setDeliveryCharge(EMPTY_DELIVERY_CHARGE)
+    setDeliveryRequiredByVariant({})
+    setSchedules([emptyDeliverySchedule()])
+    batchIdRef.current = null
+  }, [])
+
+  // Ticking "For delivery" expands the inline section; unticking clears whatever was typed so a
+  // hidden payload can never be submitted, and re-ticking starts from a clean form.
+  const onToggleForDelivery = useCallback((next: boolean) => {
+    setForDelivery(next)
+    if (!next) {
+      setDeliveryCharge(EMPTY_DELIVERY_CHARGE)
+      setDeliveryRequiredByVariant({})
+      setSchedules([emptyDeliverySchedule()])
+      batchIdRef.current = null
+    }
+  }, [])
+
+  const onDeliveryChargeChange = useCallback((value: string) => setDeliveryCharge(value), [])
+
+  // Setting an item's delivery-required quantity auto-fills the FIRST schedule with the newly
+  // available amount (minus whatever other schedules already claim of the same item) — the common
+  // case (one schedule for everything marked for delivery) needs zero extra clicks; a cashier adding
+  // more schedules can then rebalance quantities across them freely.
+  const onDeliveryRequiredChange = useCallback((variantId: string, quantity: number) => {
+    setDeliveryRequiredByVariant((prev) => ({ ...prev, [variantId]: quantity }))
+    setSchedules((prev) => {
+      if (prev.length === 0) return prev
+      const [first, ...rest] = prev
+      const claimedByOthers = scheduledQuantityFor(rest, variantId)
+      const target = Math.max(0, Math.min(quantity - claimedByOthers, quantity))
+      const exists = first.items.some((i) => i.variantId === variantId)
+      const items = exists
+        ? first.items.map((i) => (i.variantId === variantId ? { ...i, quantity: target } : i))
+        : target > 0
+          ? [...first.items, { variantId, quantity: target }]
+          : first.items
+      return [{ ...first, items }, ...rest]
+    })
+  }, [])
+
+  const onScheduleFieldChange = useCallback(
+    (key: string, patch: Partial<Omit<DeliverySchedule, 'key' | 'items'>>) =>
+      setSchedules((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s))),
+    [],
+  )
+  const onScheduleItemChange = useCallback((key: string, variantId: string, quantity: number) => {
+    setSchedules((prev) =>
+      prev.map((s) => {
+        if (s.key !== key) return s
+        const exists = s.items.some((i) => i.variantId === variantId)
+        const items = exists
+          ? s.items.map((i) => (i.variantId === variantId ? { ...i, quantity } : i))
+          : [...s.items, { variantId, quantity }]
+        return { ...s, items: items.filter((i) => i.quantity > 0) }
+      }),
+    )
+  }, [])
+  const onAddSchedule = useCallback(() => setSchedules((prev) => [...prev, emptyDeliverySchedule()]), [])
+  const onRemoveSchedule = useCallback(
+    (key: string) => setSchedules((prev) => (prev.length > 1 ? prev.filter((s) => s.key !== key) : prev)),
+    [],
+  )
+
+  // Schedules the sale's delivery-required quantities right after checkout succeeds. A failure here
+  // never unwinds the sale — it stays Completed — it only tells the cashier to finish scheduling from
+  // the Sale page. Idempotent server-side via batchIdRef's BatchRequestId: retrying (e.g. the cashier
+  // clicking retry after seeing the toast) resubmits the SAME batch id and returns the original rows.
+  const createDeliveryBatchMutation = useMutation({
+    mutationFn: ({ saleId, resultItems }: { saleId: string; resultItems: SaleResultDto['items'] }) => {
+      const activeSchedules = schedules.filter((s) => s.items.some((i) => i.quantity > 0))
+      return deliveryReceiptsApi.createBatch(saleId, {
+        batchRequestId: ensureBatchId(),
+        schedules: activeSchedules.map((s) => ({
+          scheduledDeliveryDate: s.scheduledDeliveryDate,
+          recipientName: s.recipientName.trim(),
+          deliveryAddress: s.deliveryAddress.trim(),
+          contactNumber: s.contactNumber.trim() || null,
+          deliveryNotes: s.deliveryNotes.trim() || null,
+          items: s.items
+            .filter((i) => i.quantity > 0)
+            .map((i) => ({
+              saleItemId: resultItems.find((ri) => ri.productVariantId === i.variantId)!.saleItemId,
+              quantity: i.quantity,
+            })),
+        })),
+      })
+    },
+    onSuccess: (result) => setSuccessDeliveryCount(result.created.length),
+    onError: () => {
+      toast(
+        'error',
+        'Sale completed, but the delivery schedule could not be created. Schedule it from the sale page.',
+      )
+    },
+  })
+
   const confirmNewTransaction = useCallback(() => {
     idRef.current = null
     cart.clear()
@@ -239,52 +352,9 @@ export function PosTerminal({
     setNeedsNewId(false)
     setRestoredAttempt(null)
     setNewTxnConfirmOpen(false)
-    setForDelivery(false)
-    setDeliveryFields(EMPTY_DELIVERY_FIELDS)
-    setDeliveryCharge(EMPTY_DELIVERY_CHARGE)
-    setSuccessDeliveryReceiptId(null)
-  }, [cart])
-
-  // Ticking "For delivery" expands the inline section; unticking clears whatever was typed so a
-  // hidden payload can never be submitted, and re-ticking starts from a clean form.
-  const onToggleForDelivery = useCallback((next: boolean) => {
-    setForDelivery(next)
-    if (!next) {
-      setDeliveryFields(EMPTY_DELIVERY_FIELDS)
-      setDeliveryCharge(EMPTY_DELIVERY_CHARGE)
-    }
-  }, [])
-
-  const onDeliveryFieldsChange = useCallback((patch: Partial<DeliveryFields>) => {
-    setDeliveryFields((f) => ({ ...f, ...patch }))
-  }, [])
-
-  const onDeliveryChargeChange = useCallback((value: string) => {
-    setDeliveryCharge(value)
-  }, [])
-
-  // Creates the delivery receipt for a just-completed sale. The sale is already safe by the time
-  // this runs — a failure here never unwinds it, it just tells the cashier to add the DR later.
-  // Idempotent server-side: a retry that re-runs this returns the existing DR, never a duplicate.
-  const createDrMutation = useMutation({
-    mutationFn: ({ saleId, fields }: { saleId: string; fields: DeliveryFields }) =>
-      deliveryReceiptsApi.createForSale(saleId, {
-        recipientName: fields.recipientName.trim(),
-        deliveryAddress: fields.deliveryAddress.trim(),
-        contactNumber: fields.contactNumber.trim() || undefined,
-        deliveryNotes: fields.deliveryNotes.trim() || undefined,
-      }),
-    onSuccess: (dr) => {
-      setSuccessDeliveryReceiptId(dr.id)
-      window.open('/delivery-receipts/' + dr.id + '?print=1', '_blank', 'noopener')
-    },
-    onError: () => {
-      toast(
-        'error',
-        'Sale completed, but the delivery receipt could not be created. Add it from the sale page.',
-      )
-    },
-  })
+    resetDeliveryState()
+    setSuccessDeliveryCount(0)
+  }, [cart, resetDeliveryState])
 
   // Eligibility for the two sale-lookup flows. Both only decide what the lookup modal can show a
   // "continue" button for — the backend independently re-checks and is authoritative either way
@@ -411,6 +481,7 @@ export function PosTerminal({
           productVariantId: l.variantId,
           quantity: l.quantity,
           discount: l.discount.type === 'None' ? null : l.discount,
+          deliveryRequiredQuantity: deliveryRequiredByVariant[l.variantId] ?? 0,
         })),
         payments: [payment],
         deliveryCharge: roundMoney(parseDeliveryCharge(forDelivery, deliveryCharge)),
@@ -440,19 +511,15 @@ export function PosTerminal({
       setSuccessPayment(variables.payment)
       setSuccessResult(result)
 
-      // "For delivery": the sale exists now, so create its delivery receipt. Runs after the sale
-      // is confirmed safe — a DR failure only surfaces a toast, it never touches the sale. The
-      // trim()/non-empty guard mirrors PaymentModal's confirm gate.
-      if (
-        forDelivery &&
-        deliveryFields.recipientName.trim() &&
-        deliveryFields.deliveryAddress.trim()
-      ) {
-        createDrMutation.mutate({ saleId: result.saleId, fields: deliveryFields })
+      // "For delivery": the sale exists now, so submit its delivery schedules. Runs after the sale
+      // is confirmed safe — a batch failure only surfaces a toast, it never touches the sale.
+      const activeSchedules = schedules.filter((s) => s.items.some((i) => i.quantity > 0))
+      if (forDelivery && activeSchedules.length > 0) {
+        createDeliveryBatchMutation.mutate({ saleId: result.saleId, resultItems: result.items })
+      } else {
+        setSuccessDeliveryCount(0)
       }
-      setForDelivery(false)
-      setDeliveryFields(EMPTY_DELIVERY_FIELDS)
-      setDeliveryCharge(EMPTY_DELIVERY_CHARGE)
+      resetDeliveryState()
     },
     onError: (err) => {
       setStatus('failed')
@@ -625,8 +692,14 @@ export function PosTerminal({
         onConfirm={(payment) => mutation.mutate({ payment })}
         forDelivery={forDelivery}
         onToggleForDelivery={onToggleForDelivery}
-        deliveryFields={deliveryFields}
-        onDeliveryFieldsChange={onDeliveryFieldsChange}
+        cartLines={cart.lines}
+        deliveryRequiredByVariant={deliveryRequiredByVariant}
+        onDeliveryRequiredChange={onDeliveryRequiredChange}
+        schedules={schedules}
+        onScheduleFieldChange={onScheduleFieldChange}
+        onScheduleItemChange={onScheduleItemChange}
+        onAddSchedule={onAddSchedule}
+        onRemoveSchedule={onRemoveSchedule}
         deliveryCharge={deliveryCharge}
         onDeliveryChargeChange={onDeliveryChargeChange}
       />
@@ -635,14 +708,14 @@ export function PosTerminal({
         open={successResult != null}
         onClose={() => {
           setSuccessResult(null)
-          setSuccessDeliveryReceiptId(null)
+          setSuccessDeliveryCount(0)
         }}
         result={successResult}
         payment={successPayment}
-        deliveryReceiptId={successDeliveryReceiptId}
+        deliveryCount={successDeliveryCount}
         onNewTransaction={() => {
           setSuccessResult(null)
-          setSuccessDeliveryReceiptId(null)
+          setSuccessDeliveryCount(0)
           searchInputRef.current?.focus()
         }}
       />

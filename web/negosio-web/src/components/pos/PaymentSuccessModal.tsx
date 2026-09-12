@@ -13,9 +13,8 @@ interface Props {
   /** The payment actually submitted for that sale — carries the method/tendered/reference detail
    * the checkout response itself doesn't echo back. */
   payment: CheckoutPaymentInput | null
-  /** Id of the delivery receipt created for this sale, once the (post-checkout) DR POST resolves.
-   * Null for a normal sale, and briefly null on a delivery sale until the DR is created. */
-  deliveryReceiptId: string | null
+  /** How many delivery schedules were created for this sale (0 for a normal or charge-only sale). */
+  deliveryCount: number
   onNewTransaction: () => void
 }
 
@@ -63,7 +62,7 @@ export function PaymentSuccessModal({
   onClose,
   result,
   payment,
-  deliveryReceiptId,
+  deliveryCount,
   onNewTransaction,
 }: Props) {
   if (!result) return null
@@ -83,7 +82,7 @@ export function PaymentSuccessModal({
 
       <dl className="my-5 divide-y divide-border-light rounded-2xl bg-surface-subtle px-4 py-1">
         <SummaryRow label="Amount paid" value={formatMoney(result.amountPaid)} strong />
-        {deliveryReceiptId && (
+        {deliveryCount > 0 && (
           <SummaryRow label="Delivery charge" value={formatDeliveryCharge(result.deliveryCharge)} />
         )}
         {payment && <SummaryRow label="Payment method" value={PAYMENT_METHOD_LABELS[payment.method]} />}
@@ -96,7 +95,7 @@ export function PaymentSuccessModal({
         )}
       </dl>
 
-      {deliveryReceiptId && (
+      {deliveryCount > 0 && (
         <div className="mb-4 flex items-center gap-2 rounded-xl bg-primary-50 px-3 py-2.5 text-sm">
           <Truck className="size-4 shrink-0 text-primary-700" aria-hidden="true" />
           <span className="font-semibold text-primary-800">Delivery receipt ready</span>
@@ -107,17 +106,14 @@ export function PaymentSuccessModal({
         <Button block size="lg" onClick={onNewTransaction}>
           New transaction
         </Button>
-        {deliveryReceiptId && (
-          <button
-            type="button"
-            onClick={() =>
-              window.open(`/delivery-receipts/${deliveryReceiptId}?print=1`, '_blank', 'noopener')
-            }
+        {deliveryCount > 0 && (
+          <a
+            href={`/sales/${result.saleId}`}
             className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-primary-200 bg-white text-sm font-semibold text-primary-700 transition-colors hover:bg-primary-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
           >
             <Truck className="size-4" aria-hidden="true" />
-            Print delivery receipt
-          </button>
+            View {deliveryCount === 1 ? 'delivery schedule' : `${deliveryCount} delivery schedules`}
+          </a>
         )}
         <button
           type="button"

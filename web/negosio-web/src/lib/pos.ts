@@ -70,21 +70,60 @@ export interface LastSaleRef {
   status: SaleStatus
 }
 
-/** Delivery metadata captured inline in the payment modal when a sale is "for delivery". Maps to
- * the approved backend fields RecipientName / DeliveryAddress / ContactNumber / DeliveryNotes —
- * the "Recipient address" label is UI-only; the payload key stays deliveryAddress. */
-export interface DeliveryFields {
+export interface DeliveryScheduleItemAllocation {
+  variantId: string
+  quantity: number
+}
+
+/** One delivery schedule being built in the payment modal. `key` is a local React/list-diffing id
+ * only — never sent to the backend. Maps to `CreateDeliveryReceiptRequest` once the sale exists and
+ * `variantId`s can be resolved to real `saleItemId`s (see PosTerminal's batch-submit mutation). */
+export interface DeliverySchedule {
+  key: string
+  scheduledDeliveryDate: string // yyyy-MM-dd, browser-local — see the plan's Global Constraints
   recipientName: string
   deliveryAddress: string
   contactNumber: string
   deliveryNotes: string
+  items: DeliveryScheduleItemAllocation[]
 }
 
-export const EMPTY_DELIVERY_FIELDS: DeliveryFields = {
-  recipientName: '',
-  deliveryAddress: '',
-  contactNumber: '',
-  deliveryNotes: '',
+/** Browser-local "today" as a `yyyy-MM-dd` date-input value. This repo has no tenant-timezone model
+ * on the frontend yet (see the plan's Global Constraints) — this is a UI default only; the backend
+ * independently rejects a past date against its own business-local clock regardless of what this
+ * produces. */
+export function todayLocalDateInput(): string {
+  const d = new Date()
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+export function emptyDeliverySchedule(): DeliverySchedule {
+  return {
+    key: crypto.randomUUID(),
+    scheduledDeliveryDate: todayLocalDateInput(),
+    recipientName: '',
+    deliveryAddress: '',
+    contactNumber: '',
+    deliveryNotes: '',
+    items: [],
+  }
+}
+
+/** Sum of quantity a variant already has allocated across every schedule except `excludeKey` (pass
+ * the schedule currently being edited so its own not-yet-committed value doesn't count against
+ * itself). Used only to compute a helpful UI cap — the backend re-validates independently and is
+ * the only source of truth for what's actually available (see the plan's Global Constraints). */
+export function scheduledQuantityFor(
+  schedules: DeliverySchedule[],
+  variantId: string,
+  excludeKey?: string,
+): number {
+  return schedules
+    .filter((s) => s.key !== excludeKey)
+    .reduce((sum, s) => sum + (s.items.find((i) => i.variantId === variantId)?.quantity ?? 0), 0)
 }
 
 /** Default/reset value for the delivery-charge input — a formatted string so the field always

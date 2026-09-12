@@ -7,7 +7,7 @@ import {
   isValidDeliveryChargeInput,
   parseDeliveryCharge,
   suggestCashButtons,
-  type DeliveryFields,
+  type DeliverySchedule,
 } from '../../lib/pos'
 import { formatMoney } from '../../lib/format'
 import { cn } from '../../lib/cn'
@@ -26,11 +26,15 @@ interface Props {
   forDelivery: boolean
   /** Tick / untick "For delivery". Unticking clears the delivery fields in the parent. */
   onToggleForDelivery: (next: boolean) => void
-  /** Live delivery-metadata values, owned by the parent so they survive a failed-payment retry. */
-  deliveryFields: DeliveryFields
-  /** Patch one or more delivery fields. */
-  onDeliveryFieldsChange: (patch: Partial<DeliveryFields>) => void
-  /** The typed delivery-charge string, owned by the parent for the same reason deliveryFields is —
+  cartLines: { variantId: string; name: string; variantName: string | null; quantity: number }[]
+  deliveryRequiredByVariant: Record<string, number>
+  onDeliveryRequiredChange: (variantId: string, quantity: number) => void
+  schedules: DeliverySchedule[]
+  onScheduleFieldChange: (key: string, patch: Partial<Omit<DeliverySchedule, 'key' | 'items'>>) => void
+  onScheduleItemChange: (key: string, variantId: string, quantity: number) => void
+  onAddSchedule: () => void
+  onRemoveSchedule: (key: string) => void
+  /** The typed delivery-charge string, owned by the parent for the same reason schedules is —
    * it must survive the modal closing and reopening after a failed-payment retry. */
   deliveryCharge: string
   onDeliveryChargeChange: (value: string) => void
@@ -45,8 +49,14 @@ export function PaymentModal({
   onConfirm,
   forDelivery,
   onToggleForDelivery,
-  deliveryFields,
-  onDeliveryFieldsChange,
+  cartLines,
+  deliveryRequiredByVariant,
+  onDeliveryRequiredChange,
+  schedules,
+  onScheduleFieldChange,
+  onScheduleItemChange,
+  onAddSchedule,
+  onRemoveSchedule,
   deliveryCharge,
   onDeliveryChargeChange,
 }: Props) {
@@ -70,23 +80,12 @@ export function PaymentModal({
   const effectiveAmountDue = amountDue + parseDeliveryCharge(forDelivery, deliveryCharge)
   const change = method === 'Cash' ? Math.max(0, receivedNum - effectiveAmountDue) : 0
 
+  const activeSchedules = schedules.filter((s) => s.items.some((i) => i.quantity > 0))
   const deliveryComplete =
     !forDelivery ||
-    (deliveryFields.recipientName.trim() !== '' &&
-      deliveryFields.deliveryAddress.trim() !== '' &&
-      deliveryChargeValid)
-  const deliveryErrors =
-    forDelivery && deliveryAttempted
-      ? {
-          recipientName: deliveryFields.recipientName.trim() ? undefined : 'Recipient name is required.',
-          deliveryAddress: deliveryFields.deliveryAddress.trim()
-            ? undefined
-            : 'Recipient address is required.',
-          deliveryCharge: deliveryChargeValid
-            ? undefined
-            : 'Enter a valid amount (0 or more, up to 2 decimal places).',
-        }
-      : {}
+    (deliveryChargeValid &&
+      activeSchedules.every((s) => s.scheduledDeliveryDate && s.recipientName.trim() && s.deliveryAddress.trim()))
+  const deliveryErrors = forDelivery && deliveryAttempted ? { deliveryCharge: deliveryChargeValid ? undefined : 'Enter a valid amount (0 or more, up to 2 decimal places).' } : {}
 
   const paymentComplete =
     method !== 'Cash' || (received.trim() !== '' && receivedNum >= effectiveAmountDue)
@@ -220,11 +219,18 @@ export function PaymentModal({
           </label>
           {forDelivery && (
             <DeliveryDetailsFields
-              values={deliveryFields}
-              onChange={onDeliveryFieldsChange}
+              cartLines={cartLines}
               deliveryCharge={deliveryCharge}
               onDeliveryChargeChange={onDeliveryChargeChange}
+              deliveryRequiredByVariant={deliveryRequiredByVariant}
+              onDeliveryRequiredChange={onDeliveryRequiredChange}
+              schedules={schedules}
+              onScheduleFieldChange={onScheduleFieldChange}
+              onScheduleItemChange={onScheduleItemChange}
+              onAddSchedule={onAddSchedule}
+              onRemoveSchedule={onRemoveSchedule}
               errors={deliveryErrors}
+              attempted={deliveryAttempted}
               disabled={submitting}
             />
           )}
