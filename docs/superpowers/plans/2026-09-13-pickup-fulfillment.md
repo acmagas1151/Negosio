@@ -1666,6 +1666,20 @@ git commit -m "feat(delivery): contracts for pickup, dispositions and audited co
 
 This is the largest and most correctness-critical task in the plan. Read it fully before writing anything.
 
+> **Correction made during Task 6 execution (recorded in the SDD ledger):** the code given below
+> for `LockSaleItemsAsync`/`ComputeAvailabilityAsync`/`ValidateAndResolveLines` has a latent race
+> that the implementer found and fixed. As written, `ComputeAvailabilityAsync(tenantId, sale, ct)`
+> reads the sale's intent columns (`DeliveryRequiredQuantity`/`PickupRequiredQuantity`) from a
+> `sale` object loaded **before** `LockSaleItemsAsync` acquires its lock. That was safe while
+> those columns were immutable post-checkout — this task is exactly what makes them mutable (via
+> `ConvertFulfillment`), so a create could snapshot stale intent while a concurrent conversion
+> commits, then over-allocate. **The fix:** `LockSaleItemsAsync` returns the `SaleItem` rows it
+> just locked (no extra round trip), and `ComputeAvailabilityAsync`/`ValidateAndResolveLines`
+> take `IReadOnlyCollection<SaleItem>` — the locked rows — instead of `Sale sale`. This is
+> precisely what Task 11's planned test "a conversion cannot race an allocation" needs to be true;
+> implement it this way, not as literally shown below. The code blocks in this task are otherwise
+> accurate.
+
 **Files:**
 - Modify: `src/Negosio.Application/Delivery/DeliveryReceiptService.cs` (full replacement)
 - Test: `tests/Negosio.IntegrationTests/Delivery/PickupTests.cs` (new)
