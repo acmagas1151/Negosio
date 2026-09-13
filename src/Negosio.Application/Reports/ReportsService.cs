@@ -166,17 +166,21 @@ public sealed class ReportsService : IReportsService
         var branchFilter = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken);
         var todayLocal = DateOnly.FromDateTime(DateTime.UtcNow + ReportPeriodResolver.BusinessOffset);
 
-        var receipts = _db.DeliveryReceipts.AsNoTracking().Where(d => d.TenantId == tenantId && d.SaleId != null);
+        // Deliveries only. The schedule table is now shared with pickups (discriminated by Method), so
+        // this filter is what keeps the shipped delivery report meaning exactly what it meant before
+        // pickups existed. The pickup and combined views are a separate task.
+        var receipts = _db.DeliveryReceipts.AsNoTracking()
+            .Where(d => d.TenantId == tenantId && d.SaleId != null && d.Method == FulfillmentMethod.Delivery);
         if (branchFilter is { } b)
         {
             receipts = receipts.Where(d => d.BranchId == b);
         }
 
         var (effectiveFrom, effectiveTo, effectiveStatus, overdueOnly) = ResolveDeliveryPreset(query, todayLocal);
-        if (effectiveFrom is { } from) receipts = receipts.Where(d => d.ScheduledDeliveryDate >= from);
-        if (effectiveTo is { } to) receipts = receipts.Where(d => d.ScheduledDeliveryDate <= to);
+        if (effectiveFrom is { } from) receipts = receipts.Where(d => d.ScheduledDate >= from);
+        if (effectiveTo is { } to) receipts = receipts.Where(d => d.ScheduledDate <= to);
         if (effectiveStatus is { } status) receipts = receipts.Where(d => d.Status == status);
-        if (overdueOnly) receipts = receipts.Where(d => d.Status == FulfillmentStatus.Pending && d.ScheduledDeliveryDate < todayLocal);
+        if (overdueOnly) receipts = receipts.Where(d => d.Status == FulfillmentStatus.Pending && d.ScheduledDate < todayLocal);
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
@@ -184,7 +188,7 @@ public sealed class ReportsService : IReportsService
             receipts = receipts.Where(d =>
                 (d.RelatedSaleNumber != null && d.RelatedSaleNumber.Contains(term)) ||
                 d.RecipientName.Contains(term) ||
-                d.DeliveryAddress.Contains(term) ||
+                (d.DeliveryAddress != null && d.DeliveryAddress.Contains(term)) ||
                 (d.ContactNumber != null && d.ContactNumber.Contains(term)));
         }
 
@@ -208,14 +212,16 @@ public sealed class ReportsService : IReportsService
         // Recommended ordering: Pending first, earliest scheduled date, newest-created tiebreak.
         var projected = joined
             .OrderBy(x => x.dr.Status == FulfillmentStatus.Pending ? 0 : 1)
-            .ThenBy(x => x.dr.ScheduledDeliveryDate)
+            .ThenBy(x => x.dr.ScheduledDate)
             .ThenByDescending(x => x.dr.CreatedAtUtc)
             .Select(x => new DeliveryReportRow(
-                x.dr.Id, x.s.Id, x.s.SaleNumber, x.dr.SequenceNumber, x.dr.ScheduledDeliveryDate, x.dr.Status,
-                x.dr.Status == FulfillmentStatus.Pending && x.dr.ScheduledDeliveryDate < todayLocal,
-                x.dr.CreatedAtUtc, x.dr.RecipientName, x.dr.DeliveryAddress, x.dr.ContactNumber, x.dr.DeliveryNotes,
+                x.dr.Id, x.s.Id, x.s.SaleNumber, x.dr.SequenceNumber, x.dr.ScheduledDate, x.dr.Status,
+                x.dr.Status == FulfillmentStatus.Pending && x.dr.ScheduledDate < todayLocal,
+                // DeliveryAddress is nullable on the shared schedule entity (a pickup has none) but is
+                // always present on a Delivery row, which is all this query selects.
+                x.dr.CreatedAtUtc, x.dr.RecipientName, x.dr.DeliveryAddress ?? string.Empty, x.dr.ContactNumber, x.dr.Notes,
                 x.s.DeliveryCharge, x.s.GrandTotal, x.dr.PreparedByNameSnapshot,
-                x.dr.DeliveredAtUtc, x.dr.CancelledAtUtc, x.dr.CancellationReason,
+                x.dr.CompletedAtUtc, x.dr.CancelledAtUtc, x.dr.CancellationReason,
                 _db.Payments.Where(p => p.SaleId == x.s.Id).Select(p => p.Method).Distinct().ToList()));
 
         var rows = await PagedResult<DeliveryReportRow>.CreateAsync(projected, query.Page, query.PageSize, cancellationToken);
@@ -283,22 +289,38 @@ public sealed class ReportsService : IReportsService
                 s.CreatedAtUtc,
                 s.DeliveryCharge,
                 TotalRequired = _db.SaleItems.Where(i => i.SaleId == s.Id).Sum(i => i.DeliveryRequiredQuantity),
+                // Every DeliveryReceipts predicate below is Method-filtered: the table is now shared with
+                // pickups, and this report is the delivery-only view.
                 TotalPending = _db.DeliveryReceiptItems.Where(dri => _db.DeliveryReceipts
-                        .Any(d => d.Id == dri.DeliveryReceiptId && d.SaleId == s.Id && d.Status == FulfillmentStatus.Pending))
+                        .Any(d => d.Id == dri.DeliveryReceiptId && d.SaleId == s.Id
+                            && d.Method == FulfillmentMethod.Delivery && d.Status == FulfillmentStatus.Pending))
                     .Sum(dri => (decimal?)dri.Quantity) ?? 0m,
                 TotalDelivered = _db.DeliveryReceiptItems.Where(dri => _db.DeliveryReceipts
-                        .Any(d => d.Id == dri.DeliveryReceiptId && d.SaleId == s.Id && d.Status == FulfillmentStatus.Completed))
+                        .Any(d => d.Id == dri.DeliveryReceiptId && d.SaleId == s.Id
+                            && d.Method == FulfillmentMethod.Delivery && d.Status == FulfillmentStatus.Completed))
                     .Sum(dri => (decimal?)dri.Quantity) ?? 0m,
-                ScheduleCount = _db.DeliveryReceipts.Count(d => d.SaleId == s.Id),
-                HasOverduePending = _db.DeliveryReceipts.Any(d => d.SaleId == s.Id
-                    && d.Status == FulfillmentStatus.Pending && d.ScheduledDeliveryDate < todayLocal),
+                ScheduleCount = _db.DeliveryReceipts.Count(d => d.SaleId == s.Id && d.Method == FulfillmentMethod.Delivery),
+                HasOverduePending = _db.DeliveryReceipts.Any(d => d.SaleId == s.Id && d.Method == FulfillmentMethod.Delivery
+                    && d.Status == FulfillmentStatus.Pending && d.ScheduledDate < todayLocal),
             })
             .ToListAsync(cancellationToken);
 
         var mapped = rows.Select(r =>
         {
             var available = r.TotalRequired - r.TotalPending - r.TotalDelivered;
-            var status = SaleFulfillmentCalculator.Derive(r.TotalRequired, r.TotalPending, r.TotalDelivered, available, r.HasOverduePending);
+            // Delivery-only projection onto the now method-aware calculator: this view's "sold" quantity
+            // IS the delivery-required quantity (take-now is out of scope here) and every pickup bucket is
+            // zero. The pickup and combined views are a separate task.
+            var status = SaleFulfillmentCalculator.Derive(
+                soldQuantity: r.TotalRequired,
+                takeNowQuantity: 0m,
+                deliveredQuantity: r.TotalDelivered,
+                claimedQuantity: 0m,
+                deliveryPendingQuantity: r.TotalPending,
+                pickupPendingQuantity: 0m,
+                deliveryUnscheduledQuantity: available,
+                pickupUnscheduledQuantity: 0m,
+                hasOverduePendingSchedule: r.HasOverduePending);
             return new DeliveryFulfillmentReportRowDto(
                 r.Id, r.SaleNumber, r.CreatedAtUtc, status, r.DeliveryCharge,
                 r.TotalRequired, r.TotalPending, r.TotalDelivered, available, r.ScheduleCount);
@@ -310,7 +332,9 @@ public sealed class ReportsService : IReportsService
         }
 
         var ordered = mapped
-            .OrderBy(m => m.FulfillmentStatus == SaleFulfillmentStatus.NeedsRescheduling ? 0 : 1)
+            // NeedsAttention replaces the old NeedsRescheduling member — same meaning (something is
+            // overdue), same "float it to the top" intent.
+            .OrderBy(m => m.FulfillmentStatus == SaleFulfillmentStatus.NeedsAttention ? 0 : 1)
             .ThenByDescending(m => m.SaleCreatedAtUtc)
             .ToList();
 

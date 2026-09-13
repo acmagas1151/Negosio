@@ -48,7 +48,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
     private static CreateDeliveryReceiptRequest FullyClaimingRequest(Scene s, decimal quantity) => new(
         Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
-        new[] { new CreateDeliveryReceiptItemInput(s.SaleItemId, quantity) });
+        new[] { new FulfillmentItemInput(s.SaleItemId, quantity) });
 
     [Fact]
     public async Task Two_concurrent_creates_claiming_the_same_last_units_only_one_succeeds()
@@ -63,10 +63,10 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         results.Count(r => r.StatusCode == HttpStatusCode.Created).Should().Be(1);
         results.Count(r => r.StatusCode == HttpStatusCode.BadRequest).Should().Be(1);
 
-        var summary = await Client.GetFromJsonAsync<SaleDeliverySummaryDto>(
+        var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
-        summary!.Items[0].PendingQuantity.Should().Be(4m); // never over-allocated past what was ever delivery-required
-        summary.Items[0].AvailableToScheduleQuantity.Should().Be(0m);
+        summary!.Items[0].DeliveryPendingQuantity.Should().Be(4m); // never over-allocated past what was ever delivery-required
+        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(0m);
     }
 
     [Fact]
@@ -75,8 +75,8 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 4m);
         var firstResponse = await Client.PostAsJsonAsync(
             $"/api/sales/{scene.SaleId}/delivery-receipts", FullyClaimingRequest(scene, 4m));
-        var first = (await firstResponse.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
-        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel", new CancelDeliveryReceiptRequest("Wrong address"));
+        var first = (await firstResponse.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
+        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel", new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null));
 
         HttpRequestMessage CreateRequest() => AuthorizedRequest(
             HttpMethod.Post, $"/api/sales/{scene.SaleId}/delivery-receipts", scene.Token, FullyClaimingRequest(scene, 4m));
@@ -92,7 +92,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
     {
         var scene = await ArrangeSaleAsync();
         var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", FullyClaimingRequest(scene, 4m));
-        var dr = (await created.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+        var dr = (await created.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         HttpRequestMessage DeliverRequest() => AuthorizedRequest(HttpMethod.Post, $"/api/delivery-receipts/{dr.Id}/deliver", scene.Token);
 
@@ -107,17 +107,17 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
     {
         var scene = await ArrangeSaleAsync();
         var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", FullyClaimingRequest(scene, 4m));
-        var dr = (await created.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+        var dr = (await created.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         var deliverTask = Client.SendAsync(AuthorizedRequest(HttpMethod.Post, $"/api/delivery-receipts/{dr.Id}/deliver", scene.Token));
         var cancelTask = Client.SendAsync(AuthorizedRequest(
-            HttpMethod.Post, $"/api/delivery-receipts/{dr.Id}/cancel", scene.Token, new CancelDeliveryReceiptRequest("Race")));
+            HttpMethod.Post, $"/api/delivery-receipts/{dr.Id}/cancel", scene.Token, new CancelDeliveryRequest("Race", CancellationDisposition.DeliverLater, null)));
 
         var results = await Task.WhenAll(deliverTask, cancelTask);
 
         results.Count(r => r.IsSuccessStatusCode).Should().Be(1);
 
-        var final = await Client.GetFromJsonAsync<DeliveryReceiptDto>($"/api/delivery-receipts/{dr.Id}", TestJson.Options);
+        var final = await Client.GetFromJsonAsync<FulfillmentScheduleDto>($"/api/delivery-receipts/{dr.Id}", TestJson.Options);
         final!.Status.Should().BeOneOf(FulfillmentStatus.Completed, FulfillmentStatus.Cancelled);
     }
 
@@ -140,7 +140,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         // underlying batch, whether one raced ahead as the "real" creator or the other found it already
         // committed via the post-lock re-check.
         results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.Created);
-        var bodies = await Task.WhenAll(results.Select(r => r.Content.ReadFromJsonAsync<DeliveryReceiptBatchResultDto>(TestJson.Options)));
+        var bodies = await Task.WhenAll(results.Select(r => r.Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options)));
         bodies[0]!.Created.Single().Id.Should().Be(bodies[1]!.Created.Single().Id);
 
         await InScopeAsync(async db =>

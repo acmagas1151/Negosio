@@ -34,12 +34,12 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         return new Scene(sale.SaleId, branchId, sale.Items[0].SaleItemId);
     }
 
-    private async Task<DeliveryReceiptDto> CreateDeliveryAsync(Scene s, decimal quantity)
+    private async Task<FulfillmentScheduleDto> CreateDeliveryAsync(Scene s, decimal quantity)
     {
         var response = await Client.PostAsJsonAsync($"/api/sales/{s.SaleId}/delivery-receipts",
             new CreateDeliveryReceiptRequest(Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
-                new[] { new CreateDeliveryReceiptItemInput(s.SaleItemId, quantity) }));
-        return (await response.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+                new[] { new FulfillmentItemInput(s.SaleItemId, quantity) }));
+        return (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
     }
 
     [Fact]
@@ -50,11 +50,11 @@ public class DeliveryReceiptStatusTests : IntegrationTest
 
         var response = await Client.PostAsync($"/api/delivery-receipts/{dr.Id}/deliver", null);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var delivered = (await response.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+        var delivered = (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         delivered.Status.Should().Be(FulfillmentStatus.Completed);
-        delivered.DeliveredAtUtc.Should().NotBeNull();
-        delivered.DeliveredByName.Should().NotBeNullOrEmpty();
+        delivered.CompletedAtUtc.Should().NotBeNull();
+        delivered.CompletedByName.Should().NotBeNullOrEmpty();
     }
 
     [Fact]
@@ -74,7 +74,7 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         var scene = await ArrangeSaleAsync();
         var dr = await CreateDeliveryAsync(scene, 4m);
 
-        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryReceiptRequest("   "));
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryRequest("   ", CancellationDisposition.DeliverLater, null));
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -84,15 +84,18 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
         var dr = await CreateDeliveryAsync(scene, 4m); // 2 left available
 
-        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryReceiptRequest("Customer rescheduled"));
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryRequest("Customer rescheduled", CancellationDisposition.DeliverLater, null));
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var cancelled = (await response.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+        var result = (await response.Content.ReadFromJsonAsync<CancellationResultDto>(TestJson.Options))!;
+        result.Replacement.Should().BeNull(); // DeliverLater just releases the quantity
+        var cancelled = result.Cancelled;
         cancelled.Status.Should().Be(FulfillmentStatus.Cancelled);
         cancelled.CancellationReason.Should().Be("Customer rescheduled");
+        cancelled.CancellationDisposition.Should().Be(CancellationDisposition.DeliverLater);
         cancelled.Items.Should().ContainSingle(); // its own item rows are preserved, unchanged, as history
 
-        var summary = await Client.GetFromJsonAsync<SaleDeliverySummaryDto>($"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
-        summary!.Items[0].AvailableToScheduleQuantity.Should().Be(6m); // fully released
+        var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>($"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
+        summary!.Items[0].DeliveryUnscheduledQuantity.Should().Be(6m); // fully released
         summary.CanCreateDelivery.Should().BeTrue();
     }
 
@@ -101,7 +104,7 @@ public class DeliveryReceiptStatusTests : IntegrationTest
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
         var first = await CreateDeliveryAsync(scene, 4m);
-        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel", new CancelDeliveryReceiptRequest("Wrong address"));
+        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel", new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null));
 
         var second = await CreateDeliveryAsync(scene, 4m); // re-schedule the same released quantity
 
@@ -109,7 +112,7 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         second.SequenceNumber.Should().Be(2);
         second.Status.Should().Be(FulfillmentStatus.Pending);
 
-        var reloadedFirst = await Client.GetFromJsonAsync<DeliveryReceiptDto>($"/api/delivery-receipts/{first.Id}", TestJson.Options);
+        var reloadedFirst = await Client.GetFromJsonAsync<FulfillmentScheduleDto>($"/api/delivery-receipts/{first.Id}", TestJson.Options);
         reloadedFirst!.Status.Should().Be(FulfillmentStatus.Cancelled); // untouched
     }
 
@@ -120,7 +123,7 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         var dr = await CreateDeliveryAsync(scene, 4m);
         (await Client.PostAsync($"/api/delivery-receipts/{dr.Id}/deliver", null)).EnsureSuccessStatusCode();
 
-        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryReceiptRequest("Too late"));
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryRequest("Too late", CancellationDisposition.DeliverLater, null));
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -141,7 +144,7 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         var dr = await CreateDeliveryAsync(scene, 4m);
         Authorize(await AddTenantUserTokenAsync("cashier2@example.com", UserRole.Cashier, scene.BranchId));
 
-        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryReceiptRequest("Changed mind"));
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryRequest("Changed mind", CancellationDisposition.DeliverLater, null));
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 }

@@ -340,6 +340,22 @@ public abstract class IntegrationTest : IAsyncLifetime
             return true;
         });
 
+    /// <summary>
+    /// Test-only rewrite of a sale line's fulfillment intent columns — raw SQL, bypasses the domain.
+    /// Checkout cannot yet allocate a pickup quantity (that lands with the 3-way checkout allocation
+    /// task), so this is how a pickup test arranges "this line has N units the customer will collect".
+    /// Deliberately raw SQL rather than <c>SaleItem.ConvertFulfillment</c>: this sets the ORIGINAL
+    /// checkout allocation, which by design has no domain mutator, and must not leave a
+    /// FulfillmentConversion audit row behind (the conversion tests assert on exactly those rows).
+    /// </summary>
+    protected Task SetFulfillmentIntentAsync(Guid saleItemId, decimal deliveryRequiredQuantity, decimal pickupRequiredQuantity) =>
+        InScopeAsync(async db =>
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE SaleItems SET DeliveryRequiredQuantity = {deliveryRequiredQuantity}, PickupRequiredQuantity = {pickupRequiredQuantity} WHERE Id = {saleItemId}");
+            return true;
+        });
+
     /// <summary>Test-only backdate of a return's CreatedAtUtc — raw SQL, bypasses the domain. Lets a
     /// report test place a return in a different period than its original sale.</summary>
     protected Task BackdateSaleReturnCreatedAtAsync(Guid saleReturnId, DateTime createdAtUtc) =>

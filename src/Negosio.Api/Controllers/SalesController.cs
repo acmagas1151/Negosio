@@ -69,29 +69,29 @@ public sealed class SalesController : ControllerBase
     // Delivery fulfillment — class-level SalesView is the gate for view/create (any sales-viewing
     // role); DeliveryReceiptsController.Cancel below is the only action with a narrower policy.
     [HttpGet("{id:guid}/delivery-receipts")]
-    [ProducesResponseType(typeof(IReadOnlyList<DeliveryReceiptDto>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<IReadOnlyList<DeliveryReceiptDto>>> ListDeliveryReceipts(Guid id, CancellationToken ct)
+    [ProducesResponseType(typeof(IReadOnlyList<FulfillmentScheduleDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<FulfillmentScheduleDto>>> ListDeliveryReceipts(Guid id, CancellationToken ct)
         => Ok(await _deliveryReceipts.ListForSaleAsync(id, ct));
 
     [HttpGet("{id:guid}/delivery-summary")]
-    [ProducesResponseType(typeof(SaleDeliverySummaryDto), StatusCodes.Status200OK)]
-    public async Task<ActionResult<SaleDeliverySummaryDto>> DeliverySummary(Guid id, CancellationToken ct)
+    [ProducesResponseType(typeof(SaleFulfillmentSummaryDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<SaleFulfillmentSummaryDto>> DeliverySummary(Guid id, CancellationToken ct)
         => Ok(await _deliveryReceipts.GetSaleFulfillmentAsync(id, ct));
 
     [HttpPost("{id:guid}/delivery-receipts")]
-    [ProducesResponseType(typeof(DeliveryReceiptDto), StatusCodes.Status201Created)]
-    public async Task<ActionResult<DeliveryReceiptDto>> CreateDeliveryReceipt(
+    [ProducesResponseType(typeof(FulfillmentScheduleDto), StatusCodes.Status201Created)]
+    public async Task<ActionResult<FulfillmentScheduleDto>> CreateDeliveryReceipt(
         Guid id, [FromBody] CreateDeliveryReceiptRequest request, CancellationToken ct)
     {
-        var created = await _deliveryReceipts.CreateAsync(id, request, ct);
+        var created = await _deliveryReceipts.CreateDeliveryAsync(id, request, ct);
         return Created($"/api/delivery-receipts/{created.Id}", created);
     }
 
     [HttpPost("{id:guid}/delivery-receipts/batch")]
-    [ProducesResponseType(typeof(DeliveryReceiptBatchResultDto), StatusCodes.Status201Created)]
-    public async Task<ActionResult<DeliveryReceiptBatchResultDto>> CreateDeliveryReceiptBatch(
+    [ProducesResponseType(typeof(FulfillmentBatchResultDto), StatusCodes.Status201Created)]
+    public async Task<ActionResult<FulfillmentBatchResultDto>> CreateDeliveryReceiptBatch(
         Guid id, [FromBody] CreateDeliveryReceiptBatchRequest request, CancellationToken ct)
-        => Created(string.Empty, await _deliveryReceipts.CreateBatchAsync(id, request, ct));
+        => Created(string.Empty, await _deliveryReceipts.CreateDeliveryBatchAsync(id, request, ct));
 
     // No policy override — the controller's class-level SalesView already restricts this to
     // Owner/Admin/Manager/Cashier, which is exactly the void-participating role set;

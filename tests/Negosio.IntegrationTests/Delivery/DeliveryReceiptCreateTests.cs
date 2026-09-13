@@ -40,7 +40,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
 
     private static CreateDeliveryReceiptRequest Req(Scene s, decimal quantity, DateOnly? date = null) => new(
         date ?? Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", "0917 111 2222", "Leave at guardhouse",
-        new[] { new CreateDeliveryReceiptItemInput(s.SaleItemId, quantity) });
+        new[] { new FulfillmentItemInput(s.SaleItemId, quantity) });
 
     [Fact]
     public async Task Create_persists_a_pending_schedule_with_only_its_own_assigned_items()
@@ -49,11 +49,11 @@ public class DeliveryReceiptCreateTests : IntegrationTest
 
         var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var dr = (await response.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+        var dr = (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         dr.SequenceNumber.Should().Be(1);
         dr.Status.Should().Be(FulfillmentStatus.Pending);
-        dr.ScheduledDeliveryDate.Should().Be(Today);
+        dr.ScheduledDate.Should().Be(Today);
         dr.RelatedSaleNumber.Should().Be(scene.SaleNumber);
         dr.Items.Should().ContainSingle();
         dr.Items[0].SaleItemId.Should().Be(scene.SaleItemId);
@@ -67,7 +67,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m));
 
         var second = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 2m));
-        var dr = (await second.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+        var dr = (await second.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         dr.SequenceNumber.Should().Be(2);
     }
@@ -97,7 +97,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var scene = await ArrangeSaleAsync();
         (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts",
             new CreateDeliveryReceiptRequest(Today, "  ", "123 Ayala Ave", null, null,
-                new[] { new CreateDeliveryReceiptItemInput(scene.SaleItemId, 1m) })))
+                new[] { new FulfillmentItemInput(scene.SaleItemId, 1m) })))
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -107,7 +107,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var scene = await ArrangeSaleAsync();
         var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts",
             new CreateDeliveryReceiptRequest(Today, "Juan", "123 Ayala Ave", null, null,
-                Array.Empty<CreateDeliveryReceiptItemInput>()));
+                Array.Empty<FulfillmentItemInput>()));
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -118,8 +118,8 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts",
             new CreateDeliveryReceiptRequest(Today, "Juan", "123 Ayala Ave", null, null, new[]
             {
-                new CreateDeliveryReceiptItemInput(scene.SaleItemId, 2m),
-                new CreateDeliveryReceiptItemInput(scene.SaleItemId, 2m),
+                new FulfillmentItemInput(scene.SaleItemId, 2m),
+                new FulfillmentItemInput(scene.SaleItemId, 2m),
             }));
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
@@ -156,7 +156,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
                 Req(scene, 2m, Today.AddDays(1)),
             }));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var result = (await response.Content.ReadFromJsonAsync<DeliveryReceiptBatchResultDto>(TestJson.Options))!;
+        var result = (await response.Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options))!;
 
         result.WasExistingBatch.Should().BeFalse();
         result.Created.Should().HaveCount(2);
@@ -183,7 +183,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
     // Final whole-branch review, Finding 3: the batch idempotency fast path used to run BEFORE
     // LoadDeliverableSaleAsync (and therefore before GuardBranchAsync). A branch-scoped caller who
     // knew both a foreign SaleId and the exact BatchRequestId originally used against it could hit
-    // the fast path and receive that batch's full DeliveryReceiptDto rows without ever being
+    // the fast path and receive that batch's full FulfillmentScheduleDto rows without ever being
     // branch-checked. The fix reorders CreateBatchAsync so the branch guard always runs first.
     [Fact]
     public async Task Batch_fast_path_never_bypasses_the_branch_guard_for_a_known_BatchRequestId()
@@ -205,7 +205,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var request = new CreateDeliveryReceiptBatchRequest(batchId, new[]
         {
             new CreateDeliveryReceiptRequest(Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
-                new[] { new CreateDeliveryReceiptItemInput(sale.Items[0].SaleItemId, 4m) }),
+                new[] { new FulfillmentItemInput(sale.Items[0].SaleItemId, 4m) }),
         });
 
         // Owner (unrestricted) creates the real batch at MAIN first.
@@ -214,7 +214,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
 
         // A cashier scoped to a DIFFERENT branch somehow learns this exact SaleId + BatchRequestId and
         // replays the identical request. Before the fix, this hit the pre-guard fast path and returned
-        // MAIN's DeliveryReceiptDto rows (recipient, address, delivery charge, etc.) as a 201 without
+        // MAIN's FulfillmentScheduleDto rows (recipient, address, delivery charge, etc.) as a 201 without
         // ever passing GuardBranchAsync. It must now be rejected as if the sale doesn't exist.
         var bgcCashierToken = await AddTenantUserTokenAsync("bgc.cashier@example.com", UserRole.Cashier, bgc.Id);
         Authorize(bgcCashierToken);
@@ -230,9 +230,9 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var request = new CreateDeliveryReceiptBatchRequest(Guid.NewGuid(), new[] { Req(scene, 4m) });
 
         var first = await (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts/batch", request))
-            .Content.ReadFromJsonAsync<DeliveryReceiptBatchResultDto>(TestJson.Options);
+            .Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options);
         var second = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts/batch", request);
-        var secondDto = (await second.Content.ReadFromJsonAsync<DeliveryReceiptBatchResultDto>(TestJson.Options))!;
+        var secondDto = (await second.Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options))!;
 
         secondDto.WasExistingBatch.Should().BeTrue();
         secondDto.Created.Single().Id.Should().Be(first!.Created.Single().Id);
@@ -251,7 +251,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m));
         await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 2m));
 
-        var list = await Client.GetFromJsonAsync<List<DeliveryReceiptDto>>(
+        var list = await Client.GetFromJsonAsync<List<FulfillmentScheduleDto>>(
             $"/api/sales/{scene.SaleId}/delivery-receipts", TestJson.Options);
 
         list.Should().HaveCount(2);
@@ -264,7 +264,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
         var dr = (await (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m)))
-            .Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+            .Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         var productName = dr.Items[0].ProductName;
         await InScopeAsync(async db =>
@@ -279,7 +279,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
             return true;
         });
 
-        var again = await Client.GetFromJsonAsync<DeliveryReceiptDto>($"/api/delivery-receipts/{dr.Id}", TestJson.Options);
+        var again = await Client.GetFromJsonAsync<FulfillmentScheduleDto>($"/api/delivery-receipts/{dr.Id}", TestJson.Options);
         again!.Items[0].ProductName.Should().Be(productName);
     }
 
@@ -289,18 +289,18 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
         await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m));
 
-        var summary = await Client.GetFromJsonAsync<SaleDeliverySummaryDto>(
+        var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
 
-        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PartiallyScheduled);
+        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.AwaitingDelivery);
         summary.CanCreateDelivery.Should().BeTrue(); // 2 units still available
-        summary.Items[0].PendingQuantity.Should().Be(4m);
-        summary.Items[0].AvailableToScheduleQuantity.Should().Be(2m);
+        summary.Items[0].DeliveryPendingQuantity.Should().Be(4m);
+        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(2m);
 
         await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 2m));
-        var full = await Client.GetFromJsonAsync<SaleDeliverySummaryDto>(
+        var full = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
-        full!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.FullyScheduled);
+        full!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.AwaitingDelivery);
         full.CanCreateDelivery.Should().BeFalse();
     }
 
@@ -310,19 +310,19 @@ public class DeliveryReceiptCreateTests : IntegrationTest
     /// tests both fetch after a delivery exists, or with nothing marked for delivery at all (empty item
     /// list), so neither of them reaches the lookup with an unscheduled item.</summary>
     [Fact]
-    public async Task Fulfillment_summary_for_a_sale_with_no_deliveries_yet_reports_Unscheduled()
+    public async Task Fulfillment_summary_for_a_sale_with_no_deliveries_yet_reports_NeedsScheduling()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m); // no deliveries created
 
-        var summary = await Client.GetFromJsonAsync<SaleDeliverySummaryDto>(
+        var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
 
-        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.Unscheduled);
+        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.NeedsScheduling);
         summary.CanCreateDelivery.Should().BeTrue();
         summary.Items.Should().ContainSingle();
-        summary.Items[0].PendingQuantity.Should().Be(0m);
+        summary.Items[0].DeliveryPendingQuantity.Should().Be(0m);
         summary.Items[0].DeliveredQuantity.Should().Be(0m);
-        summary.Items[0].AvailableToScheduleQuantity.Should().Be(6m);
+        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(6m);
     }
 
     [Fact]
@@ -330,7 +330,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m);
 
-        var summary = await Client.GetFromJsonAsync<SaleDeliverySummaryDto>(
+        var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
 
         summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.NotApplicable);

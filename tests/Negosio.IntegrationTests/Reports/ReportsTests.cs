@@ -301,10 +301,10 @@ public class ReportsTests : IntegrationTest
         var saleItemId = sale.Items[0].SaleItemId;
         await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
             new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null,
-                new[] { new CreateDeliveryReceiptItemInput(saleItemId, 4m) }));
+                new[] { new FulfillmentItemInput(saleItemId, 4m) }));
         await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
             new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null,
-                new[] { new CreateDeliveryReceiptItemInput(saleItemId, 2m) }));
+                new[] { new FulfillmentItemInput(saleItemId, 2m) }));
 
         var report = await Client.GetFromJsonAsync<DeliveryReportResultDto>("/api/reports/deliveries", TestJson.Options);
 
@@ -333,8 +333,8 @@ public class ReportsTests : IntegrationTest
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
         var drResp = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
             new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null,
-                new[] { new CreateDeliveryReceiptItemInput(sale.Items[0].SaleItemId, 4m) }));
-        var dr = (await drResp.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
+                new[] { new FulfillmentItemInput(sale.Items[0].SaleItemId, 4m) }));
+        var dr = (await drResp.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
         await Client.PostAsync($"/api/delivery-receipts/{dr.Id}/deliver", null);
 
         var deliveredOnly = await Client.GetFromJsonAsync<DeliveryReportResultDto>(
@@ -364,13 +364,13 @@ public class ReportsTests : IntegrationTest
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
         await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
             new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null,
-                new[] { new CreateDeliveryReceiptItemInput(sale.Items[0].SaleItemId, 4m) }));
+                new[] { new FulfillmentItemInput(sale.Items[0].SaleItemId, 4m) }));
 
         var report = await Client.GetFromJsonAsync<DeliveryFulfillmentReportResultDto>(
             "/api/reports/delivery-fulfillment", TestJson.Options);
 
         var row = report!.Page.Items.Should().ContainSingle(r => r.SaleId == sale.SaleId).Subject;
-        row.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PartiallyScheduled);
+        row.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.AwaitingDelivery);
         row.TotalDeliveryRequiredQuantity.Should().Be(6m);
         row.TotalPendingQuantity.Should().Be(4m);
         row.TotalUnscheduledQuantity.Should().Be(2m);
