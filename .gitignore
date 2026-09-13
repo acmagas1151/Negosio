@@ -8,6 +8,7 @@ obj/
 artifacts/
 TestResults/
 *.trx
+build_output.txt
 
 # Env / secrets
 .env
