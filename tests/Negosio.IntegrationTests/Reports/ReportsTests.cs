@@ -338,11 +338,11 @@ public class ReportsTests : IntegrationTest
         await Client.PostAsync($"/api/delivery-receipts/{dr.Id}/deliver", null);
 
         var deliveredOnly = await Client.GetFromJsonAsync<DeliveryReportResultDto>(
-            $"/api/reports/deliveries?Status={(int)DeliveryStatus.Delivered}", TestJson.Options);
+            $"/api/reports/deliveries?Status={(int)FulfillmentStatus.Completed}", TestJson.Options);
         deliveredOnly!.Page.Items.Should().ContainSingle(r => r.DeliveryReceiptId == dr.Id);
 
         var pendingOnly = await Client.GetFromJsonAsync<DeliveryReportResultDto>(
-            $"/api/reports/deliveries?Status={(int)DeliveryStatus.Pending}", TestJson.Options);
+            $"/api/reports/deliveries?Status={(int)FulfillmentStatus.Pending}", TestJson.Options);
         pendingOnly!.Page.Items.Should().BeEmpty();
     }
 

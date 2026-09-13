@@ -52,7 +52,7 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var delivered = (await response.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
 
-        delivered.Status.Should().Be(DeliveryStatus.Delivered);
+        delivered.Status.Should().Be(FulfillmentStatus.Completed);
         delivered.DeliveredAtUtc.Should().NotBeNull();
         delivered.DeliveredByName.Should().NotBeNullOrEmpty();
     }
@@ -87,7 +87,7 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryReceiptRequest("Customer rescheduled"));
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var cancelled = (await response.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
-        cancelled.Status.Should().Be(DeliveryStatus.Cancelled);
+        cancelled.Status.Should().Be(FulfillmentStatus.Cancelled);
         cancelled.CancellationReason.Should().Be("Customer rescheduled");
         cancelled.Items.Should().ContainSingle(); // its own item rows are preserved, unchanged, as history
 
@@ -107,10 +107,10 @@ public class DeliveryReceiptStatusTests : IntegrationTest
 
         second.Id.Should().NotBe(first.Id);
         second.SequenceNumber.Should().Be(2);
-        second.Status.Should().Be(DeliveryStatus.Pending);
+        second.Status.Should().Be(FulfillmentStatus.Pending);
 
         var reloadedFirst = await Client.GetFromJsonAsync<DeliveryReceiptDto>($"/api/delivery-receipts/{first.Id}", TestJson.Options);
-        reloadedFirst!.Status.Should().Be(DeliveryStatus.Cancelled); // untouched
+        reloadedFirst!.Status.Should().Be(FulfillmentStatus.Cancelled); // untouched
     }
 
     [Fact]

@@ -50,7 +50,7 @@ public class DeliveryReceipt : Entity
         PreparedByUserId = preparedByUserId;
         PreparedByNameSnapshot = preparedByNameSnapshot;
         BatchRequestId = batchRequestId;
-        Status = DeliveryStatus.Pending;
+        Status = FulfillmentStatus.Pending;
     }
 
     public Guid TenantId { get; private set; }
@@ -66,7 +66,7 @@ public class DeliveryReceipt : Entity
 
     public DateOnly ScheduledDeliveryDate { get; private set; }
 
-    public DeliveryStatus Status { get; private set; }
+    public FulfillmentStatus Status { get; private set; }
 
     public string RecipientName { get; private set; }
 
@@ -200,12 +200,12 @@ public class DeliveryReceipt : Entity
     /// timestamp per attempt, matching <see cref="Sale.Void"/>'s established pattern.</summary>
     public void MarkDelivered(Guid deliveredByUserId, DateTime deliveredAtUtc)
     {
-        if (Status != DeliveryStatus.Pending)
+        if (Status != FulfillmentStatus.Pending)
         {
             throw new InvalidOperationException("Only a pending delivery can be marked delivered.");
         }
 
-        Status = DeliveryStatus.Delivered;
+        Status = FulfillmentStatus.Completed;
         DeliveredAtUtc = deliveredAtUtc;
         DeliveredByUserId = deliveredByUserId;
         Touch();
@@ -216,7 +216,7 @@ public class DeliveryReceipt : Entity
     /// creates a brand-new Pending record elsewhere; this method never reactivates one.</summary>
     public void Cancel(Guid cancelledByUserId, string reason, DateTime cancelledAtUtc)
     {
-        if (Status != DeliveryStatus.Pending)
+        if (Status != FulfillmentStatus.Pending)
         {
             throw new InvalidOperationException("Only a pending delivery can be cancelled.");
         }
@@ -227,7 +227,7 @@ public class DeliveryReceipt : Entity
             throw new ArgumentException("A cancellation reason is required.", nameof(reason));
         }
 
-        Status = DeliveryStatus.Cancelled;
+        Status = FulfillmentStatus.Cancelled;
         CancelledAtUtc = cancelledAtUtc;
         CancelledByUserId = cancelledByUserId;
         CancellationReason = trimmedReason;

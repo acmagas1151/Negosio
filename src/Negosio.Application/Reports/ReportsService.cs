@@ -176,7 +176,7 @@ public sealed class ReportsService : IReportsService
         if (effectiveFrom is { } from) receipts = receipts.Where(d => d.ScheduledDeliveryDate >= from);
         if (effectiveTo is { } to) receipts = receipts.Where(d => d.ScheduledDeliveryDate <= to);
         if (effectiveStatus is { } status) receipts = receipts.Where(d => d.Status == status);
-        if (overdueOnly) receipts = receipts.Where(d => d.Status == DeliveryStatus.Pending && d.ScheduledDeliveryDate < todayLocal);
+        if (overdueOnly) receipts = receipts.Where(d => d.Status == FulfillmentStatus.Pending && d.ScheduledDeliveryDate < todayLocal);
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
@@ -207,12 +207,12 @@ public sealed class ReportsService : IReportsService
 
         // Recommended ordering: Pending first, earliest scheduled date, newest-created tiebreak.
         var projected = joined
-            .OrderBy(x => x.dr.Status == DeliveryStatus.Pending ? 0 : 1)
+            .OrderBy(x => x.dr.Status == FulfillmentStatus.Pending ? 0 : 1)
             .ThenBy(x => x.dr.ScheduledDeliveryDate)
             .ThenByDescending(x => x.dr.CreatedAtUtc)
             .Select(x => new DeliveryReportRow(
                 x.dr.Id, x.s.Id, x.s.SaleNumber, x.dr.SequenceNumber, x.dr.ScheduledDeliveryDate, x.dr.Status,
-                x.dr.Status == DeliveryStatus.Pending && x.dr.ScheduledDeliveryDate < todayLocal,
+                x.dr.Status == FulfillmentStatus.Pending && x.dr.ScheduledDeliveryDate < todayLocal,
                 x.dr.CreatedAtUtc, x.dr.RecipientName, x.dr.DeliveryAddress, x.dr.ContactNumber, x.dr.DeliveryNotes,
                 x.s.DeliveryCharge, x.s.GrandTotal, x.dr.PreparedByNameSnapshot,
                 x.dr.DeliveredAtUtc, x.dr.CancelledAtUtc, x.dr.CancellationReason,
@@ -230,21 +230,21 @@ public sealed class ReportsService : IReportsService
             totals);
     }
 
-    private static (DateOnly? From, DateOnly? To, DeliveryStatus? Status, bool OverdueOnly) ResolveDeliveryPreset(
+    private static (DateOnly? From, DateOnly? To, FulfillmentStatus? Status, bool OverdueOnly) ResolveDeliveryPreset(
         DeliveryReportQuery query, DateOnly todayLocal) => query.Preset switch
     {
-        DeliveryReportPreset.Today => (todayLocal, todayLocal, DeliveryStatus.Pending, false),
-        DeliveryReportPreset.Upcoming => (todayLocal.AddDays(1), null, DeliveryStatus.Pending, false),
+        DeliveryReportPreset.Today => (todayLocal, todayLocal, FulfillmentStatus.Pending, false),
+        DeliveryReportPreset.Upcoming => (todayLocal.AddDays(1), null, FulfillmentStatus.Pending, false),
         DeliveryReportPreset.Overdue => (null, null, null, true),
         DeliveryReportPreset.NeedsRescheduling => (null, null, null, true),
-        DeliveryReportPreset.Delivered => (null, null, DeliveryStatus.Delivered, false),
-        DeliveryReportPreset.Cancelled => (null, null, DeliveryStatus.Cancelled, false),
+        DeliveryReportPreset.Delivered => (null, null, FulfillmentStatus.Completed, false),
+        DeliveryReportPreset.Cancelled => (null, null, FulfillmentStatus.Cancelled, false),
         _ => (query.FromDate, query.ToDate, query.Status, false),
     };
 
     private sealed record DeliveryReportRow(
         Guid DeliveryReceiptId, Guid SaleId, string SaleNumber, int SequenceNumber, DateOnly ScheduledDeliveryDate,
-        DeliveryStatus Status, bool IsOverdue, DateTime CreatedAtUtc,
+        FulfillmentStatus Status, bool IsOverdue, DateTime CreatedAtUtc,
         string RecipientName, string DeliveryAddress, string? ContactNumber, string? DeliveryNotes,
         decimal DeliveryCharge, decimal SaleGrandTotal, string PreparedByName,
         DateTime? DeliveredAtUtc, DateTime? CancelledAtUtc, string? CancellationReason, List<PaymentMethod> Methods);
@@ -284,14 +284,14 @@ public sealed class ReportsService : IReportsService
                 s.DeliveryCharge,
                 TotalRequired = _db.SaleItems.Where(i => i.SaleId == s.Id).Sum(i => i.DeliveryRequiredQuantity),
                 TotalPending = _db.DeliveryReceiptItems.Where(dri => _db.DeliveryReceipts
-                        .Any(d => d.Id == dri.DeliveryReceiptId && d.SaleId == s.Id && d.Status == DeliveryStatus.Pending))
+                        .Any(d => d.Id == dri.DeliveryReceiptId && d.SaleId == s.Id && d.Status == FulfillmentStatus.Pending))
                     .Sum(dri => (decimal?)dri.Quantity) ?? 0m,
                 TotalDelivered = _db.DeliveryReceiptItems.Where(dri => _db.DeliveryReceipts
-                        .Any(d => d.Id == dri.DeliveryReceiptId && d.SaleId == s.Id && d.Status == DeliveryStatus.Delivered))
+                        .Any(d => d.Id == dri.DeliveryReceiptId && d.SaleId == s.Id && d.Status == FulfillmentStatus.Completed))
                     .Sum(dri => (decimal?)dri.Quantity) ?? 0m,
                 ScheduleCount = _db.DeliveryReceipts.Count(d => d.SaleId == s.Id),
                 HasOverduePending = _db.DeliveryReceipts.Any(d => d.SaleId == s.Id
-                    && d.Status == DeliveryStatus.Pending && d.ScheduledDeliveryDate < todayLocal),
+                    && d.Status == FulfillmentStatus.Pending && d.ScheduledDeliveryDate < todayLocal),
             })
             .ToListAsync(cancellationToken);
 

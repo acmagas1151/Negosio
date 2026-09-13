@@ -52,7 +52,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var dr = (await response.Content.ReadFromJsonAsync<DeliveryReceiptDto>(TestJson.Options))!;
 
         dr.SequenceNumber.Should().Be(1);
-        dr.Status.Should().Be(DeliveryStatus.Pending);
+        dr.Status.Should().Be(FulfillmentStatus.Pending);
         dr.ScheduledDeliveryDate.Should().Be(Today);
         dr.RelatedSaleNumber.Should().Be(scene.SaleNumber);
         dr.Items.Should().ContainSingle();

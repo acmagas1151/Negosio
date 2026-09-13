@@ -131,7 +131,7 @@ public sealed record DeliveryReportQuery(
     DeliveryReportPreset Preset = DeliveryReportPreset.All,
     DateOnly? FromDate = null,
     DateOnly? ToDate = null,
-    DeliveryStatus? Status = null,
+    FulfillmentStatus? Status = null,
     string? Search = null,
     int Page = 1,
     int PageSize = PagedResult<DeliveryReportRowDto>.DefaultPageSize);
@@ -146,7 +146,7 @@ public sealed record DeliveryReportRowDto(
     string SaleNumber,
     int SequenceNumber,
     DateOnly ScheduledDeliveryDate,
-    DeliveryStatus Status,
+    FulfillmentStatus Status,
     bool IsOverdue,
     DateTime CreatedAtUtc,
     string RecipientName,

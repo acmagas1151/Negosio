@@ -58,7 +58,7 @@ public sealed record DeliveryReceiptDto(
     /// <summary>Sale-scoped "Delivery {N}" label — never a global document number.</summary>
     int SequenceNumber,
     DateOnly ScheduledDeliveryDate,
-    DeliveryStatus Status,
+    FulfillmentStatus Status,
     DateTime CreatedAtUtc,
     string BranchName,
     string RecipientName,
@@ -120,7 +120,7 @@ public sealed record DeliveryReceiptSummaryDto(
     Guid Id,
     int SequenceNumber,
     DateOnly ScheduledDeliveryDate,
-    DeliveryStatus Status,
+    FulfillmentStatus Status,
     string RecipientName,
     string DeliveryAddress,
     string? ContactNumber,

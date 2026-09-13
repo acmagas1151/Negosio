@@ -59,7 +59,7 @@ public class DeliveryReceiptEntityTests
     {
         var dr = Make();
 
-        dr.Status.Should().Be(DeliveryStatus.Pending);
+        dr.Status.Should().Be(FulfillmentStatus.Pending);
         dr.SequenceNumber.Should().Be(1);
         dr.ScheduledDeliveryDate.Should().Be(new DateOnly(2026, 9, 15));
         dr.DeliveredAtUtc.Should().BeNull();
@@ -89,7 +89,7 @@ public class DeliveryReceiptEntityTests
 
         dr.MarkDelivered(deliveredBy, deliveredAt);
 
-        dr.Status.Should().Be(DeliveryStatus.Delivered);
+        dr.Status.Should().Be(FulfillmentStatus.Completed);
         dr.DeliveredByUserId.Should().Be(deliveredBy);
         dr.DeliveredAtUtc.Should().Be(deliveredAt);
     }
@@ -114,7 +114,7 @@ public class DeliveryReceiptEntityTests
 
         dr.Cancel(cancelledBy, "  Customer rescheduled  ", cancelledAt);
 
-        dr.Status.Should().Be(DeliveryStatus.Cancelled);
+        dr.Status.Should().Be(FulfillmentStatus.Cancelled);
         dr.CancelledByUserId.Should().Be(cancelledBy);
         dr.CancelledAtUtc.Should().Be(cancelledAt);
         dr.CancellationReason.Should().Be("Customer rescheduled");

@@ -23,7 +23,7 @@ public sealed class DeliveryReceiptConfiguration : IEntityTypeConfiguration<Deli
         // without diverging the column's steady-state model from what this migration actually applies.
         b.Property(x => x.SequenceNumber).IsRequired().HasDefaultValue(1);
         b.Property(x => x.ScheduledDeliveryDate).IsRequired();
-        b.Property(x => x.Status).IsRequired().HasConversion<int>().HasDefaultValue(DeliveryStatus.Delivered);
+        b.Property(x => x.Status).IsRequired().HasConversion<int>().HasDefaultValue(FulfillmentStatus.Completed);
         b.Property(x => x.RecipientName).IsRequired().HasMaxLength(120);
         b.Property(x => x.DeliveryAddress).IsRequired().HasMaxLength(300);
         b.Property(x => x.ContactNumber).HasMaxLength(40);
@@ -102,7 +102,7 @@ public sealed class DeliveryReceiptItemConfiguration : IEntityTypeConfiguration<
         b.HasIndex(x => new { x.DeliveryReceiptId, x.SaleItemId })
             .IsUnique().HasDatabaseName("IX_DeliveryReceiptItems_DeliveryReceiptId_SaleItemId");
 
-        // Fulfillment allocation (Pending/Delivered/Unscheduled per sale item) is computed by joining
+        // Fulfillment allocation (Pending/Completed/Unscheduled per sale item) is computed by joining
         // this column back to its sale item's assignments across every non-cancelled delivery.
         b.HasIndex(x => new { x.TenantId, x.SaleItemId })
             .HasDatabaseName("IX_DeliveryReceiptItems_TenantId_SaleItemId");

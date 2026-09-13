@@ -113,14 +113,17 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                 nullable: false,
                 defaultValue: 1);
 
-            // 2 == DeliveryStatus.Delivered. Legacy delivery receipts recorded a completed handover —
-            // the pre-plan feature had no pending/cancelled concept — so Delivered is their correct status.
+            // 3 == FulfillmentStatus.Completed. Legacy delivery receipts recorded a completed handover —
+            // the pre-plan feature had no pending/cancelled concept — so Completed is their correct status.
+            // Originally this migration set defaultValue: 2 (the old DeliveryStatus.Delivered numeric value),
+            // but Task 1 renamed the enum to use (Unscheduled=1, Pending=2, Completed=3, Cancelled=4), so we
+            // update the default to 3 to preserve the semantics (legacy rows are Completed, not Pending).
             migrationBuilder.AddColumn<int>(
                 name: "Status",
                 table: "DeliveryReceipts",
                 type: "int",
                 nullable: false,
-                defaultValue: 2);
+                defaultValue: 3);
 
             // TEMPORARILY NULLABLE (EF scaffolded this NOT NULL with an all-zeros Guid default, which
             // would have violated the new FK added in Phase 3). Backfilled per row in Phase 2.
@@ -203,15 +206,15 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
             ");
 
             // Best available historical actor/time for "delivered" — DeliveredAtUtc/DeliveredByUserId
-            // stay nullable (only meaningful once Delivered), but every legacy row defaulted Status to
-            // Delivered in Phase 1, so populate them consistently rather than leaving a Delivered row
-            // with null delivered-audit fields. Documented assumption: PreparedByUserId (the only actor
-            // ever recorded before this plan) stands in for "delivered by," and CreatedAtUtc stands in
-            // for "delivered at" — no better data exists.
+            // stay nullable (only meaningful once Completed), but every legacy row defaulted Status to
+            // Completed in Phase 1 (defaultValue: 3 after Task 1 enum rename), so populate them
+            // consistently rather than leaving a Completed row with null delivered-audit fields.
+            // Documented assumption: PreparedByUserId (the only actor ever recorded before this plan)
+            // stands in for "delivered by," and CreatedAtUtc stands in for "delivered at" — no better data exists.
             migrationBuilder.Sql(@"
                 UPDATE DeliveryReceipts
                 SET DeliveredAtUtc = CreatedAtUtc, DeliveredByUserId = PreparedByUserId
-                WHERE Status = 2 AND DeliveredAtUtc IS NULL;
+                WHERE Status = 3 AND DeliveredAtUtc IS NULL;
             ");
 
             // Every SaleItem on a sale that never had a delivery receipt correctly keeps

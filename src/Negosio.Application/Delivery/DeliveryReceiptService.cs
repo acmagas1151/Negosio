@@ -234,7 +234,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             ?? throw new NotFoundException(ErrorCodes.DeliveryReceiptNotFound, "Delivery receipt not found.");
         await GuardBranchAsync(dr.BranchId, ErrorCodes.DeliveryReceiptNotFound, "Delivery receipt not found.", ct);
 
-        if (dr.Status != DeliveryStatus.Pending)
+        if (dr.Status != FulfillmentStatus.Pending)
         {
             throw new BusinessRuleException(ErrorCodes.DeliveryReceiptNotPending, "Only a pending delivery can be marked delivered.");
         }
@@ -270,7 +270,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             ?? throw new NotFoundException(ErrorCodes.DeliveryReceiptNotFound, "Delivery receipt not found.");
         await GuardBranchAsync(dr.BranchId, ErrorCodes.DeliveryReceiptNotFound, "Delivery receipt not found.", ct);
 
-        if (dr.Status != DeliveryStatus.Pending)
+        if (dr.Status != FulfillmentStatus.Pending)
         {
             throw new BusinessRuleException(ErrorCodes.DeliveryReceiptNotPending, "Only a pending delivery can be cancelled.");
         }
@@ -339,7 +339,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         var totalDelivered = itemDtos.Sum(i => i.DeliveredQuantity);
         var totalAvailable = itemDtos.Sum(i => i.AvailableToScheduleQuantity);
         var todayLocal = BusinessToday();
-        var hasOverduePending = receipts.Any(d => d.Status == DeliveryStatus.Pending && d.ScheduledDeliveryDate < todayLocal);
+        var hasOverduePending = receipts.Any(d => d.Status == FulfillmentStatus.Pending && d.ScheduledDeliveryDate < todayLocal);
 
         var status = SaleFulfillmentCalculator.Derive(totalRequired, totalPending, totalDelivered, totalAvailable, hasOverduePending);
 
@@ -420,7 +420,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         var allocations = await (
             from i in _db.DeliveryReceiptItems.AsNoTracking()
             join d in _db.DeliveryReceipts.AsNoTracking() on i.DeliveryReceiptId equals d.Id
-            where i.TenantId == tenantId && saleItemIds.Contains(i.SaleItemId) && d.Status != DeliveryStatus.Cancelled
+            where i.TenantId == tenantId && saleItemIds.Contains(i.SaleItemId) && d.Status != FulfillmentStatus.Cancelled
             select new { i.SaleItemId, i.Quantity, d.Status })
             .ToListAsync(ct);
 
@@ -429,8 +429,8 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             .ToDictionary(
                 g => g.Key,
                 g => (
-                    Pending: g.Where(a => a.Status == DeliveryStatus.Pending).Sum(a => a.Quantity),
-                    Delivered: g.Where(a => a.Status == DeliveryStatus.Delivered).Sum(a => a.Quantity)));
+                    Pending: g.Where(a => a.Status == FulfillmentStatus.Pending).Sum(a => a.Quantity),
+                    Delivered: g.Where(a => a.Status == FulfillmentStatus.Completed).Sum(a => a.Quantity)));
 
         var deliveryRequired = sale.Items.ToDictionary(i => i.Id, i => i.DeliveryRequiredQuantity);
         return new AvailabilityMap(deliveryRequired, raw);

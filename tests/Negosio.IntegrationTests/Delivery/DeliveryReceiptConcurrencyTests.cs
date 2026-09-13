@@ -118,7 +118,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         results.Count(r => r.IsSuccessStatusCode).Should().Be(1);
 
         var final = await Client.GetFromJsonAsync<DeliveryReceiptDto>($"/api/delivery-receipts/{dr.Id}", TestJson.Options);
-        final!.Status.Should().BeOneOf(DeliveryStatus.Delivered, DeliveryStatus.Cancelled);
+        final!.Status.Should().BeOneOf(FulfillmentStatus.Completed, FulfillmentStatus.Cancelled);
     }
 
     // Controller addendum (Task 9 review gap): the post-lock batch-idempotency re-check — added
