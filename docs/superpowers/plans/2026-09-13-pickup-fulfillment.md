@@ -1286,13 +1286,14 @@ And add a method-aware report index beside the existing ones:
 
 Delete the now-superseded `IX_DeliveryReceipts_SaleId_SequenceNumber` and `IX_DeliveryReceipts_TenantId_Status_ScheduledDeliveryDate` index definitions.
 
-- [ ] **Step 7: Run the unit tests and build the infrastructure project**
+- [ ] **Step 7: Verify — accounting for the Task 3 compile handoff still being open**
 
-Run: `dotnet test tests/Negosio.UnitTests --filter FulfillmentConversionTests`
-Expected: PASS.
+Two things this plan assumed independently would build clean at this point are wrong, discovered during Task 3's execution: `Negosio.UnitTests` has a `ProjectReference` to `Negosio.Application`, and **`Negosio.Infrastructure` also references `Negosio.Application`** (`Api → Infrastructure → Application → Domain`). Task 3 deliberately left `Negosio.Application` non-compiling (`DeliveryReceiptService.cs`, `ReportsService.cs`, 18 errors), and that handoff is still open — it closes at Task 6 Step 4, not before. So neither `dotnet test tests/Negosio.UnitTests --filter FulfillmentConversionTests` nor `dotnet build src/Negosio.Infrastructure` can succeed yet, through no fault of this task.
 
-Run: `dotnet build src/Negosio.Infrastructure`
-Expected: 0 errors. (The solution as a whole still fails on the application layer — Task 3's intentional handoff, still open until Task 7.)
+Verify instead like this:
+1. `dotnet build src/Negosio.Domain` — expected 0 errors. `FulfillmentConversion.cs` depends only on `Negosio.Domain.Common`/`Negosio.Domain.Enums`, so this proves the entity itself is sound in isolation.
+2. For the new unit tests, use the same scratchpad-harness technique Task 3 used: a throwaway, uncommitted `.csproj` under your scratchpad directory referencing only `Negosio.Domain.csproj` plus xunit/FluentAssertions, with a copy of the exact committed `FulfillmentConversionTests.cs` dropped in. Report the real pass/fail count from that harness.
+3. `dotnet build Negosio.sln` — expected to fail with errors, but **compare the error list against Task 3's known baseline** (18 errors + 1 warning, confined to `DeliveryReceiptService.cs` and `ReportsService.cs`). Your own EF-configuration changes in this task must not introduce any *new* error beyond that baseline — if the count or location changes, that's a real defect in this task's work, not an expected handoff. Paste the full comparison into your report.
 
 - [ ] **Step 8: Commit**
 
