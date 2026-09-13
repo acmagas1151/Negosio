@@ -56,17 +56,17 @@ public class DeliveryReceiptSchemaTests : IntegrationTest
 
         var receiptId = await InScopeAsync(async db =>
         {
-            var receipt = DeliveryReceipt.Create(
+            var receipt = DeliveryReceipt.CreateDelivery(
                 tenantId,
                 branchId,
                 saleId: null,
                 relatedSaleNumber: "S-0001",
                 sequenceNumber: 1,
-                scheduledDeliveryDate: new DateOnly(2026, 9, 15),
+                scheduledDate: new DateOnly(2026, 9, 15),
                 recipientName: "Juan Dela Cruz",
                 deliveryAddress: "123 Rizal St, Odiongan, Romblon",
                 contactNumber: "09171234567",
-                deliveryNotes: "Leave with the guard.",
+                notes: "Leave with the guard.",
                 preparedByUserId: userId,
                 preparedByNameSnapshot: "Ace Agas");
 
