@@ -58,6 +58,8 @@ public interface ITenantDbContext : IAsyncDisposable
 
     DbSet<DeliveryReceiptItem> DeliveryReceiptItems { get; }
 
+    DbSet<FulfillmentConversion> FulfillmentConversions { get; }
+
     DbSet<DocumentNumberCounter> DocumentNumberCounters { get; }
 
     DbSet<UserPermissionGrant> UserPermissionGrants { get; }
