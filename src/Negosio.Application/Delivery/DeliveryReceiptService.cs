@@ -621,9 +621,24 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
                 "This schedule was changed by someone else. Please refresh and try again.");
         }
 
-        var sale = await _db.Sales.AsNoTracking()
-            .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == saleId, ct)
-            ?? throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
+        // A disposition that builds a replacement is creating a brand-new schedule, so it must clear the
+        // SAME sale-status gate CreateScheduleAsync does. Without this, a sale voided while one of its
+        // schedules was still Pending could gain a fresh Pending schedule through the cancel-with-conversion
+        // back door — a schedule the create endpoints would have refused outright.
+        // The two release-only dispositions (DeliverLater / PickupLater) are deliberately NOT gated: they
+        // create nothing, and the quantity they release back to unscheduled can never actually be used,
+        // because creating a schedule against a voided sale is already blocked.
+        Sale sale;
+        if (buildReplacement is not null)
+        {
+            sale = await LoadFulfillableSaleAsync(tenantId, saleId, ct);
+        }
+        else
+        {
+            sale = await _db.Sales.AsNoTracking()
+                .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == saleId, ct)
+                ?? throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
+        }
 
         // TRACKED on purpose — ConvertFulfillment mutates these rows, and it is the only mutator either
         // intent column has after checkout.

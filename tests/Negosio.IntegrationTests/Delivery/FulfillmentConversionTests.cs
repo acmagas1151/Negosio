@@ -2,8 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Negosio.Application.Common;
 using Negosio.Application.Delivery;
 using Negosio.Application.Pos;
+using Negosio.Application.Sales;
 using Negosio.Domain.Entities;
 using Negosio.Domain.Enums;
 using Negosio.IntegrationTests.Infrastructure;
@@ -334,6 +336,72 @@ public class FulfillmentConversionTests : IntegrationTest
 
         // Nothing was cancelled or converted by the rejected calls.
         (await GetConversionsAsync(scene.SaleId)).Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// A disposition that builds a replacement creates a brand-new schedule, so it must clear the same
+    /// sale-status gate the create endpoints enforce. Voiding a sale does not currently block it from
+    /// having a still-Pending schedule, so without this guard a voided sale could gain a fresh Pending
+    /// pickup through the cancel-with-conversion back door — one that
+    /// <c>POST /api/sales/{id}/pickups</c> would have refused outright.
+    /// <para>The whole attempt must be a no-op, not a partial one: same all-or-nothing guarantee as a
+    /// failed replacement, reached from a different trigger.</para>
+    /// </summary>
+    [Fact]
+    public async Task Cancelling_into_a_replacement_is_rejected_when_the_sale_was_voided()
+    {
+        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
+        var delivery = await CreateDeliveryAsync(scene, 4m);
+
+        (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/void", new VoidSaleRequest("Wrong customer")))
+            .EnsureSuccessStatusCode();
+
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{delivery.Id}/cancel",
+            new CancelDeliveryRequest("Customer will collect instead", CancellationDisposition.ConvertToPickup,
+                new PickupReplacementInput(Today.AddDays(1), "Maria Santos", null, null)));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadFromJsonAsync<ApiErrorBody>(TestJson.Options))!
+            .Code.Should().Be(ErrorCodes.DeliveryReceiptNotAllowed);
+
+        // Nothing was written: no replacement pickup, no conversion row, no intent movement.
+        await InScopeAsync(async db =>
+        {
+            (await db.DeliveryReceipts.CountAsync(d => d.SaleId == scene.SaleId)).Should().Be(1);
+            (await db.DeliveryReceipts.CountAsync(d =>
+                d.SaleId == scene.SaleId && d.Method == FulfillmentMethod.Pickup)).Should().Be(0);
+            return true;
+        });
+        (await GetConversionsAsync(scene.SaleId)).Should().BeEmpty();
+
+        var intent = await GetIntentAsync(scene.SaleItemId);
+        intent.Delivery.Should().Be(6m);
+        intent.Pickup.Should().Be(0m);
+
+        // And the delivery itself was not cancelled — the cancellation is part of the same transaction.
+        var reloaded = await Client.GetFromJsonAsync<FulfillmentScheduleDto>(
+            $"/api/delivery-receipts/{delivery.Id}", TestJson.Options);
+        reloaded!.Status.Should().Be(FulfillmentStatus.Pending);
+        reloaded.CancellationDisposition.Should().BeNull();
+    }
+
+    /// <summary>A release-only disposition creates nothing, so it stays permitted even on a voided sale —
+    /// the released quantity can never be used, because creating a schedule against a voided sale is
+    /// already blocked at the create endpoint.</summary>
+    [Fact]
+    public async Task Cancelling_with_a_release_only_disposition_still_works_on_a_voided_sale()
+    {
+        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
+        var delivery = await CreateDeliveryAsync(scene, 4m);
+
+        (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/void", new VoidSaleRequest("Wrong customer")))
+            .EnsureSuccessStatusCode();
+
+        var (status, body) = await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null);
+
+        status.Should().Be(HttpStatusCode.OK);
+        body!.Cancelled.Status.Should().Be(FulfillmentStatus.Cancelled);
+        body.Replacement.Should().BeNull();
     }
 
     /// <summary>Spec test 22 — Delivered is terminal.</summary>
