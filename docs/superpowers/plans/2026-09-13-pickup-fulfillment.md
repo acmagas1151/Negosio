@@ -417,12 +417,73 @@ Expected: PASS (the file's pre-existing facts plus the 8 new ones).
 Run: `dotnet build Negosio.sln`
 Expected: 0 errors — every existing `AddItem` call site omits the new trailing optional parameter and still compiles.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Suppress EF Core 9's runtime model/snapshot check for the duration of this multi-task migration gap**
+
+> **Ruling made during this task's execution (recorded in the SDD ledger):** the solution still builds
+> cleanly right up through this task, but this task's new `SaleItems.PickupRequiredQuantity` column has
+> no migration yet (Task 7 covers the combined migration for Tasks 1-6). EF Core 9 raises a hard runtime
+> exception, `PendingModelChangesWarning`, from `Database.MigrateAsync()` whenever the live model
+> disagrees with `TenantDbContextModelSnapshot.cs` — which this task's own change now causes. Left alone,
+> that breaks tenant provisioning (`TenantProvisioningService.ProvisionAsync` → `MigrateAsync`) for every
+> integration test that registers a tenant. It will recur again at the Task 6 Step 4-6 boundary, where the
+> build becomes compilable again before Task 7's migration lands. This step opens one temporary, bounded
+> window that Task 7 Step 5 closes once the real migration exists.
+
+In `src/Negosio.Infrastructure/Tenancy/TenantDbContextFactory.cs`, in `CreateForConnection`:
+
+```csharp
+public ITenantDbContext CreateForConnection(string connectionString)
+{
+    var options = new DbContextOptionsBuilder<TenantDbContext>()
+        .UseSqlServer(connectionString, sql => sql.MigrationsAssembly(typeof(TenantDbContext).Assembly.FullName))
+        // TEMPORARY (removed by pickup-fulfillment plan Task 7): Tasks 2-6 of that plan add EF-mapped
+        // columns ahead of a single combined migration in Task 7, which makes EF Core 9's runtime
+        // model/snapshot check throw PendingModelChangesWarning on every MigrateAsync call until that
+        // migration lands. Task 7 removes this line once the model and snapshot agree again.
+        .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
+        .Options;
+
+    return new TenantDbContext(options);
+}
+```
+
+Add `using Microsoft.EntityFrameworkCore.Diagnostics;` if `RelationalEventId` doesn't already resolve. This is the single choke point every runtime `MigrateAsync` call for tenant databases goes through (API startup in `Program.cs`, `TenantProvisioningService`, and the `TenantMigrationTests` idempotency test) — one change closes the gap everywhere it's needed.
+
+- [ ] **Step 8: Generate this task's own migration — do not defer it to Task 7**
+
+`PickupRequiredQuantity` is written on **every checkout**, not just pickup-specific flows — `SaleItems` is one of the most heavily-inserted tables in the whole schema. Deferring its migration to Task 7 (5 tasks away) would mean EF sends `INSERT INTO SaleItems (..., PickupRequiredQuantity, ...)` against a real database that doesn't have that column, failing with SQL error 207 (`Invalid column name`) on essentially every integration test that performs a checkout — Sales, Reports, Registers, Delivery, and Checkout tests alike. `HasDefaultValue(0m)` only affects generated DDL; it does not stop EF from including the property in the INSERT column list. This is a much wider blast radius than Task 3/4's upcoming `DeliveryReceipts`-scoped changes (written only by delivery/pickup-specific flows, a small fraction of the suite), so — unlike those — it must not wait for Task 7. The solution is still fully buildable right now, so generate a small, standalone migration for just this column:
+
+```bash
+dotnet tool restore
+dotnet dotnet-ef migrations add AddPickupRequiredQuantityToSaleItems --context TenantDbContext \
+  --project src/Negosio.Infrastructure --startup-project src/Negosio.Api \
+  --output-dir Persistence/Migrations/Tenant --namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
+```
+
+Inspect the generated `Up()`: it should be exactly one statement, `AddColumn<decimal>("PickupRequiredQuantity", "SaleItems", type: "decimal(18,3)", nullable: false, defaultValue: 0m)`. If it's anything more or less than that, stop and report it — this column is the only schema change this task makes. Then apply it:
+
+```bash
+dotnet dotnet-ef database update --context TenantDbContext \
+  --project src/Negosio.Infrastructure --startup-project src/Negosio.Api
+```
+
+Because the ConfigureWarnings suppression from Step 7 is still in place, running `database update` here will not itself fail even though the model still has the (separate, unrelated) Task-1-era enum shape it's always had — but this specific migration should apply cleanly regardless.
+
+Since this migration closes the model/snapshot gap **for this one column only**, remove the `PickupRequiredQuantity` bullet from Task 7 Step 2's checklist mentally (the plan text there is corrected already) — Task 7's own migration will no longer propose adding this column, because by then the model and snapshot already agree on it.
+
+- [ ] **Step 9: Run the full backend suite**
+
+Run: `dotnet test Negosio.sln --no-build` (synchronously, to completion — see the note above about not backgrounding this).
+Expected: **fully green**, matching the pre-Task-2 baseline of 433 plus this task's 8 new unit tests (441 total, or whatever the actual new unit-test count is — report the real numbers). The migration in Step 8 is what makes this possible; if any test still fails with an `Invalid column name` or `PendingModelChangesWarning` error, Steps 7-8 didn't fully close the gap — investigate before committing. A failure for any *other* reason is a real regression.
+
+- [ ] **Step 10: Commit**
 
 ```bash
 git add -A
 git commit -m "feat(sales): SaleItem carries pickup intent and an audited conversion mutator"
 ```
+
+Include the new migration files, the `TenantDbContextFactory.cs` change, and everything from Steps 1-6 in this same commit (or a small number of clearly-labeled commits) — this task is not done until the working tree is clean and the full suite is green.
 
 ---
 
@@ -1804,7 +1865,7 @@ Expected: **0 errors.** This is the task's real checkpoint and the precondition 
 - [ ] **Step 6: Run the suite and record what fails**
 
 Run: `dotnet test`
-Expected: the pre-existing suite passes; the new `PickupTests` and `FulfillmentConversionTests` **fail at runtime** with SQL errors about missing columns (`PickupRequiredQuantity`, `Method`, `FulfillmentConversions`). That is correct and expected — the schema does not exist until Task 7 applies the migration. Record the failure count and confirm every failure is one of those two new files. A failure anywhere else is a real regression and must be fixed before committing.
+Expected: **not** a clean pass. Task 2 already migrated `PickupRequiredQuantity`, so checkout/sales/reports/register tests are unaffected — but Task 3's `DeliveryReceipts` column renames (`ScheduledDeliveryDate`→`ScheduledDate` etc.) and Task 4's `FulfillmentConversions` table have no migration yet (Task 7 is next). Every test that creates or reads a `DeliveryReceipt` — the existing `DeliveryReceiptCreateTests`, `DeliveryReceiptStatusTests`, `DeliveryReceiptConcurrencyTests`, the delivery-report tests in `ReportsTests`, **plus** the new `PickupTests` and `FulfillmentConversionTests` — will fail at runtime with SQL errors (`Invalid column name` / `Invalid object name 'FulfillmentConversions'`). That is correct and expected: this is a materially wider failure set than "just the two new files," because the rename affects every existing delivery test, not only new pickup code. Confirm every failure traces to a `DeliveryReceipts`/`DeliveryReceiptItem`/`FulfillmentConversions` schema mismatch and record the failure count; a failure in an unrelated area (checkout, catalog, staff, branches, etc.) is a real regression and must be fixed before committing. Task 7, immediately next, is what turns this fully green.
 
 - [ ] **Step 7: Commit**
 
@@ -1863,7 +1924,7 @@ Expected statements, and what to check for each:
 - `RenameColumn` × 4 — `ScheduledDeliveryDate`→`ScheduledDate`, `DeliveredAtUtc`→`CompletedAtUtc`, `DeliveredByUserId`→`CompletedByUserId`, `DeliveryNotes`→`Notes`. EF should emit `RenameColumn` (preserving data), **not** a drop+add pair. If it emitted drop+add, replace those with `migrationBuilder.RenameColumn(...)` by hand — a drop+add would silently destroy every existing delivery's scheduled date and delivered-at audit trail.
 - `AlterColumn<string>("DeliveryAddress", nullable: true, oldNullable: false)` — widening, always safe.
 - `AddColumn<int>("CancellationDisposition", "DeliveryReceipts", nullable: true)` — no backfill: existing cancelled deliveries genuinely have no recorded disposition (they predate the concept), and inventing one would be fabricating history. The UI shows "—" for them.
-- `AddColumn<decimal>("PickupRequiredQuantity", "SaleItems", precision 18/3, defaultValue: 0m)` — every existing sale item had no pickup allocation, so 0 is exactly right and no false pickup backlog is created.
+- **No `PickupRequiredQuantity` statement.** Task 2 generated its own standalone migration for that column (`AddPickupRequiredQuantityToSaleItems`) because it's written on every checkout, far too wide a blast radius to defer 5 tasks — see the ruling note in Task 2. The model and snapshot already agree on it, so this migration should not propose touching it. If it does, that means something about the model changed again since Task 2 in a way that wasn't intended — stop and investigate rather than accepting it.
 - `CreateTable("FulfillmentConversions", ...)` + its four indexes + two FKs.
 - `DropIndex`/`CreateIndex` for the two replaced `DeliveryReceipts` indexes.
 
@@ -1875,7 +1936,7 @@ dotnet dotnet-ef migrations script --idempotent --context TenantDbContext \
   --output ../../add-pickup.sql
 ```
 
-(Windows machine — write the script somewhere outside the repo tree or into your scratchpad; do not commit it.) Read the generated SQL and confirm: the renames are `sp_rename` calls (data-preserving), `Method` gets `DEFAULT 2`, `PickupRequiredQuantity` gets `DEFAULT 0.0`, and nothing drops a column that holds data.
+(Windows machine — write the script somewhere outside the repo tree or into your scratchpad; do not commit it.) Read the generated SQL and confirm: the renames are `sp_rename` calls (data-preserving), `Method` gets `DEFAULT 2`, and nothing drops a column that holds data.
 
 - [ ] **Step 4: Apply and spot-check**
 
@@ -1887,7 +1948,6 @@ dotnet dotnet-ef database update --context TenantDbContext \
 Then, against a real tenant database that already has delivery rows (find one via the platform DB's `TenantDatabases` table — the previous migration's report confirmed ~25 exist locally), verify with direct queries:
 - Every existing `DeliveryReceipts` row has `Method = 2`.
 - `ScheduledDate` still holds each row's original date (renamed, not recreated) and `CompletedAtUtc` still holds the original delivered timestamps — this is the check that proves the rename preserved data.
-- Every `SaleItems` row has `PickupRequiredQuantity = 0`.
 - `FulfillmentConversions` exists and is empty.
 - No row anywhere has a non-null `CancellationDisposition` yet.
 
