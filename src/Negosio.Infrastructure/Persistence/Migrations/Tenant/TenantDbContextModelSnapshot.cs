@@ -295,7 +295,7 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                     b.Property<int>("Status")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int")
-                        .HasDefaultValue(2);
+                        .HasDefaultValue(3);
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uniqueidentifier");

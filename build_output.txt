@@ -1,0 +1,14 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Negosio.Domain -> C:\Users\Ace\Documents\Negosio\src\Negosio.Domain\bin\Debug\net9.0\Negosio.Domain.dll
+  Negosio.Application -> C:\Users\Ace\Documents\Negosio\src\Negosio.Application\bin\Debug\net9.0\Negosio.Application.dll
+  Negosio.Infrastructure -> C:\Users\Ace\Documents\Negosio\src\Negosio.Infrastructure\bin\Debug\net9.0\Negosio.Infrastructure.dll
+  Negosio.UnitTests -> C:\Users\Ace\Documents\Negosio\tests\Negosio.UnitTests\bin\Debug\net9.0\Negosio.UnitTests.dll
+  Negosio.Api -> C:\Users\Ace\Documents\Negosio\src\Negosio.Api\bin\Debug\net9.0\Negosio.Api.dll
+  Negosio.IntegrationTests -> C:\Users\Ace\Documents\Negosio\tests\Negosio.IntegrationTests\bin\Debug\net9.0\Negosio.IntegrationTests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:01.14
