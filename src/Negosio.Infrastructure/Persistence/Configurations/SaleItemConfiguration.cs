@@ -31,6 +31,7 @@ public sealed class SaleItemConfiguration : IEntityTypeConfiguration<SaleItem>
         builder.Property(i => i.CostPriceSnapshot).HasPrecision(18, 2);
         builder.Property(i => i.ReturnedQuantity).HasPrecision(18, 3);
         builder.Property(i => i.DeliveryRequiredQuantity).HasPrecision(18, 3).HasDefaultValue(0m);
+        builder.Property(i => i.PickupRequiredQuantity).HasPrecision(18, 3).HasDefaultValue(0m);
         builder.Property(i => i.CreatedAtUtc).IsRequired();
         builder.Property(i => i.UpdatedAtUtc).IsRequired();
 

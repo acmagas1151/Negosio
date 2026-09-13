@@ -106,23 +106,31 @@ public class Sale : Entity
         decimal taxAmount,
         decimal netAmount,
         decimal? costPriceSnapshot,
-        decimal deliveryRequiredQuantity = 0m)
+        decimal deliveryRequiredQuantity = 0m,
+        decimal pickupRequiredQuantity = 0m)
     {
         if (quantity <= 0m)
         {
             throw new ArgumentOutOfRangeException(nameof(quantity), "Quantity must be greater than zero.");
         }
 
-        if (deliveryRequiredQuantity < 0m || deliveryRequiredQuantity > quantity)
+        if (deliveryRequiredQuantity < 0m || pickupRequiredQuantity < 0m)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(deliveryRequiredQuantity), "Delivery-required quantity must be between 0 and the sold quantity.");
+                nameof(deliveryRequiredQuantity), "Fulfillment quantities cannot be negative.");
+        }
+
+        if (deliveryRequiredQuantity + pickupRequiredQuantity > quantity)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(deliveryRequiredQuantity),
+                "Delivery plus pickup quantity cannot exceed the sold quantity.");
         }
 
         var item = new SaleItem(
             TenantId, Id, productVariantId, productNameSnapshot, variantNameSnapshot, skuSnapshot,
             barcodeSnapshot, unitPrice, quantity, discountKind, discountValue, grossAmount,
-            discountAmount, taxAmount, netAmount, costPriceSnapshot, deliveryRequiredQuantity);
+            discountAmount, taxAmount, netAmount, costPriceSnapshot, deliveryRequiredQuantity, pickupRequiredQuantity);
         _items.Add(item);
         return item;
     }

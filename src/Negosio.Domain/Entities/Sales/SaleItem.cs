@@ -32,7 +32,8 @@ public class SaleItem : Entity
         decimal taxAmount,
         decimal netAmount,
         decimal? costPriceSnapshot,
-        decimal deliveryRequiredQuantity)
+        decimal deliveryRequiredQuantity,
+        decimal pickupRequiredQuantity)
     {
         TenantId = tenantId;
         SaleId = saleId;
@@ -52,6 +53,7 @@ public class SaleItem : Entity
         CostPriceSnapshot = costPriceSnapshot;
         ReturnedQuantity = 0m;
         DeliveryRequiredQuantity = deliveryRequiredQuantity;
+        PickupRequiredQuantity = pickupRequiredQuantity;
     }
 
     public Guid TenantId { get; private set; }
@@ -91,14 +93,65 @@ public class SaleItem : Entity
 
     public decimal ReturnableQuantity => Quantity - ReturnedQuantity;
 
-    /// <summary>Set once, at checkout, from the client's requested delivery quantity for this line —
-    /// never mutated afterward. A future correction (e.g. the cashier mis-split delivery vs. take-now)
-    /// must go through a deliberate adjustment workflow, not a setter on this property; none exists
-    /// today, matching the plan's explicit "no silent change after checkout" constraint.</summary>
+    /// <summary>Set once, at checkout, from the client's requested delivery quantity for this line.
+    /// After checkout it changes only via <see cref="ConvertFulfillment"/>, which the calling service
+    /// always pairs with an immutable FulfillmentConversion event in the same transaction — that event
+    /// log is what keeps the ORIGINAL checkout allocation reconstructable (current minus replayed
+    /// conversions), which is why no duplicate "original" column exists.</summary>
     public decimal DeliveryRequiredQuantity { get; private set; }
 
-    /// <summary>Computed, never persisted — the portion of this line the customer takes at checkout.</summary>
-    public decimal TakeNowQuantity => Quantity - DeliveryRequiredQuantity;
+    /// <summary>The portion of this line the customer will collect after checkout. Same mutation rule as
+    /// <see cref="DeliveryRequiredQuantity"/>.</summary>
+    public decimal PickupRequiredQuantity { get; private set; }
+
+    /// <summary>Computed, never persisted — the portion the customer received during checkout. Take-now
+    /// is complete the moment the sale completes, and can never be scheduled or converted afterwards.</summary>
+    public decimal TakeNowQuantity => Quantity - DeliveryRequiredQuantity - PickupRequiredQuantity;
+
+    /// <summary>
+    /// Moves intent quantity between the two post-checkout methods. The ONLY mutator for either intent
+    /// column after checkout. Callers must write a FulfillmentConversion row in the same transaction —
+    /// this method deliberately does not know about persistence, so that invariant is enforced by the
+    /// service layer and its tests, not here.
+    /// <para>Take-now is rejected on both sides: it means "received during checkout", which cannot become
+    /// true after the fact, and its quantity is already complete so it can never be re-allocated.</para>
+    /// </summary>
+    public void ConvertFulfillment(FulfillmentMethod from, FulfillmentMethod to, decimal quantity)
+    {
+        if (quantity <= 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(quantity), "Conversion quantity must be greater than zero.");
+        }
+
+        if (from == FulfillmentMethod.TakeNow || to == FulfillmentMethod.TakeNow)
+        {
+            throw new InvalidOperationException("Take-now is a checkout-time method and cannot be converted to or from.");
+        }
+
+        if (from == to)
+        {
+            throw new InvalidOperationException("A conversion must change the fulfillment method.");
+        }
+
+        var available = from == FulfillmentMethod.Delivery ? DeliveryRequiredQuantity : PickupRequiredQuantity;
+        if (quantity > available)
+        {
+            throw new InvalidOperationException($"Cannot convert {quantity} — only {available} is held by {from}.");
+        }
+
+        if (from == FulfillmentMethod.Delivery)
+        {
+            DeliveryRequiredQuantity -= quantity;
+            PickupRequiredQuantity += quantity;
+        }
+        else
+        {
+            PickupRequiredQuantity -= quantity;
+            DeliveryRequiredQuantity += quantity;
+        }
+
+        Touch();
+    }
 
     public void RecordReturn(decimal quantity)
     {
