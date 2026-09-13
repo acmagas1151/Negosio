@@ -1822,6 +1822,20 @@ git commit -m "feat(delivery): pickup scheduling, claiming and atomic dispositio
 > leave the application and API layers non-compiling, and Task 6 Step 4 is what closes them. Generating
 > the migration before that lands would simply fail. (A prior plan in this repo hit exactly this and had
 > to reorder mid-execution — this ordering is that lesson applied up front.)
+>
+> **Ruling made during Task 2 execution (recorded in the SDD ledger):** EF Core 9 raises a hard runtime
+> exception (`PendingModelChangesWarning`) from `Database.MigrateAsync()` whenever the live model (built
+> from the `IEntityTypeConfiguration` classes) disagrees with `TenantDbContextModelSnapshot.cs` — which is
+> exactly the state every task between Task 2 and this one deliberately creates. Left unhandled, that
+> breaks tenant provisioning for every integration test from Task 2 through the end of Task 6, since
+> `TenantProvisioningService` calls `MigrateAsync` on every `POST /api/auth/register`. Task 2 added
+> `.ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))` to the
+> `DbContextOptionsBuilder<TenantDbContext>` in `src/Negosio.Infrastructure/Tenancy/TenantDbContextFactory.cs`
+> (the single choke point every runtime `MigrateAsync` call for tenant databases goes through — startup,
+> provisioning, and the `TenantMigrationTests` idempotency test all resolve through it) to hold the gap
+> open. **This task is responsible for closing it again** — see Step 5 below. Leaving the suppression in
+> place permanently would silently defeat EF's real safety net against a forgotten migration in every
+> future feature.
 
 **Files:**
 - Create: `src/Negosio.Infrastructure/Persistence/Migrations/Tenant/<timestamp>_AddPickupFulfillment.cs` (+ `.Designer.cs`) — generated, then inspected
@@ -1879,17 +1893,25 @@ Then, against a real tenant database that already has delivery rows (find one vi
 
 Report the actual row counts you saw, not a summary — if a tenant database has zero delivery rows, say so, because then the rename check proved nothing there and you need to find one that does.
 
-- [ ] **Step 5: Run the full backend suite**
+- [ ] **Step 5: Remove the temporary `PendingModelChangesWarning` suppression**
+
+Task 2 added `.ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))` to the `DbContextOptionsBuilder<TenantDbContext>` inside `src/Negosio.Infrastructure/Tenancy/TenantDbContextFactory.cs`, to keep tenant provisioning working while the model legitimately outran the last migration (see the ruling note at the top of this task). The migration you just generated and applied is exactly what closes that gap — **remove the `.ConfigureWarnings(...)` call now** and confirm nothing regresses:
+
+1. Delete the `.ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))` line (and the now-unused `RelationalEventId` import, if nothing else in the file needs it) from `TenantDbContextFactory.CreateForConnection`.
+2. Confirm the model and snapshot now genuinely agree: `dotnet dotnet-ef migrations add __ProbeNoOp__ --context TenantDbContext --project src/Negosio.Infrastructure --startup-project src/Negosio.Api --output-dir Persistence/Migrations/Tenant` should report **"No changes were detected"** and generate nothing. Because you already removed the exception suppression, running the probe with the suppression gone (not before) is what proves the real safety net is back and would genuinely fire if something were still missing — a probe run beforehand, while the suppression is still active, would only tell you EF *design-time* tooling agrees, not that the *runtime* check is safely re-armed. If EF proposes any change, do not accept it as a fix here — that means Step 1-4 missed something; stop and report it instead of letting the probe migration paper over it.
+3. Confirm `git status` shows no new migration file was left behind (delete one if the probe unexpectedly generated it, per its own instructions above).
+
+- [ ] **Step 6: Run the full backend suite**
 
 Run: `dotnet test`
-Expected: **everything green, including the `PickupTests` and `FulfillmentConversionTests` that failed on missing columns at the end of Task 6** — applying this migration is precisely what fixes them. If one of those tests now fails for a *logic* reason rather than a schema reason, that is a real defect in Task 6's service: report it rather than adjusting the test.
+Expected: **everything green, including the `PickupTests` and `FulfillmentConversionTests` that failed on missing columns at the end of Task 6** — applying this migration is precisely what fixes them, and removing the suppression in Step 5 must not reintroduce the `PendingModelChangesWarning` failures Task 2 worked around. If one of those tests now fails for a *logic* reason rather than a schema reason, that is a real defect in Task 6's service: report it rather than adjusting the test.
 
-This is the plan's first fully-green checkpoint. Record the exact pass count.
+This is the plan's first fully-green checkpoint with the real safety net back in place. Record the exact pass count.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/Negosio.Infrastructure/Persistence/Migrations/Tenant/
+git add src/Negosio.Infrastructure/Persistence/Migrations/Tenant/ src/Negosio.Infrastructure/Tenancy/TenantDbContextFactory.cs
 git commit -m "feat(db): migration for pickup fulfillment, method discriminator and the conversion log"
 ```
 
