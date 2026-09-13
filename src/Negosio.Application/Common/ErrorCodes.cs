@@ -111,4 +111,9 @@ public static class ErrorCodes
     public const string DeliveryReceiptNotPending = "DELIVERY_RECEIPT_NOT_PENDING";
     public const string DeliveryCancellationReasonRequired = "DELIVERY_CANCELLATION_REASON_REQUIRED";
     public const string DeliveryReceiptConcurrencyConflict = "DELIVERY_RECEIPT_CONCURRENCY_CONFLICT";
+    public const string FulfillmentMethodMismatch = "FULFILLMENT_METHOD_MISMATCH";
+    public const string InvalidCancellationDisposition = "INVALID_CANCELLATION_DISPOSITION";
+    public const string ReplacementDetailsRequired = "REPLACEMENT_DETAILS_REQUIRED";
+    public const string PickupQuantityExceedsAvailable = "PICKUP_QUANTITY_EXCEEDS_AVAILABLE";
+    public const string PickupScheduleDateInPast = "PICKUP_SCHEDULE_DATE_IN_PAST";
 }

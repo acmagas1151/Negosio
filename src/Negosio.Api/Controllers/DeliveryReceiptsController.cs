@@ -28,7 +28,7 @@ public sealed class DeliveryReceiptsController : ControllerBase
     // Narrower than the class-level SalesView — Owner/Admin/Manager only (see the plan's Global
     // Constraints / recommended authorization levels).
     [HttpPost("{id:guid}/cancel")]
-    [Authorize(Policy = AuthorizationPolicies.DeliveryCancel)]
+    [Authorize(Policy = AuthorizationPolicies.FulfillmentCancel)]
     [ProducesResponseType(typeof(DeliveryReceiptDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<DeliveryReceiptDto>> Cancel(
         Guid id, [FromBody] CancelDeliveryReceiptRequest request, CancellationToken ct)

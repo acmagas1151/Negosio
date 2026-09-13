@@ -1,26 +1,48 @@
 namespace Negosio.Application.Delivery;
 
 /// <summary>
-/// Derives a <see cref="SaleFulfillmentStatus"/> from a sale's aggregate delivery figures. Priority-
-/// ordered — the first matching rule wins. Pure and stateless: both <see cref="DeliveryReceiptService"/>
-/// (the Sale-detail fulfillment summary) and <see cref="Reports.ReportsService"/> (the Sale fulfillment
-/// report view) call this so the two views can never disagree about what a sale's status is.
+/// Derives a sale's overall <see cref="SaleFulfillmentStatus"/> from its aggregate quantities.
+/// Priority-ordered — first matching rule wins. Pure and stateless, and deliberately shared by the
+/// Sale-detail summary and the combined report so the two views can never disagree.
 /// </summary>
 public static class SaleFulfillmentCalculator
 {
     public static SaleFulfillmentStatus Derive(
-        decimal totalDeliveryRequiredQuantity,
-        decimal totalPendingQuantity,
-        decimal totalDeliveredQuantity,
-        decimal totalAvailableToScheduleQuantity,
+        decimal soldQuantity,
+        decimal takeNowQuantity,
+        decimal deliveredQuantity,
+        decimal claimedQuantity,
+        decimal deliveryPendingQuantity,
+        decimal pickupPendingQuantity,
+        decimal deliveryUnscheduledQuantity,
+        decimal pickupUnscheduledQuantity,
         bool hasOverduePendingSchedule)
     {
-        if (totalDeliveryRequiredQuantity == 0m) return SaleFulfillmentStatus.NotApplicable;
-        if (totalDeliveredQuantity >= totalDeliveryRequiredQuantity) return SaleFulfillmentStatus.FullyDelivered;
-        if (totalDeliveredQuantity > 0m) return SaleFulfillmentStatus.PartiallyDelivered;
-        if (hasOverduePendingSchedule) return SaleFulfillmentStatus.NeedsRescheduling;
-        if (totalAvailableToScheduleQuantity == 0m) return SaleFulfillmentStatus.FullyScheduled;
-        if (totalPendingQuantity > 0m) return SaleFulfillmentStatus.PartiallyScheduled;
-        return SaleFulfillmentStatus.Unscheduled;
+        var trackedQuantity = soldQuantity - takeNowQuantity;
+        if (trackedQuantity <= 0m) return SaleFulfillmentStatus.NotApplicable;
+
+        if (takeNowQuantity + deliveredQuantity + claimedQuantity >= soldQuantity)
+        {
+            return SaleFulfillmentStatus.Fulfilled;
+        }
+
+        if (hasOverduePendingSchedule) return SaleFulfillmentStatus.NeedsAttention;
+
+        var awaitingDelivery = deliveryPendingQuantity > 0m;
+        var awaitingPickup = pickupPendingQuantity > 0m;
+        if (awaitingDelivery && awaitingPickup) return SaleFulfillmentStatus.AwaitingDeliveryAndPickup;
+        if (awaitingDelivery) return SaleFulfillmentStatus.AwaitingDelivery;
+        if (awaitingPickup) return SaleFulfillmentStatus.AwaitingPickup;
+
+        // Nothing pending. Either some quantity has completed (partially fulfilled with the rest
+        // unscheduled), or nothing has completed at all (nothing scheduled yet).
+        if (deliveryUnscheduledQuantity > 0m || pickupUnscheduledQuantity > 0m)
+        {
+            return deliveredQuantity + claimedQuantity > 0m
+                ? SaleFulfillmentStatus.PartiallyFulfilled
+                : SaleFulfillmentStatus.NeedsScheduling;
+        }
+
+        return SaleFulfillmentStatus.PartiallyFulfilled;
     }
 }
