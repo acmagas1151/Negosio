@@ -914,7 +914,7 @@ git commit -m "feat(delivery): DeliveryReceipt becomes a method-discriminated fu
 - Test: `tests/Negosio.UnitTests/Delivery/FulfillmentConversionTests.cs` (new)
 
 **Interfaces:**
-- Produces: `FulfillmentConversion.Record(...)` factory and its properties; `ITenantDbContext.FulfillmentConversions`. Task 7 (service conversions) writes these rows; Task 11 (combined report) reads them.
+- Produces: `FulfillmentConversion.Record(...)` factory and its properties; `ITenantDbContext.FulfillmentConversions`. Task 6 (service conversions) writes these rows; Task 10 (combined report) reads them.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1790,7 +1790,7 @@ Files and the minimum change each needs:
 
 - `src/Negosio.Api/Controllers/DeliveryReceiptsController.cs` — update to the new DTO names and the renamed `FulfillmentCancel` policy. `POST /{id}/cancel` now needs a `CancelDeliveryRequest` body; pass it straight through to `CancelDeliveryAsync` and return the `CancellationResultDto`. Do **not** add pickup routes yet (Task 8).
 - `src/Negosio.Api/Controllers/SalesController.cs` — the fulfillment endpoint now returns `SaleFulfillmentSummaryDto`; adapt the return type only.
-- `src/Negosio.Application/Reports/ReportsContracts.cs` and `ReportsService.cs` — swap `DeliveryStatus` for `FulfillmentStatus`, `Delivered`/`DeliveredAtUtc` for `Completed`/`CompletedAtUtc`, `ScheduledDeliveryDate` for `ScheduledDate`. Where a query currently selects every `DeliveryReceipt`, add `.Where(d => d.Method == FulfillmentMethod.Delivery)` so the existing delivery report keeps meaning what it meant before pickups existed. The new pickup and combined views are Task 11.
+- `src/Negosio.Application/Reports/ReportsContracts.cs` and `ReportsService.cs` — swap `DeliveryStatus` for `FulfillmentStatus`, `Delivered`/`DeliveredAtUtc` for `Completed`/`CompletedAtUtc`, `ScheduledDeliveryDate` for `ScheduledDate`. Where a query currently selects every `DeliveryReceipt`, add `.Where(d => d.Method == FulfillmentMethod.Delivery)` so the existing delivery report keeps meaning what it meant before pickups existed. The new pickup and combined views are Task 10.
 - `src/Negosio.Application/Pos/CheckoutService.cs` and `Pos/CheckoutContracts.cs` — if Task 2's `Sale.AddItem` signature change reaches here, pass `0m` for `pickupRequiredQuantity` for now. Real 3-way allocation is Task 9.
 - Any test file still referencing renamed members.
 
