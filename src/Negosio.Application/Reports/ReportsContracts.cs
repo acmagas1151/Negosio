@@ -256,14 +256,17 @@ public sealed record FulfillmentReportQuery(
 /// unscheduled pickup produces four of these. <see cref="Status"/> is the only place in the codebase
 /// where <see cref="FulfillmentStatus.Unscheduled"/> legitimately appears — synthesized for intent that
 /// has no matching schedule yet, never a stored row.
+/// <para>A cancelled schedule IS its own row (<see cref="Status"/> = <see cref="FulfillmentStatus.Cancelled"/>),
+/// carrying its cancelled quantity, its own id as <see cref="SourceScheduleId"/>, and — when the
+/// cancellation created one — the schedule it became as <see cref="ReplacementScheduleId"/> (looked up
+/// from <see cref="Negosio.Domain.Entities.FulfillmentConversion.SourceRecordId"/>/
+/// <c>ReplacementRecordId</c>; null for a plain release such as DeliverLater/PickupLater, which creates no
+/// replacement). This is what the report's cancellation/conversion history requirement means: the cancelled
+/// row is history, never re-added to any quantity total — the summary's seven quantity totals are computed
+/// exclusively from non-cancelled schedules, exactly as if this row did not exist for that purpose.</para>
 /// <para><see cref="ScheduledDate"/>/<see cref="CompletedAtUtc"/>/<see cref="RecipientName"/>/
-/// <see cref="SourceScheduleId"/> are null for a synthesized (TakeNow or Unscheduled) row — there is no
-/// schedule to read them from. For a schedule-backed row, <see cref="SourceScheduleId"/> is that
-/// schedule's own id. <see cref="ReplacementScheduleId"/> is reserved for a future audit-trail view: a
-/// cancelled schedule is never itself a row here (its released or converted quantity already shows up as
-/// the current Unscheduled/replacement-method row instead, so showing the cancelled record too would
-/// count the same units twice), which means nothing currently populates it. Full conversion lineage is
-/// available today via <c>GET /api/sales/{id}/fulfillment</c>'s Conversions list.</para>
+/// <see cref="SourceScheduleId"/>/<see cref="ReplacementScheduleId"/> are all null for a synthesized
+/// (TakeNow or Unscheduled) row — there is no schedule to read them from.</para>
 /// </summary>
 public sealed record FulfillmentReportRowDto(
     Guid SaleId,

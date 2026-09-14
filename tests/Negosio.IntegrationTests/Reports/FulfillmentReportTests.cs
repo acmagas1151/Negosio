@@ -183,6 +183,53 @@ public class FulfillmentReportTests : IntegrationTest
         rows.Sum(r => r.Quantity).Should().Be(10m);
     }
 
+    // ---- Review fix: cancellation/conversion history rows, per the spec's explicit "source schedule;
+    // replacement schedule; cancellation and conversion history" requirement for this report ----
+
+    [Fact]
+    public async Task Combined_view_shows_a_cancelled_schedule_as_its_own_row_linked_to_its_replacement_without_double_counting()
+    {
+        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m); // 4 take-now
+        var delivery = await CreateDeliveryAsync(scene, 4m);
+
+        var (status, body) = await CancelDeliveryAsync(
+            delivery.Id, CancellationDisposition.ConvertToPickup,
+            new PickupReplacementInput(Today.AddDays(1), "Maria Santos", null, null), "Customer will collect");
+        status.Should().Be(HttpStatusCode.OK);
+        var replacementPickupId = body!.Replacement!.Id;
+
+        var report = await Client.GetFromJsonAsync<FulfillmentReportResultDto>("/api/reports/fulfillment", TestJson.Options);
+        var rows = report!.Page.Items.Where(r => r.SaleItemId == scene.SaleItemId).ToList();
+
+        // Two rows for this allocation: the cancelled delivery (history), linked FORWARD to what it
+        // became, and the new pending pickup it produced (its own, ordinary row).
+        var cancelledRow = rows.Should()
+            .ContainSingle(r => r.Method == FulfillmentMethod.Delivery && r.Status == FulfillmentStatus.Cancelled).Subject;
+        cancelledRow.Quantity.Should().Be(4m);
+        cancelledRow.SourceScheduleId.Should().Be(delivery.Id);
+        cancelledRow.ReplacementScheduleId.Should().Be(replacementPickupId);
+
+        var pickupRow = rows.Should()
+            .ContainSingle(r => r.Method == FulfillmentMethod.Pickup && r.Status == FulfillmentStatus.Pending).Subject;
+        pickupRow.Quantity.Should().Be(4m);
+        pickupRow.SourceScheduleId.Should().Be(replacementPickupId);
+
+        // The cancelled row's 4 units must never be double-counted anywhere in the summary: the delivery
+        // side shows only the 2 units still genuinely unscheduled (6 required - 4 converted away), never
+        // the cancelled 4 as pending or unscheduled; the pickup side shows the 4 on the NEW pending
+        // schedule, not duplicated. Summing every quantity bucket recovers exactly the sale's 10 units —
+        // if the cancelled row had leaked into a total, this sum would read 14, not 10.
+        var summary = report.Summary;
+        summary.TotalDeliveryPendingQuantity.Should().Be(0m, "the only delivery schedule was cancelled, not left pending");
+        summary.TotalDeliveryUnscheduledQuantity.Should().Be(2m, "6 required - 4 converted away = 2 still genuinely unscheduled");
+        summary.TotalPickupPendingQuantity.Should().Be(4m, "the new pickup schedule, counted once");
+        summary.TotalPickupUnscheduledQuantity.Should().Be(0m);
+        summary.TotalCancelledSchedules.Should().Be(1);
+        (summary.TotalTakeNowQuantity + summary.TotalDeliveryUnscheduledQuantity + summary.TotalDeliveryPendingQuantity
+            + summary.TotalDeliveredQuantity + summary.TotalPickupUnscheduledQuantity + summary.TotalPickupPendingQuantity
+            + summary.TotalClaimedQuantity).Should().Be(10m, "no bucket may double-count the cancelled schedule's quantity");
+    }
+
     // ---- Test 6: the ten-total summary block, cross-checked against SaleFulfillmentCalculator.Derive ----
 
     [Fact]

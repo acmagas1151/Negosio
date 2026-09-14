@@ -348,8 +348,10 @@ public sealed class ReportsService : IReportsService
     /// <summary>
     /// The combined allocation view: one row per sale-item-per-method-per-status "bucket" that actually
     /// holds quantity, across BOTH fulfillment methods, plus a synthesized Take-now row and synthesized
-    /// Unscheduled rows for intent that has no schedule yet. See <see cref="FulfillmentReportRowDto"/>'s
-    /// doc comment for exactly what each row means.
+    /// Unscheduled rows for intent that has no schedule yet, plus a row for every CANCELLED schedule (the
+    /// report's cancellation/conversion history requirement) carrying a <c>ReplacementScheduleId</c> when
+    /// the cancellation produced one. See <see cref="FulfillmentReportRowDto"/>'s doc comment for exactly
+    /// what each row means.
     /// <para><b>Why the delivery-charge total can never be multiplied here</b> (the bug this whole task is
     /// most at risk of reintroducing, per the plan's Global Constraints): <paramref name="query"/>'s
     /// qualifying-sale set below is materialized as <c>sales</c> — ONE row per Sale, selected directly off
@@ -417,8 +419,11 @@ public sealed class ReportsService : IReportsService
             .ToListAsync(cancellationToken);
         var itemIds = items.Select(i => i.Id).ToList();
 
-        // Cancelled schedules are excluded here (their released/converted quantity already shows up as
-        // an Unscheduled or replacement-method row instead) — see FulfillmentReportRowDto's doc comment.
+        // Non-cancelled schedules only — this is the set every QUANTITY total below is computed from
+        // (Pending/Completed sums, and therefore Unscheduled = intent minus these). Cancelled schedules
+        // must never contribute to a quantity total (their released/converted quantity already shows up
+        // in the Unscheduled or replacement-method figures instead), which is why this query stays
+        // Cancelled-excluding exactly as before.
         var scheduleRows = await (
             from dri in _db.DeliveryReceiptItems.AsNoTracking()
             join dr in _db.DeliveryReceipts.AsNoTracking() on dri.DeliveryReceiptId equals dr.Id
@@ -437,9 +442,48 @@ public sealed class ReportsService : IReportsService
             .ToListAsync(cancellationToken);
         var scheduleRowsByItem = scheduleRows.ToLookup(r => r.SaleItemId);
 
+        // Cancelled schedules, queried SEPARATELY, purely to surface their own history ROWS — the spec
+        // requires "cancellation and conversion history" in this report's row set. Never merged into
+        // scheduleRows and never fed into any total* accumulator below: only the row-building loop reads
+        // this, and a cancelled schedule's quantity is deliberately never added to a summary total.
+        var cancelledScheduleRows = await (
+            from dri in _db.DeliveryReceiptItems.AsNoTracking()
+            join dr in _db.DeliveryReceipts.AsNoTracking() on dri.DeliveryReceiptId equals dr.Id
+            where itemIds.Contains(dri.SaleItemId) && dr.Status == FulfillmentStatus.Cancelled
+            select new
+            {
+                dri.SaleItemId,
+                dri.Quantity,
+                ScheduleId = dr.Id,
+                dr.Method,
+                dr.Status,
+                dr.ScheduledDate,
+                dr.CompletedAtUtc,
+                dr.RecipientName,
+            })
+            .ToListAsync(cancellationToken);
+        var cancelledScheduleRowsByItem = cancelledScheduleRows.ToLookup(r => r.SaleItemId);
+
+        // What each cancelled schedule became, if anything — FulfillmentConversion already carries this
+        // (SourceRecordId = the cancelled schedule, ReplacementRecordId = the new schedule it produced,
+        // written transactionally by DeliveryReceiptService on every cancellation) so this is a lookup,
+        // never a re-derivation. A cancellation writes one conversion row PER sale item it touched, all
+        // sharing the same ReplacementRecordId for a given SourceRecordId, so grouping and taking any one
+        // is safe.
+        var cancelledScheduleIds = cancelledScheduleRows.Select(r => r.ScheduleId).Distinct().ToList();
+        var replacementBySource = cancelledScheduleIds.Count == 0
+            ? new Dictionary<Guid, Guid?>()
+            : (await _db.FulfillmentConversions.AsNoTracking()
+                .Where(c => c.SourceRecordId != null && cancelledScheduleIds.Contains(c.SourceRecordId.Value))
+                .Select(c => new { SourceRecordId = c.SourceRecordId!.Value, c.ReplacementRecordId })
+                .ToListAsync(cancellationToken))
+                .GroupBy(c => c.SourceRecordId)
+                .ToDictionary(g => g.Key, g => g.First().ReplacementRecordId);
+
         // A schedule count (records, not units) across every method for the qualifying sales — this is
-        // the report's own "cancelled schedules" total, deliberately a separate query from the row
-        // builder below rather than something the (cancelled-excluding) row list could ever produce.
+        // the report's own "cancelled schedules" total. Deliberately its own COUNT query rather than
+        // `cancelledScheduleRows.Count` (which counts ROWS, i.e. one per sale item a cancelled schedule
+        // touched — a schedule spanning two sale items would otherwise be counted twice).
         var cancelledSchedulesCount = await _db.DeliveryReceipts.AsNoTracking()
             .Where(d => d.SaleId != null && saleIds.Contains(d.SaleId!.Value) && d.Status == FulfillmentStatus.Cancelled)
             .CountAsync(cancellationToken);
@@ -505,6 +549,20 @@ public sealed class ReportsService : IReportsService
                     item.SaleId, saleNumber, item.Id, item.ProductNameSnapshot, item.VariantNameSnapshot,
                     sched.Quantity, sched.Method, sched.Status, sched.ScheduledDate, sched.CompletedAtUtc, sched.RecipientName,
                     SourceScheduleId: sched.ScheduleId, ReplacementScheduleId: null));
+            }
+
+            // Cancellation history — its own rows, deliberately NOT folded into any total* accumulator
+            // below (a cancelled schedule's quantity must never count toward a summary total; see the
+            // query comment above). ReplacementScheduleId is populated when this cancellation produced a
+            // new schedule (ConvertToPickup / ConvertToDelivery / CustomerPickedUpInstead); null for a
+            // plain release (DeliverLater / PickupLater), which created no replacement.
+            foreach (var cancelled in cancelledScheduleRowsByItem[item.Id])
+            {
+                replacementBySource.TryGetValue(cancelled.ScheduleId, out var replacementScheduleId);
+                rows.Add(new FulfillmentReportRowDto(
+                    item.SaleId, saleNumber, item.Id, item.ProductNameSnapshot, item.VariantNameSnapshot,
+                    cancelled.Quantity, cancelled.Method, cancelled.Status, cancelled.ScheduledDate, cancelled.CompletedAtUtc, cancelled.RecipientName,
+                    SourceScheduleId: cancelled.ScheduleId, ReplacementScheduleId: replacementScheduleId));
             }
 
             totalDeliveryPending += deliveryPending;
