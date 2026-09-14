@@ -51,4 +51,16 @@ public sealed class ReportsController : ControllerBase
     public async Task<ActionResult<DeliveryFulfillmentReportResultDto>> DeliveryFulfillment(
         [FromQuery] DeliveryFulfillmentReportQuery query, CancellationToken cancellationToken)
         => Ok(await _reports.GetDeliveryFulfillmentAsync(query, cancellationToken));
+
+    [HttpGet("pickup")]
+    [ProducesResponseType(typeof(PickupReportResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PickupReportResultDto>> Pickups(
+        [FromQuery] PickupReportQuery query, CancellationToken cancellationToken)
+        => Ok(await _reports.GetPickupsAsync(query, cancellationToken));
+
+    [HttpGet("fulfillment")]
+    [ProducesResponseType(typeof(FulfillmentReportResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<FulfillmentReportResultDto>> Fulfillment(
+        [FromQuery] FulfillmentReportQuery query, CancellationToken cancellationToken)
+        => Ok(await _reports.GetFulfillmentAsync(query, cancellationToken));
 }

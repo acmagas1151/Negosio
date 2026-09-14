@@ -255,6 +255,333 @@ public sealed class ReportsService : IReportsService
         decimal DeliveryCharge, decimal SaleGrandTotal, string PreparedByName,
         DateTime? DeliveredAtUtc, DateTime? CancelledAtUtc, string? CancellationReason, List<PaymentMethod> Methods);
 
+    /// <summary>Pickup's counterpart to <see cref="GetDeliveriesAsync"/> — same filter plumbing, same
+    /// paging, same branch scoping, filtered to <see cref="FulfillmentMethod.Pickup"/> instead. The two
+    /// differences from the delivery report: no address column (a pickup transports nothing) and
+    /// <see cref="PickupReportRowDto.DeliveryCharge"/> is hardcoded to 0 rather than read from the Sale —
+    /// a pickup never carries one, even when the same sale's delivery side does.</summary>
+    public async Task<PickupReportResultDto> GetPickupsAsync(PickupReportQuery query, CancellationToken cancellationToken = default)
+    {
+        RequireAuthenticated();
+        var tenantId = _currentUser.TenantId;
+        var branchFilter = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken);
+        var todayLocal = DateOnly.FromDateTime(DateTime.UtcNow + ReportPeriodResolver.BusinessOffset);
+
+        var receipts = _db.DeliveryReceipts.AsNoTracking()
+            .Where(d => d.TenantId == tenantId && d.SaleId != null && d.Method == FulfillmentMethod.Pickup);
+        if (branchFilter is { } b)
+        {
+            receipts = receipts.Where(d => d.BranchId == b);
+        }
+
+        var (effectiveFrom, effectiveTo, effectiveStatus, overdueOnly) = ResolvePickupPreset(query, todayLocal);
+        if (effectiveFrom is { } from) receipts = receipts.Where(d => d.ScheduledDate >= from);
+        if (effectiveTo is { } to) receipts = receipts.Where(d => d.ScheduledDate <= to);
+        if (effectiveStatus is { } status) receipts = receipts.Where(d => d.Status == status);
+        if (overdueOnly) receipts = receipts.Where(d => d.Status == FulfillmentStatus.Pending && d.ScheduledDate < todayLocal);
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            receipts = receipts.Where(d =>
+                (d.RelatedSaleNumber != null && d.RelatedSaleNumber.Contains(term)) ||
+                d.RecipientName.Contains(term) ||
+                (d.ContactNumber != null && d.ContactNumber.Contains(term)));
+        }
+
+        var joined =
+            from dr in receipts
+            join s in _db.Sales.AsNoTracking().Where(x => x.TenantId == tenantId && x.Status != SaleStatus.Voided) on dr.SaleId equals s.Id
+            select new { dr, s };
+
+        var distinctSales = joined.Select(x => new { x.s.Id }).Distinct();
+        var distinctSalesCount = await distinctSales.CountAsync(cancellationToken);
+        var totalSchedules = await joined.CountAsync(cancellationToken);
+
+        var totals = new PickupReportTotalsDto(totalSchedules, distinctSalesCount);
+
+        var projected = joined
+            .OrderBy(x => x.dr.Status == FulfillmentStatus.Pending ? 0 : 1)
+            .ThenBy(x => x.dr.ScheduledDate)
+            .ThenByDescending(x => x.dr.CreatedAtUtc)
+            .Select(x => new PickupReportRow(
+                x.dr.Id, x.s.Id, x.s.SaleNumber, x.dr.SequenceNumber, x.dr.ScheduledDate, x.dr.Status,
+                x.dr.Status == FulfillmentStatus.Pending && x.dr.ScheduledDate < todayLocal,
+                x.dr.CreatedAtUtc, x.dr.RecipientName, x.dr.ContactNumber, x.dr.Notes,
+                x.s.GrandTotal, x.dr.PreparedByNameSnapshot,
+                x.dr.CompletedAtUtc, x.dr.CancelledAtUtc, x.dr.CancellationReason,
+                _db.Payments.Where(p => p.SaleId == x.s.Id).Select(p => p.Method).Distinct().ToList()));
+
+        var rows = await PagedResult<PickupReportRow>.CreateAsync(projected, query.Page, query.PageSize, cancellationToken);
+        var items = rows.Items.Select(r => new PickupReportRowDto(
+            r.DeliveryReceiptId, r.SaleId, r.SaleNumber, r.SequenceNumber, r.ScheduledPickupDate, r.Status, r.IsOverdue,
+            r.CreatedAtUtc, r.RecipientName, r.ContactNumber, r.Notes,
+            DeliveryCharge: 0m, // never read from the Sale — a pickup never carries one.
+            r.SaleGrandTotal, string.Join(" + ", r.Methods.Select(m => m.ToString())), r.PreparedByName,
+            r.CompletedAtUtc, r.CancelledAtUtc, r.CancellationReason))
+            .ToList();
+
+        return new PickupReportResultDto(
+            new PagedResult<PickupReportRowDto>(items, rows.Page, rows.PageSize, rows.TotalCount, rows.TotalPages),
+            totals);
+    }
+
+    private static (DateOnly? From, DateOnly? To, FulfillmentStatus? Status, bool OverdueOnly) ResolvePickupPreset(
+        PickupReportQuery query, DateOnly todayLocal) => query.Preset switch
+    {
+        PickupReportPreset.Today => (todayLocal, todayLocal, FulfillmentStatus.Pending, false),
+        PickupReportPreset.Upcoming => (todayLocal.AddDays(1), null, FulfillmentStatus.Pending, false),
+        PickupReportPreset.Overdue => (null, null, null, true),
+        PickupReportPreset.Pending => (null, null, FulfillmentStatus.Pending, false),
+        PickupReportPreset.Claimed => (null, null, FulfillmentStatus.Completed, false),
+        PickupReportPreset.Cancelled => (null, null, FulfillmentStatus.Cancelled, false),
+        _ => (query.FromDate, query.ToDate, query.Status, false),
+    };
+
+    private sealed record PickupReportRow(
+        Guid DeliveryReceiptId, Guid SaleId, string SaleNumber, int SequenceNumber, DateOnly ScheduledPickupDate,
+        FulfillmentStatus Status, bool IsOverdue, DateTime CreatedAtUtc,
+        string RecipientName, string? ContactNumber, string? Notes,
+        decimal SaleGrandTotal, string PreparedByName,
+        DateTime? CompletedAtUtc, DateTime? CancelledAtUtc, string? CancellationReason, List<PaymentMethod> Methods);
+
+    /// <summary>
+    /// The combined allocation view: one row per sale-item-per-method-per-status "bucket" that actually
+    /// holds quantity, across BOTH fulfillment methods, plus a synthesized Take-now row and synthesized
+    /// Unscheduled rows for intent that has no schedule yet. See <see cref="FulfillmentReportRowDto"/>'s
+    /// doc comment for exactly what each row means.
+    /// <para><b>Why the delivery-charge total can never be multiplied here</b> (the bug this whole task is
+    /// most at risk of reintroducing, per the plan's Global Constraints): <paramref name="query"/>'s
+    /// qualifying-sale set below is materialized as <c>sales</c> — ONE row per Sale, selected directly off
+    /// the <c>Sales</c> table with no join to <c>DeliveryReceipts</c> at all. Schedules are loaded
+    /// separately (keyed by SaleItemId) and never joined back onto <c>sales</c>. So <c>TotalDeliveryCharges</c>,
+    /// computed as <c>sales.Sum(s => s.DeliveryCharge)</c>, sums exactly one DeliveryCharge per sale no
+    /// matter how many delivery or pickup schedules that sale has — there is no per-schedule row for a
+    /// join to multiply it by. This is structurally stronger than a post-hoc <c>.Distinct()</c>: the
+    /// duplication this class of bug depends on (one row per schedule, each carrying the sale's charge)
+    /// never exists here to begin with.</para>
+    /// </summary>
+    public async Task<FulfillmentReportResultDto> GetFulfillmentAsync(
+        FulfillmentReportQuery query, CancellationToken cancellationToken = default)
+    {
+        RequireAuthenticated();
+        var tenantId = _currentUser.TenantId;
+        var branchFilter = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken);
+        var todayLocal = DateOnly.FromDateTime(DateTime.UtcNow + ReportPeriodResolver.BusinessOffset);
+
+        // Every line with ANY post-checkout intent (delivery or pickup) on a non-voided sale — same
+        // qualifying filter GetSaleFulfillmentAsync/GetDeliveryFulfillmentAsync use. A sale that is
+        // entirely take-now has nothing to track and never appears here.
+        var qualifyingSales = _db.Sales.AsNoTracking().Where(s => s.TenantId == tenantId && s.Status != SaleStatus.Voided
+            && _db.SaleItems.Any(i => i.SaleId == s.Id && (i.DeliveryRequiredQuantity > 0m || i.PickupRequiredQuantity > 0m)));
+        if (branchFilter is { } b)
+        {
+            qualifyingSales = qualifyingSales.Where(s => s.BranchId == b);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            qualifyingSales = qualifyingSales.Where(s => s.SaleNumber.Contains(term));
+        }
+
+        // ONE row per sale, never joined to a schedule table — see this method's doc comment.
+        var sales = await qualifyingSales
+            .Select(s => new { s.Id, s.SaleNumber, s.DeliveryCharge })
+            .ToListAsync(cancellationToken);
+
+        if (sales.Count == 0)
+        {
+            var emptySummary = new FulfillmentReportSummaryDto(0m, 0m, 0m, 0m, 0m, 0m, 0m, 0, 0, 0, 0m);
+            var (emptyPage, emptyPageSize) = PagedResult<FulfillmentReportRowDto>.Normalize(query.Page, query.PageSize);
+            return new FulfillmentReportResultDto(
+                new PagedResult<FulfillmentReportRowDto>(Array.Empty<FulfillmentReportRowDto>(), emptyPage, emptyPageSize, 0, 0),
+                emptySummary);
+        }
+
+        var saleIds = sales.Select(s => s.Id).ToList();
+        var saleById = sales.ToDictionary(s => s.Id);
+
+        var items = await _db.SaleItems.AsNoTracking()
+            .Where(i => saleIds.Contains(i.SaleId) && (i.DeliveryRequiredQuantity > 0m || i.PickupRequiredQuantity > 0m))
+            .Select(i => new
+            {
+                i.Id,
+                i.SaleId,
+                i.ProductNameSnapshot,
+                i.VariantNameSnapshot,
+                i.Quantity,
+                i.DeliveryRequiredQuantity,
+                i.PickupRequiredQuantity,
+            })
+            .ToListAsync(cancellationToken);
+        var itemIds = items.Select(i => i.Id).ToList();
+
+        // Cancelled schedules are excluded here (their released/converted quantity already shows up as
+        // an Unscheduled or replacement-method row instead) — see FulfillmentReportRowDto's doc comment.
+        var scheduleRows = await (
+            from dri in _db.DeliveryReceiptItems.AsNoTracking()
+            join dr in _db.DeliveryReceipts.AsNoTracking() on dri.DeliveryReceiptId equals dr.Id
+            where itemIds.Contains(dri.SaleItemId) && dr.Status != FulfillmentStatus.Cancelled
+            select new
+            {
+                dri.SaleItemId,
+                dri.Quantity,
+                ScheduleId = dr.Id,
+                dr.Method,
+                dr.Status,
+                dr.ScheduledDate,
+                dr.CompletedAtUtc,
+                dr.RecipientName,
+            })
+            .ToListAsync(cancellationToken);
+        var scheduleRowsByItem = scheduleRows.ToLookup(r => r.SaleItemId);
+
+        // A schedule count (records, not units) across every method for the qualifying sales — this is
+        // the report's own "cancelled schedules" total, deliberately a separate query from the row
+        // builder below rather than something the (cancelled-excluding) row list could ever produce.
+        var cancelledSchedulesCount = await _db.DeliveryReceipts.AsNoTracking()
+            .Where(d => d.SaleId != null && saleIds.Contains(d.SaleId!.Value) && d.Status == FulfillmentStatus.Cancelled)
+            .CountAsync(cancellationToken);
+
+        var rows = new List<FulfillmentReportRowDto>();
+        decimal totalTakeNow = 0m, totalDeliveryUnscheduled = 0m, totalDeliveryPending = 0m, totalDelivered = 0m,
+            totalPickupUnscheduled = 0m, totalPickupPending = 0m, totalClaimed = 0m;
+
+        // Per-sale running totals, fed into SaleFulfillmentCalculator.Derive exactly as
+        // GetSaleFulfillmentAsync feeds it — same inputs, same function, so the two views can never
+        // disagree about a sale's status.
+        var perSale = new Dictionary<Guid, (decimal Sold, decimal TakeNow, decimal Delivered, decimal Claimed,
+            decimal DeliveryPending, decimal PickupPending, decimal DeliveryUnscheduled, decimal PickupUnscheduled, bool Overdue)>();
+
+        foreach (var item in items)
+        {
+            var saleNumber = saleById[item.SaleId].SaleNumber;
+            var scheduleForItem = scheduleRowsByItem[item.Id].ToList();
+
+            var deliveryPending = scheduleForItem
+                .Where(r => r.Method == FulfillmentMethod.Delivery && r.Status == FulfillmentStatus.Pending).Sum(r => r.Quantity);
+            var deliveryCompleted = scheduleForItem
+                .Where(r => r.Method == FulfillmentMethod.Delivery && r.Status == FulfillmentStatus.Completed).Sum(r => r.Quantity);
+            var pickupPending = scheduleForItem
+                .Where(r => r.Method == FulfillmentMethod.Pickup && r.Status == FulfillmentStatus.Pending).Sum(r => r.Quantity);
+            var pickupCompleted = scheduleForItem
+                .Where(r => r.Method == FulfillmentMethod.Pickup && r.Status == FulfillmentStatus.Completed).Sum(r => r.Quantity);
+
+            var deliveryUnscheduled = item.DeliveryRequiredQuantity - deliveryPending - deliveryCompleted;
+            var pickupUnscheduled = item.PickupRequiredQuantity - pickupPending - pickupCompleted;
+            var takeNow = item.Quantity - item.DeliveryRequiredQuantity - item.PickupRequiredQuantity;
+
+            if (takeNow > 0m)
+            {
+                rows.Add(new FulfillmentReportRowDto(
+                    item.SaleId, saleNumber, item.Id, item.ProductNameSnapshot, item.VariantNameSnapshot,
+                    takeNow, FulfillmentMethod.TakeNow, FulfillmentStatus.Completed,
+                    ScheduledDate: null, CompletedAtUtc: null, RecipientName: null, SourceScheduleId: null, ReplacementScheduleId: null));
+                totalTakeNow += takeNow;
+            }
+
+            if (deliveryUnscheduled > 0m)
+            {
+                rows.Add(new FulfillmentReportRowDto(
+                    item.SaleId, saleNumber, item.Id, item.ProductNameSnapshot, item.VariantNameSnapshot,
+                    deliveryUnscheduled, FulfillmentMethod.Delivery, FulfillmentStatus.Unscheduled,
+                    ScheduledDate: null, CompletedAtUtc: null, RecipientName: null, SourceScheduleId: null, ReplacementScheduleId: null));
+                totalDeliveryUnscheduled += deliveryUnscheduled;
+            }
+
+            if (pickupUnscheduled > 0m)
+            {
+                rows.Add(new FulfillmentReportRowDto(
+                    item.SaleId, saleNumber, item.Id, item.ProductNameSnapshot, item.VariantNameSnapshot,
+                    pickupUnscheduled, FulfillmentMethod.Pickup, FulfillmentStatus.Unscheduled,
+                    ScheduledDate: null, CompletedAtUtc: null, RecipientName: null, SourceScheduleId: null, ReplacementScheduleId: null));
+                totalPickupUnscheduled += pickupUnscheduled;
+            }
+
+            foreach (var sched in scheduleForItem)
+            {
+                rows.Add(new FulfillmentReportRowDto(
+                    item.SaleId, saleNumber, item.Id, item.ProductNameSnapshot, item.VariantNameSnapshot,
+                    sched.Quantity, sched.Method, sched.Status, sched.ScheduledDate, sched.CompletedAtUtc, sched.RecipientName,
+                    SourceScheduleId: sched.ScheduleId, ReplacementScheduleId: null));
+            }
+
+            totalDeliveryPending += deliveryPending;
+            totalDelivered += deliveryCompleted;
+            totalPickupPending += pickupPending;
+            totalClaimed += pickupCompleted;
+
+            var overdueForItem = scheduleForItem.Any(r => r.Status == FulfillmentStatus.Pending && r.ScheduledDate < todayLocal);
+
+            perSale.TryGetValue(item.SaleId, out var acc);
+            perSale[item.SaleId] = (
+                acc.Sold + item.Quantity,
+                acc.TakeNow + takeNow,
+                acc.Delivered + deliveryCompleted,
+                acc.Claimed + pickupCompleted,
+                acc.DeliveryPending + deliveryPending,
+                acc.PickupPending + pickupPending,
+                acc.DeliveryUnscheduled + deliveryUnscheduled,
+                acc.PickupUnscheduled + pickupUnscheduled,
+                acc.Overdue || overdueForItem);
+        }
+
+        IEnumerable<FulfillmentReportRowDto> filteredRows = rows;
+        if (query.Method is { } methodFilter)
+        {
+            filteredRows = filteredRows.Where(r => r.Method == methodFilter);
+        }
+
+        if (query.Status is { } statusFilter)
+        {
+            filteredRows = filteredRows.Where(r => r.Status == statusFilter);
+        }
+
+        var ordered = filteredRows
+            .OrderBy(r => r.SaleNumber)
+            .ThenBy(r => r.SaleItemId)
+            .ThenBy(r => r.Method)
+            .ThenBy(r => r.Status)
+            .ToList();
+
+        var (page, pageSize) = PagedResult<FulfillmentReportRowDto>.Normalize(query.Page, query.PageSize);
+        var pageItems = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        var totalPages = ordered.Count == 0 ? 0 : (int)Math.Ceiling(ordered.Count / (double)pageSize);
+
+        var fullyFulfilledSales = 0;
+        var salesNeedingAttention = 0;
+        foreach (var acc in perSale.Values)
+        {
+            var status = SaleFulfillmentCalculator.Derive(
+                soldQuantity: acc.Sold,
+                takeNowQuantity: acc.TakeNow,
+                deliveredQuantity: acc.Delivered,
+                claimedQuantity: acc.Claimed,
+                deliveryPendingQuantity: acc.DeliveryPending,
+                pickupPendingQuantity: acc.PickupPending,
+                deliveryUnscheduledQuantity: acc.DeliveryUnscheduled,
+                pickupUnscheduledQuantity: acc.PickupUnscheduled,
+                hasOverduePendingSchedule: acc.Overdue);
+
+            if (status == SaleFulfillmentStatus.Fulfilled) fullyFulfilledSales++;
+            if (status == SaleFulfillmentStatus.NeedsAttention) salesNeedingAttention++;
+        }
+
+        // See this method's doc comment: summed over `sales` (one row per sale, never joined to a
+        // schedule), so this can never be multiplied by however many schedules a sale has.
+        var totalDeliveryCharges = sales.Sum(s => s.DeliveryCharge);
+
+        var summary = new FulfillmentReportSummaryDto(
+            totalTakeNow, totalDeliveryUnscheduled, totalDeliveryPending, totalDelivered,
+            totalPickupUnscheduled, totalPickupPending, totalClaimed, cancelledSchedulesCount,
+            fullyFulfilledSales, salesNeedingAttention, totalDeliveryCharges);
+
+        return new FulfillmentReportResultDto(
+            new PagedResult<FulfillmentReportRowDto>(pageItems, page, pageSize, ordered.Count, totalPages),
+            summary);
+    }
+
     public async Task<DeliveryFulfillmentReportResultDto> GetDeliveryFulfillmentAsync(
         DeliveryFulfillmentReportQuery query, CancellationToken cancellationToken = default)
     {
