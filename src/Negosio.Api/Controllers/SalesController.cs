@@ -73,9 +73,9 @@ public sealed class SalesController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<FulfillmentScheduleDto>>> ListDeliveryReceipts(Guid id, CancellationToken ct)
         => Ok(await _deliveryReceipts.ListForSaleAsync(id, ct));
 
-    [HttpGet("{id:guid}/delivery-summary")]
+    [HttpGet("{id:guid}/fulfillment")]
     [ProducesResponseType(typeof(SaleFulfillmentSummaryDto), StatusCodes.Status200OK)]
-    public async Task<ActionResult<SaleFulfillmentSummaryDto>> DeliverySummary(Guid id, CancellationToken ct)
+    public async Task<ActionResult<SaleFulfillmentSummaryDto>> Fulfillment(Guid id, CancellationToken ct)
         => Ok(await _deliveryReceipts.GetSaleFulfillmentAsync(id, ct));
 
     [HttpPost("{id:guid}/delivery-receipts")]

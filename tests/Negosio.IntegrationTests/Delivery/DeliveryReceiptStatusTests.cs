@@ -94,7 +94,7 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         cancelled.CancellationDisposition.Should().Be(CancellationDisposition.DeliverLater);
         cancelled.Items.Should().ContainSingle(); // its own item rows are preserved, unchanged, as history
 
-        var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>($"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
+        var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>($"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
         summary!.Items[0].DeliveryUnscheduledQuantity.Should().Be(6m); // fully released
         summary.CanCreateDelivery.Should().BeTrue();
     }

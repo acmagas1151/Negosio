@@ -64,7 +64,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         results.Count(r => r.StatusCode == HttpStatusCode.BadRequest).Should().Be(1);
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
-            $"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
+            $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
         summary!.Items[0].DeliveryPendingQuantity.Should().Be(4m); // never over-allocated past what was ever delivery-required
         summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(0m);
     }

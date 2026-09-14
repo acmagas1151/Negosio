@@ -290,7 +290,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m));
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
-            $"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
+            $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
 
         summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.AwaitingDelivery);
         summary.CanCreateDelivery.Should().BeTrue(); // 2 units still available
@@ -299,7 +299,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
 
         await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 2m));
         var full = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
-            $"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
+            $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
         full!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.AwaitingDelivery);
         full.CanCreateDelivery.Should().BeFalse();
     }
@@ -315,7 +315,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m); // no deliveries created
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
-            $"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
+            $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
 
         summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.NeedsScheduling);
         summary.CanCreateDelivery.Should().BeTrue();
@@ -331,7 +331,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m);
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
-            $"/api/sales/{scene.SaleId}/delivery-summary", TestJson.Options);
+            $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
 
         summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.NotApplicable);
         summary.CanCreateDelivery.Should().BeFalse();

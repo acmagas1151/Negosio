@@ -25,6 +25,11 @@ public sealed class DeliveryReceiptsController : ControllerBase
     public async Task<ActionResult<FulfillmentScheduleDto>> MarkDelivered(Guid id, CancellationToken ct)
         => Ok(await _deliveryReceipts.MarkDeliveredAsync(id, ct));
 
+    [HttpPost("{id:guid}/claim")]
+    [ProducesResponseType(typeof(FulfillmentScheduleDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<FulfillmentScheduleDto>> MarkClaimed(Guid id, CancellationToken ct)
+        => Ok(await _deliveryReceipts.MarkClaimedAsync(id, ct));
+
     // Narrower than the class-level SalesView — Owner/Admin/Manager only (see the plan's Global
     // Constraints / recommended authorization levels).
     [HttpPost("{id:guid}/cancel")]
@@ -33,4 +38,32 @@ public sealed class DeliveryReceiptsController : ControllerBase
     public async Task<ActionResult<CancellationResultDto>> Cancel(
         Guid id, [FromBody] CancelDeliveryRequest request, CancellationToken ct)
         => Ok(await _deliveryReceipts.CancelDeliveryAsync(id, request, ct));
+
+    // Pickup is the same table and the same service as Delivery — deliberately kept in this one
+    // controller (see the plan's design notes) rather than a separate PickupsController, which would
+    // duplicate the branch guard and error mapping for no gain. These use absolute routes because they
+    // don't share this controller's "api/delivery-receipts" prefix.
+
+    [HttpPost("~/api/sales/{saleId:guid}/pickups")]
+    [ProducesResponseType(typeof(FulfillmentScheduleDto), StatusCodes.Status201Created)]
+    public async Task<ActionResult<FulfillmentScheduleDto>> CreatePickup(
+        Guid saleId, [FromBody] CreatePickupRequest request, CancellationToken ct)
+    {
+        var created = await _deliveryReceipts.CreatePickupAsync(saleId, request, ct);
+        return Created($"/api/delivery-receipts/{created.Id}", created);
+    }
+
+    [HttpPost("~/api/sales/{saleId:guid}/pickups/batch")]
+    [ProducesResponseType(typeof(FulfillmentBatchResultDto), StatusCodes.Status201Created)]
+    public async Task<ActionResult<FulfillmentBatchResultDto>> CreatePickupBatch(
+        Guid saleId, [FromBody] CreatePickupBatchRequest request, CancellationToken ct)
+        => Created(string.Empty, await _deliveryReceipts.CreatePickupBatchAsync(saleId, request, ct));
+
+    // Narrower than the class-level SalesView — same policy as the delivery-side Cancel above.
+    [HttpPost("~/api/pickups/{id:guid}/cancel")]
+    [Authorize(Policy = AuthorizationPolicies.FulfillmentCancel)]
+    [ProducesResponseType(typeof(CancellationResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<CancellationResultDto>> CancelPickup(
+        Guid id, [FromBody] CancelPickupRequest request, CancellationToken ct)
+        => Ok(await _deliveryReceipts.CancelPickupAsync(id, request, ct));
 }
