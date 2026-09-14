@@ -13,7 +13,12 @@ public sealed record CheckoutItemInput(
     /// line is Take-now unless the cashier explicitly marks part of it for delivery. Never negative,
     /// never more than <see cref="Quantity"/> (validated below and, as a backstop, by
     /// <c>Sale.AddItem</c>).</summary>
-    decimal DeliveryRequiredQuantity = 0m);
+    decimal DeliveryRequiredQuantity = 0m,
+    /// <summary>How much of this line is not taken at the counter today because it is earmarked for
+    /// later pickup. Defaults to 0 so an older POS client that never sends this field keeps working
+    /// unchanged. Never negative; <see cref="DeliveryRequiredQuantity"/> plus this cannot exceed
+    /// <see cref="Quantity"/> (validated below and, as a backstop, by <c>Sale.AddItem</c>).</summary>
+    decimal PickupRequiredQuantity = 0m);
 
 public sealed record CheckoutPaymentInput(
     PaymentMethod Method,

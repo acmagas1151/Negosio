@@ -48,7 +48,7 @@ public sealed class CheckoutService : ICheckoutService
     }
 
     private sealed record ResolvedLine(
-        Guid ProductVariantId, decimal Quantity, decimal DeliveryRequiredQuantity, DiscountType DiscountType, decimal DiscountValue,
+        Guid ProductVariantId, decimal Quantity, decimal DeliveryRequiredQuantity, decimal PickupRequiredQuantity, DiscountType DiscountType, decimal DiscountValue,
         string ProductNameSnapshot, string? VariantNameSnapshot, string? SkuSnapshot, string? BarcodeSnapshot,
         decimal UnitPrice, decimal CostPrice, bool TrackInventory, SaleLineCalculator.Line Amounts);
 
@@ -109,7 +109,7 @@ public sealed class CheckoutService : ICheckoutService
             {
                 var discount = g.Select(x => x.Discount).FirstOrDefault(d => d is { Type: not DiscountType.None })
                                ?? new CheckoutDiscountInput();
-                return new CheckoutItemInput(g.Key, g.Sum(x => x.Quantity), discount, g.Sum(x => x.DeliveryRequiredQuantity));
+                return new CheckoutItemInput(g.Key, g.Sum(x => x.Quantity), discount, g.Sum(x => x.DeliveryRequiredQuantity), g.Sum(x => x.PickupRequiredQuantity));
             })
             .ToList();
 
@@ -146,7 +146,7 @@ public sealed class CheckoutService : ICheckoutService
                 tenant.TaxRatePercent, tenant.PricesIncludeTax);
 
             lines.Add(new ResolvedLine(
-                variant.Id, item.Quantity, item.DeliveryRequiredQuantity, discount.Type, discount.Value,
+                variant.Id, item.Quantity, item.DeliveryRequiredQuantity, item.PickupRequiredQuantity, discount.Type, discount.Value,
                 product.Name, variant.IsDefault ? null : variant.Name, variant.Sku, variant.Barcode,
                 variant.SellingPrice, variant.CostPrice, product.TrackInventory, amounts));
         }
@@ -176,7 +176,7 @@ public sealed class CheckoutService : ICheckoutService
                 line.ProductVariantId, line.ProductNameSnapshot, line.VariantNameSnapshot, line.SkuSnapshot, line.BarcodeSnapshot,
                 line.UnitPrice, line.Quantity, line.DiscountType, line.DiscountValue,
                 line.Amounts.Gross, line.Amounts.Discount, line.Amounts.Tax, line.Amounts.Net, line.CostPrice,
-                line.DeliveryRequiredQuantity);
+                line.DeliveryRequiredQuantity, line.PickupRequiredQuantity);
             createdItems.Add(saleItem);
         }
 

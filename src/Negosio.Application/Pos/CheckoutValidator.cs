@@ -18,6 +18,11 @@ public sealed class CheckoutRequestValidator : AbstractValidator<CheckoutRequest
                 .GreaterThanOrEqualTo(0m).WithMessage("Delivery-required quantity cannot be negative.")
                 .Must((i, deliveryQty) => deliveryQty <= i.Quantity)
                 .WithMessage("Delivery-required quantity cannot exceed the item quantity.");
+            item.RuleFor(i => i.PickupRequiredQuantity)
+                .GreaterThanOrEqualTo(0m).WithMessage("Pickup-required quantity cannot be negative.");
+            item.RuleFor(i => i)
+                .Must(i => i.DeliveryRequiredQuantity + i.PickupRequiredQuantity <= i.Quantity)
+                .WithMessage("Delivery and pickup quantities together cannot exceed the item quantity.");
         });
         RuleFor(x => x.Payments).NotEmpty().WithMessage("At least one payment is required.");
         RuleFor(x => x.DeliveryCharge)
