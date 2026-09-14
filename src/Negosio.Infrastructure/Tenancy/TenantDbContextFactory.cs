@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Negosio.Application.Abstractions;
 using Negosio.Infrastructure.Persistence;
 
@@ -28,11 +27,6 @@ public sealed class TenantDbContextFactory : ITenantDbContextFactory
     {
         var options = new DbContextOptionsBuilder<TenantDbContext>()
             .UseSqlServer(connectionString, sql => sql.MigrationsAssembly(typeof(TenantDbContext).Assembly.FullName))
-            // TEMPORARY (removed by pickup-fulfillment plan Task 7): Tasks 2-6 of that plan add
-            // EF-mapped columns ahead of a single combined migration in Task 7, which makes EF Core 9's
-            // runtime model/snapshot check throw PendingModelChangesWarning on every MigrateAsync call
-            // until that migration lands. Task 7 removes this line once the model and snapshot agree again.
-            .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
 
         return new TenantDbContext(options);
