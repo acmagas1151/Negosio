@@ -7,13 +7,24 @@ import {
   isValidDeliveryChargeInput,
   parseDeliveryCharge,
   suggestCashButtons,
-  type DeliverySchedule,
+  type FulfillmentSchedule,
 } from '../../lib/pos'
 import { formatMoney } from '../../lib/format'
 import { cn } from '../../lib/cn'
 import { Button, Callout, Modal, TextField } from '../ui'
-import { DeliveryDetailsFields } from './DeliveryDetailsFields'
+import { FulfillmentDetailsFields } from './FulfillmentDetailsFields'
 import { PaymentMethodIcon } from './PaymentMethodIcon'
+
+/** One method's schedule list plus its editing callbacks — bundled so PaymentModal can pass a
+ * whole method's worth of props in one prop instead of five, once for Delivery and once for
+ * Pickup. */
+export interface FulfillmentSectionProps {
+  schedules: FulfillmentSchedule[]
+  onScheduleFieldChange: (key: string, patch: Partial<Omit<FulfillmentSchedule, 'key' | 'items'>>) => void
+  onScheduleItemChange: (key: string, variantId: string, quantity: number) => void
+  onAddSchedule: () => void
+  onRemoveSchedule: (key: string) => void
+}
 
 interface Props {
   open: boolean
@@ -22,18 +33,15 @@ interface Props {
   submitting: boolean
   error: string | null
   onConfirm: (payment: CheckoutPaymentInput) => void
-  /** Whether this sale is flagged for delivery — expands the inline delivery-details section. */
-  forDelivery: boolean
-  /** Tick / untick "For delivery". Unticking clears the delivery fields in the parent. */
-  onToggleForDelivery: (next: boolean) => void
-  cartLines: { variantId: string; name: string; variantName: string | null; quantity: number }[]
-  deliveryRequiredByVariant: Record<string, number>
-  onDeliveryRequiredChange: (variantId: string, quantity: number) => void
-  schedules: DeliverySchedule[]
-  onScheduleFieldChange: (key: string, patch: Partial<Omit<DeliverySchedule, 'key' | 'items'>>) => void
-  onScheduleItemChange: (key: string, variantId: string, quantity: number) => void
-  onAddSchedule: () => void
-  onRemoveSchedule: (key: string) => void
+  cartLines: {
+    variantId: string
+    name: string
+    variantName: string | null
+    deliveryRequiredQuantity: number
+    pickupRequiredQuantity: number
+  }[]
+  delivery: FulfillmentSectionProps
+  pickup: FulfillmentSectionProps
   /** The typed delivery-charge string, owned by the parent for the same reason schedules is —
    * it must survive the modal closing and reopening after a failed-payment retry. */
   deliveryCharge: string
@@ -47,24 +55,17 @@ export function PaymentModal({
   submitting,
   error,
   onConfirm,
-  forDelivery,
-  onToggleForDelivery,
   cartLines,
-  deliveryRequiredByVariant,
-  onDeliveryRequiredChange,
-  schedules,
-  onScheduleFieldChange,
-  onScheduleItemChange,
-  onAddSchedule,
-  onRemoveSchedule,
+  delivery,
+  pickup,
   deliveryCharge,
   onDeliveryChargeChange,
 }: Props) {
   const [method, setMethod] = useState<PaymentMethod>('Cash')
   const [received, setReceived] = useState('')
   const [reference, setReference] = useState('')
-  // Delivery errors show only after a blocked confirm attempt, not while the cashier is still typing.
-  const [deliveryAttempted, setDeliveryAttempted] = useState(false)
+  // Fulfillment errors show only after a blocked confirm attempt, not while the cashier is still typing.
+  const [fulfillmentAttempted, setFulfillmentAttempted] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -72,32 +73,61 @@ export function PaymentModal({
     setMethod('Cash')
     setReceived('')
     setReference('')
-    setDeliveryAttempted(false)
+    setFulfillmentAttempted(false)
   }, [open])
 
+  // Whether this sale involves each method at all — derived straight from the cart lines (set via
+  // CartItem's per-line allocation) rather than a manual toggle, so there's no way for the
+  // fulfillment section's visibility to drift from what's actually on the cart.
+  const anyDelivery = cartLines.some((l) => l.deliveryRequiredQuantity > 0)
+  const anyPickup = cartLines.some((l) => l.pickupRequiredQuantity > 0)
+  const deliveryLines = cartLines
+    .filter((l) => l.deliveryRequiredQuantity > 0)
+    .map((l) => ({
+      variantId: l.variantId,
+      name: l.name,
+      variantName: l.variantName,
+      requiredQuantity: l.deliveryRequiredQuantity,
+    }))
+  const pickupLines = cartLines
+    .filter((l) => l.pickupRequiredQuantity > 0)
+    .map((l) => ({
+      variantId: l.variantId,
+      name: l.name,
+      variantName: l.variantName,
+      requiredQuantity: l.pickupRequiredQuantity,
+    }))
+
   const receivedNum = Number(received)
-  const deliveryChargeValid = !forDelivery || isValidDeliveryChargeInput(deliveryCharge)
-  const effectiveAmountDue = amountDue + parseDeliveryCharge(forDelivery, deliveryCharge)
+  const deliveryChargeValid = !anyDelivery || isValidDeliveryChargeInput(deliveryCharge)
+  const effectiveAmountDue = amountDue + parseDeliveryCharge(anyDelivery, deliveryCharge)
   const change = method === 'Cash' ? Math.max(0, receivedNum - effectiveAmountDue) : 0
 
-  const activeSchedules = schedules.filter((s) => s.items.some((i) => i.quantity > 0))
+  const activeDeliverySchedules = delivery.schedules.filter((s) => s.items.some((i) => i.quantity > 0))
   const deliveryComplete =
-    !forDelivery ||
+    !anyDelivery ||
     (deliveryChargeValid &&
-      activeSchedules.every((s) => s.scheduledDeliveryDate && s.recipientName.trim() && s.deliveryAddress.trim()))
-  const deliveryErrors = forDelivery && deliveryAttempted ? { deliveryCharge: deliveryChargeValid ? undefined : 'Enter a valid amount (0 or more, up to 2 decimal places).' } : {}
+      activeDeliverySchedules.every((s) => s.scheduledDate && s.recipientName.trim() && s.deliveryAddress.trim()))
+  const activePickupSchedules = pickup.schedules.filter((s) => s.items.some((i) => i.quantity > 0))
+  const pickupComplete =
+    !anyPickup || activePickupSchedules.every((s) => s.scheduledDate && s.recipientName.trim())
+  const fulfillmentComplete = deliveryComplete && pickupComplete
+  const deliveryErrors =
+    anyDelivery && fulfillmentAttempted
+      ? { deliveryCharge: deliveryChargeValid ? undefined : 'Enter a valid amount (0 or more, up to 2 decimal places).' }
+      : {}
 
   const paymentComplete =
     method !== 'Cash' || (received.trim() !== '' && receivedNum >= effectiveAmountDue)
-  // The button stays enabled while delivery fields are incomplete — clicking it then surfaces the
-  // inline errors rather than silently doing nothing. It only hard-disables for an incomplete
+  // The button stays enabled while fulfillment fields are incomplete — clicking it then surfaces
+  // the inline errors rather than silently doing nothing. It only hard-disables for an incomplete
   // payment or an in-flight submit.
   const canConfirm = !submitting && paymentComplete
 
   const confirm = () => {
     if (submitting || !paymentComplete) return
-    if (forDelivery && !deliveryComplete) {
-      setDeliveryAttempted(true)
+    if (!fulfillmentComplete) {
+      setFulfillmentAttempted(true)
       return
     }
     if (method === 'Cash') {
@@ -201,40 +231,46 @@ export function PaymentModal({
           />
         )}
 
-        <div
-          className={cn(
-            'mt-4 rounded-lg border border-border-strong',
-            forDelivery ? 'px-4 py-3.5' : 'px-3 py-2.5',
-          )}
-        >
-          <label className="flex items-center gap-2.5 text-sm font-semibold text-text-secondary">
-            <input
-              type="checkbox"
-              checked={forDelivery}
-              disabled={submitting}
-              onChange={(e) => onToggleForDelivery(e.target.checked)}
-              className="size-4 rounded border-border-strong text-primary-600 focus:ring-primary-500"
-            />
-            For delivery
-          </label>
-          {forDelivery && (
-            <DeliveryDetailsFields
-              cartLines={cartLines}
+        {/* Whether this sale involves delivery and/or pickup is decided on the cart, per line
+            (CartItem's Take now / Delivery / Pickup allocation) — there's no toggle here to drift
+            out of sync with it. Each method gets its own section, its own schedule list, and its
+            own "attempted" gating, but they share one Confirm-payment gate. */}
+        {anyDelivery && (
+          <div className="mt-4 rounded-lg border border-border-strong px-4 py-3.5">
+            <p className="text-sm font-semibold text-text-secondary">Delivery</p>
+            <FulfillmentDetailsFields
+              method="Delivery"
+              cartLines={deliveryLines}
               deliveryCharge={deliveryCharge}
               onDeliveryChargeChange={onDeliveryChargeChange}
-              deliveryRequiredByVariant={deliveryRequiredByVariant}
-              onDeliveryRequiredChange={onDeliveryRequiredChange}
-              schedules={schedules}
-              onScheduleFieldChange={onScheduleFieldChange}
-              onScheduleItemChange={onScheduleItemChange}
-              onAddSchedule={onAddSchedule}
-              onRemoveSchedule={onRemoveSchedule}
+              schedules={delivery.schedules}
+              onScheduleFieldChange={delivery.onScheduleFieldChange}
+              onScheduleItemChange={delivery.onScheduleItemChange}
+              onAddSchedule={delivery.onAddSchedule}
+              onRemoveSchedule={delivery.onRemoveSchedule}
               errors={deliveryErrors}
-              attempted={deliveryAttempted}
+              attempted={fulfillmentAttempted}
               disabled={submitting}
             />
-          )}
-        </div>
+          </div>
+        )}
+        {anyPickup && (
+          <div className="mt-4 rounded-lg border border-border-strong px-4 py-3.5">
+            <p className="text-sm font-semibold text-text-secondary">Pickup</p>
+            <FulfillmentDetailsFields
+              method="Pickup"
+              cartLines={pickupLines}
+              schedules={pickup.schedules}
+              onScheduleFieldChange={pickup.onScheduleFieldChange}
+              onScheduleItemChange={pickup.onScheduleItemChange}
+              onAddSchedule={pickup.onAddSchedule}
+              onRemoveSchedule={pickup.onRemoveSchedule}
+              errors={{}}
+              attempted={fulfillmentAttempted}
+              disabled={submitting}
+            />
+          </div>
+        )}
       </div>
     </Modal>
   )

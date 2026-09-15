@@ -140,22 +140,26 @@ export interface LastSaleRef {
   status: SaleStatus
 }
 
-export interface DeliveryScheduleItemAllocation {
+export interface FulfillmentScheduleItemAllocation {
   variantId: string
   quantity: number
 }
 
-/** One delivery schedule being built in the payment modal. `key` is a local React/list-diffing id
- * only — never sent to the backend. Maps to `CreateDeliveryReceiptRequest` once the sale exists and
- * `variantId`s can be resolved to real `saleItemId`s (see PosTerminal's batch-submit mutation). */
-export interface DeliverySchedule {
+/** One delivery-or-pickup schedule being built in the payment modal. `key` is a local
+ * React/list-diffing id only — never sent to the backend. Field names mirror the backend's
+ * `CreateDeliveryReceiptRequest` / `CreatePickupRequest` (`scheduledDate`, `notes`) so building the
+ * request body at submit time is a near-direct mapping. `deliveryAddress` is simply unused (kept
+ * empty) for a Pickup schedule — Pickup has no address field at all; see FulfillmentDetailsFields,
+ * which never renders it for that method. Maps to a real request once the sale exists and
+ * `variantId`s can be resolved to real `saleItemId`s (see PosTerminal's batch-submit mutations). */
+export interface FulfillmentSchedule {
   key: string
-  scheduledDeliveryDate: string // yyyy-MM-dd, browser-local — see the plan's Global Constraints
+  scheduledDate: string // yyyy-MM-dd, browser-local — see the plan's Global Constraints
   recipientName: string
   deliveryAddress: string
   contactNumber: string
-  deliveryNotes: string
-  items: DeliveryScheduleItemAllocation[]
+  notes: string
+  items: FulfillmentScheduleItemAllocation[]
 }
 
 /** Browser-local "today" as a `yyyy-MM-dd` date-input value. This repo has no tenant-timezone model
@@ -170,14 +174,14 @@ export function todayLocalDateInput(): string {
   return `${yyyy}-${mm}-${dd}`
 }
 
-export function emptyDeliverySchedule(): DeliverySchedule {
+export function emptyFulfillmentSchedule(): FulfillmentSchedule {
   return {
     key: crypto.randomUUID(),
-    scheduledDeliveryDate: todayLocalDateInput(),
+    scheduledDate: todayLocalDateInput(),
     recipientName: '',
     deliveryAddress: '',
     contactNumber: '',
-    deliveryNotes: '',
+    notes: '',
     items: [],
   }
 }
@@ -187,13 +191,59 @@ export function emptyDeliverySchedule(): DeliverySchedule {
  * itself). Used only to compute a helpful UI cap — the backend re-validates independently and is
  * the only source of truth for what's actually available (see the plan's Global Constraints). */
 export function scheduledQuantityFor(
-  schedules: DeliverySchedule[],
+  schedules: FulfillmentSchedule[],
   variantId: string,
   excludeKey?: string,
 ): number {
   return schedules
     .filter((s) => s.key !== excludeKey)
     .reduce((sum, s) => sum + (s.items.find((i) => i.variantId === variantId)?.quantity ?? 0), 0)
+}
+
+/**
+ * Reconciles a method's schedules against that method's CURRENT per-variant required quantity
+ * (e.g. `{ [variantId]: cartLine.deliveryRequiredQuantity }`), spending a shared per-variant budget
+ * across schedules in encounter order. A variant no longer in `requiredByVariant` (line removed, or
+ * its requirement dropped to 0) has its schedule items dropped entirely; a variant whose required
+ * amount shrank has its schedule items clamped down to fit.
+ *
+ * This is the fix carried forward from the delivery-only implementation: a cart line edited or
+ * removed after its schedule was drafted must never leave a schedule holding a stale
+ * `variantId`/quantity pair, because posting one fails the WHOLE batch for a sale that has already
+ * been paid for. Called both reactively (so the UI never shows a schedule that's gone stale while
+ * the cashier is still building the cart) and again, defensively, immediately before each
+ * post-checkout batch post (see PosTerminal's batch mutations) — the two calls guard the same
+ * invariant at different points in time, so a race between them is harmless.
+ */
+export function reconcileSchedules(
+  schedules: FulfillmentSchedule[],
+  requiredByVariant: Record<string, number>,
+): { schedules: FulfillmentSchedule[]; changed: boolean } {
+  const remaining = { ...requiredByVariant }
+  let changed = false
+  const next = schedules.map((s) => {
+    const items: FulfillmentScheduleItemAllocation[] = []
+    for (const item of s.items) {
+      const budget = remaining[item.variantId] ?? 0
+      if (budget <= 0) {
+        changed = true
+        continue
+      }
+      if (item.quantity <= budget) {
+        remaining[item.variantId] = budget - item.quantity
+        items.push(item)
+      } else {
+        changed = true
+        remaining[item.variantId] = 0
+        items.push({ ...item, quantity: budget })
+      }
+    }
+    if (items.length !== s.items.length) changed = true
+    return items.length === s.items.length && items.every((i, idx) => i === s.items[idx])
+      ? s
+      : { ...s, items }
+  })
+  return { schedules: changed ? next : schedules, changed }
 }
 
 /** Default/reset value for the delivery-charge input — a formatted string so the field always

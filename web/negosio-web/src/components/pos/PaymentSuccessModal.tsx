@@ -15,6 +15,8 @@ interface Props {
   payment: CheckoutPaymentInput | null
   /** How many delivery schedules were created for this sale (0 for a normal or charge-only sale). */
   deliveryCount: number
+  /** How many pickup schedules were created for this sale (0 for a normal or delivery-only sale). */
+  pickupCount: number
   onNewTransaction: () => void
 }
 
@@ -63,6 +65,7 @@ export function PaymentSuccessModal({
   result,
   payment,
   deliveryCount,
+  pickupCount,
   onNewTransaction,
 }: Props) {
   if (!result) return null
@@ -96,9 +99,15 @@ export function PaymentSuccessModal({
       </dl>
 
       {deliveryCount > 0 && (
-        <div className="mb-4 flex items-center gap-2 rounded-xl bg-primary-50 px-3 py-2.5 text-sm">
+        <div className="mb-2 flex items-center gap-2 rounded-xl bg-primary-50 px-3 py-2.5 text-sm">
           <Truck className="size-4 shrink-0 text-primary-700" aria-hidden="true" />
           <span className="font-semibold text-primary-800">Delivery receipt ready</span>
+        </div>
+      )}
+      {pickupCount > 0 && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl bg-primary-50 px-3 py-2.5 text-sm">
+          <Truck className="size-4 shrink-0 text-primary-700" aria-hidden="true" />
+          <span className="font-semibold text-primary-800">Pickup schedule ready</span>
         </div>
       )}
 
@@ -113,6 +122,15 @@ export function PaymentSuccessModal({
           >
             <Truck className="size-4" aria-hidden="true" />
             View {deliveryCount === 1 ? 'delivery schedule' : `${deliveryCount} delivery schedules`}
+          </a>
+        )}
+        {pickupCount > 0 && (
+          <a
+            href={`/sales/${result.saleId}`}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-primary-200 bg-white text-sm font-semibold text-primary-700 transition-colors hover:bg-primary-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+          >
+            <Truck className="size-4" aria-hidden="true" />
+            View {pickupCount === 1 ? 'pickup schedule' : `${pickupCount} pickup schedules`}
           </a>
         )}
         <button

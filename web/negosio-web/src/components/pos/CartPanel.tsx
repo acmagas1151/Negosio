@@ -14,6 +14,8 @@ interface Props {
   onSetQty: (variantId: string, qty: number) => void
   onRemove: (variantId: string) => void
   onSetDiscount: (variantId: string, d: { type: DiscountType; value: number }) => void
+  onSetDeliveryRequired: (variantId: string, quantity: number) => void
+  onSetPickupRequired: (variantId: string, quantity: number) => void
   onCharge: () => void
   chargeDisabled: boolean
   notice?: ReactNode
@@ -28,6 +30,8 @@ export function CartPanel({
   onSetQty,
   onRemove,
   onSetDiscount,
+  onSetDeliveryRequired,
+  onSetPickupRequired,
   onCharge,
   chargeDisabled,
   notice,
@@ -82,6 +86,8 @@ export function CartPanel({
               onSetQty={onSetQty}
               onRemove={onRemove}
               onSetDiscount={onSetDiscount}
+              onSetDeliveryRequired={onSetDeliveryRequired}
+              onSetPickupRequired={onSetPickupRequired}
             />
           ))
         )}

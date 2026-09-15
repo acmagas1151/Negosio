@@ -1,14 +1,17 @@
 import { useState } from 'react'
-import type { DeliverySchedule } from '../../lib/pos'
-import { scheduledQuantityFor, todayLocalDateInput } from '../../lib/pos'
-import { formatQty } from '../../lib/format'
+import type { FulfillmentMethod } from '../../api/types'
+import type { FulfillmentSchedule } from '../../lib/pos'
+import { FULFILLMENT_METHOD_LABELS, scheduledQuantityFor, todayLocalDateInput } from '../../lib/pos'
 import { Button, TextArea, TextField } from '../ui'
 
 interface CartLineInfo {
   variantId: string
   name: string
   variantName: string | null
-  quantity: number
+  /** How much of this line is required for THIS method specifically — the pool the per-schedule
+   * item allocation below draws from. The caller (PaymentModal) has already filtered this list down
+   * to lines with a non-zero requirement for `method`. */
+  requiredQuantity: number
 }
 
 interface QuantityInputProps {
@@ -66,32 +69,30 @@ function QuantityInput({ value, max, onCommit, ariaLabel, disabled, className }:
 }
 
 interface Props {
+  /** Never 'TakeNow' — take-now has no schedule at all. */
+  method: FulfillmentMethod
   cartLines: CartLineInfo[]
-  deliveryCharge: string
-  onDeliveryChargeChange: (value: string) => void
-  /** variantId -> quantity of that line marked for delivery (0 = entirely Take-now). Every line not
-   * present here is treated as 0. */
-  deliveryRequiredByVariant: Record<string, number>
-  onDeliveryRequiredChange: (variantId: string, quantity: number) => void
-  schedules: DeliverySchedule[]
-  onScheduleFieldChange: (key: string, patch: Partial<Omit<DeliverySchedule, 'key' | 'items'>>) => void
+  /** Delivery only — Pickup has no delivery charge, so the caller omits both for that method. */
+  deliveryCharge?: string
+  onDeliveryChargeChange?: (value: string) => void
+  schedules: FulfillmentSchedule[]
+  onScheduleFieldChange: (key: string, patch: Partial<Omit<FulfillmentSchedule, 'key' | 'items'>>) => void
   onScheduleItemChange: (key: string, variantId: string, quantity: number) => void
   onAddSchedule: () => void
   onRemoveSchedule: (key: string) => void
   errors: { deliveryCharge?: string }
   /** True once the cashier has attempted to confirm payment with an incomplete schedule — gates
-   * showing per-schedule "required" errors, matching PaymentModal's existing `deliveryAttempted`
+   * showing per-schedule "required" errors, matching PaymentModal's existing `attempted`
    * convention for the charge/recipient fields. */
   attempted: boolean
   disabled?: boolean
 }
 
-export function DeliveryDetailsFields({
+export function FulfillmentDetailsFields({
+  method,
   cartLines,
   deliveryCharge,
   onDeliveryChargeChange,
-  deliveryRequiredByVariant,
-  onDeliveryRequiredChange,
   schedules,
   onScheduleFieldChange,
   onScheduleItemChange,
@@ -101,66 +102,40 @@ export function DeliveryDetailsFields({
   attempted,
   disabled,
 }: Props) {
-  const isFree = errors.deliveryCharge == null && Number(deliveryCharge) === 0
-  const deliveryItemLines = cartLines.filter((l) => (deliveryRequiredByVariant[l.variantId] ?? 0) > 0)
+  const isDelivery = method === 'Delivery'
+  const methodLabel = FULFILLMENT_METHOD_LABELS[method]
+  const isFree = isDelivery && errors.deliveryCharge == null && Number(deliveryCharge) === 0
 
   return (
     <div className="mt-3 space-y-4 border-t border-border pt-3">
-      <div>
-        <TextField
-          label="Delivery charge (₱)"
-          name="deliveryCharge"
-          type="number"
-          min={0}
-          step="0.01"
-          value={deliveryCharge}
-          onChange={(e) => onDeliveryChargeChange(e.target.value)}
-          error={errors.deliveryCharge || undefined}
-          disabled={disabled}
-        />
-        {isFree && <p className="mt-1 text-[12px] text-text-muted">Free delivery</p>}
-      </div>
+      {isDelivery && (
+        <div>
+          <TextField
+            label="Delivery charge (₱)"
+            name="deliveryCharge"
+            type="number"
+            min={0}
+            step="0.01"
+            value={deliveryCharge ?? ''}
+            onChange={(e) => onDeliveryChargeChange?.(e.target.value)}
+            error={errors.deliveryCharge || undefined}
+            disabled={disabled}
+          />
+          {isFree && <p className="mt-1 text-[12px] text-text-muted">Free delivery</p>}
+        </div>
+      )}
 
-      <div className="space-y-2">
-        <p className="text-sm font-semibold text-text-secondary">Items for delivery</p>
-        {cartLines.map((l) => {
-          const required = deliveryRequiredByVariant[l.variantId] ?? 0
-          return (
-            <div key={l.variantId} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-subtle px-3 py-2">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-text-primary">
-                  {l.name}
-                  {l.variantName && <span className="text-text-muted"> · {l.variantName}</span>}
-                </p>
-                <p className="text-[12px] text-text-muted">
-                  Sold {formatQty(l.quantity)} · Take-now {formatQty(l.quantity - required)}
-                </p>
-              </div>
-              <label className="flex shrink-0 items-center gap-2 text-[13px] text-text-secondary">
-                For delivery
-                <QuantityInput
-                  value={required}
-                  max={l.quantity}
-                  onCommit={(v) => onDeliveryRequiredChange(l.variantId, v)}
-                  disabled={disabled}
-                  ariaLabel={`Delivery quantity for ${l.name}`}
-                  className="h-9 w-20 rounded-lg border border-border-strong bg-white px-2 text-right text-sm focus:border-primary-500 focus:outline-none focus:ring-[3px] focus:ring-primary-500/15"
-                />
-              </label>
-            </div>
-          )
-        })}
-      </div>
-
-      {deliveryItemLines.length > 0 && (
+      {cartLines.length > 0 && (
         <div className="space-y-3">
-          <p className="text-sm font-semibold text-text-secondary">Delivery schedules</p>
+          <p className="text-sm font-semibold text-text-secondary">{methodLabel} schedules</p>
           {schedules.map((s, idx) => {
             const showErrors = attempted && s.items.some((i) => i.quantity > 0)
             return (
               <div key={s.key} className="space-y-3 rounded-xl border border-border-strong p-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-[13px] font-semibold text-text-primary">Delivery {idx + 1}</p>
+                  <p className="text-[13px] font-semibold text-text-primary">
+                    {methodLabel} {idx + 1}
+                  </p>
                   {schedules.length > 1 && (
                     <button
                       type="button"
@@ -174,54 +149,61 @@ export function DeliveryDetailsFields({
                 </div>
 
                 <TextField
-                  label="Scheduled delivery date *"
-                  name={`scheduledDeliveryDate-${s.key}`}
+                  label={`Scheduled ${methodLabel.toLowerCase()} date *`}
+                  name={`scheduledDate-${method}-${s.key}`}
                   type="date"
                   min={todayLocalDateInput()}
-                  value={s.scheduledDeliveryDate}
-                  onChange={(e) => onScheduleFieldChange(s.key, { scheduledDeliveryDate: e.target.value })}
-                  error={showErrors && !s.scheduledDeliveryDate ? 'A delivery date is required.' : undefined}
+                  value={s.scheduledDate}
+                  onChange={(e) => onScheduleFieldChange(s.key, { scheduledDate: e.target.value })}
+                  error={
+                    showErrors && !s.scheduledDate
+                      ? `A ${methodLabel.toLowerCase()} date is required.`
+                      : undefined
+                  }
                   disabled={disabled}
                 />
                 <TextField
                   label="Recipient name *"
-                  name={`recipientName-${s.key}`}
+                  name={`recipientName-${method}-${s.key}`}
                   value={s.recipientName}
                   onChange={(e) => onScheduleFieldChange(s.key, { recipientName: e.target.value })}
                   error={showErrors && !s.recipientName.trim() ? 'Recipient name is required.' : undefined}
                   disabled={disabled}
                 />
-                <TextArea
-                  label="Recipient address *"
-                  name={`deliveryAddress-${s.key}`}
-                  rows={2}
-                  value={s.deliveryAddress}
-                  onChange={(e) => onScheduleFieldChange(s.key, { deliveryAddress: e.target.value })}
-                  error={showErrors && !s.deliveryAddress.trim() ? 'Recipient address is required.' : undefined}
-                  disabled={disabled}
-                />
+                {isDelivery && (
+                  <TextArea
+                    label="Recipient address *"
+                    name={`deliveryAddress-${method}-${s.key}`}
+                    rows={2}
+                    value={s.deliveryAddress}
+                    onChange={(e) => onScheduleFieldChange(s.key, { deliveryAddress: e.target.value })}
+                    error={
+                      showErrors && !s.deliveryAddress.trim() ? 'Recipient address is required.' : undefined
+                    }
+                    disabled={disabled}
+                  />
+                )}
                 <div className="grid gap-x-3 sm:grid-cols-2">
                   <TextField
                     label="Contact number"
-                    name={`contactNumber-${s.key}`}
+                    name={`contactNumber-${method}-${s.key}`}
                     value={s.contactNumber}
                     onChange={(e) => onScheduleFieldChange(s.key, { contactNumber: e.target.value })}
                     disabled={disabled}
                   />
                   <TextField
-                    label="Delivery notes (optional)"
-                    name={`deliveryNotes-${s.key}`}
-                    value={s.deliveryNotes}
-                    onChange={(e) => onScheduleFieldChange(s.key, { deliveryNotes: e.target.value })}
+                    label={`${methodLabel} notes (optional)`}
+                    name={`notes-${method}-${s.key}`}
+                    value={s.notes}
+                    onChange={(e) => onScheduleFieldChange(s.key, { notes: e.target.value })}
                     disabled={disabled}
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  {deliveryItemLines.map((l) => {
-                    const required = deliveryRequiredByVariant[l.variantId] ?? 0
+                  {cartLines.map((l) => {
                     const claimedElsewhere = scheduledQuantityFor(schedules, l.variantId, s.key)
-                    const cap = Math.max(0, required - claimedElsewhere)
+                    const cap = Math.max(0, l.requiredQuantity - claimedElsewhere)
                     const value = s.items.find((i) => i.variantId === l.variantId)?.quantity ?? 0
                     return (
                       <label
@@ -237,7 +219,7 @@ export function DeliveryDetailsFields({
                           max={cap}
                           onCommit={(v) => onScheduleItemChange(s.key, l.variantId, v)}
                           disabled={disabled}
-                          ariaLabel={`Quantity of ${l.name} on Delivery ${idx + 1}`}
+                          ariaLabel={`Quantity of ${l.name} on ${methodLabel} ${idx + 1}`}
                           className="h-8 w-16 shrink-0 rounded-md border border-border-strong bg-white px-2 text-right text-[13px] focus:border-primary-500 focus:outline-none focus:ring-[3px] focus:ring-primary-500/15"
                         />
                       </label>
@@ -248,7 +230,7 @@ export function DeliveryDetailsFields({
             )
           })}
           <Button type="button" variant="secondary" size="sm" onClick={onAddSchedule} disabled={disabled}>
-            + Add another delivery schedule
+            + Add another {methodLabel.toLowerCase()}
           </Button>
         </div>
       )}
