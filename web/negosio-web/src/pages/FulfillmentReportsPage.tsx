@@ -137,7 +137,7 @@ function formatDateOnly(d: string | null): string {
 }
 
 function formatDateTime(d: string | null): string {
-  return d ? new Date(d).toLocaleDateString() : '—'
+  return d ? new Date(d).toLocaleString() : '—'
 }
 
 type Tab = 'deliveries' | 'pickups' | 'all'
