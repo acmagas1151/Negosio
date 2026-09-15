@@ -198,4 +198,39 @@ public class PickupTests : IntegrationTest
         (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups", PickupReq(scene, 1m)))
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
+
+    /// <summary>
+    /// Spec item 34 ("Unauthorized actions are rejected") for the Pickup lifecycle specifically. Claim
+    /// sits behind the class-level SalesView policy (any POS role, same as Mark Delivered on the
+    /// delivery side); Cancel sits behind the narrower FulfillmentCancel policy (Manager/Admin/Owner
+    /// only). <see cref="Negosio.IntegrationTests.Delivery.DeliveryReceiptStatusTests"/> already proves
+    /// this exact policy pair on the Delivery endpoints
+    /// (<c>Cashier_may_mark_delivered_but_not_cancel</c> / <c>Cashier_cannot_cancel_a_delivery</c>);
+    /// this is its Pickup-side mirror, since Pickup reaches the authorization filter through its own
+    /// distinct routes (<c>POST /api/pickups/{id}/cancel</c> and the shared claim endpoint) even though
+    /// both methods share the same DeliveryReceipt entity underneath.
+    /// </summary>
+    [Fact]
+    public async Task Cashier_may_claim_a_pickup_but_not_cancel_it()
+    {
+        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
+        var pickup = await CreatePickupAsync(scene, 4m);
+        Authorize(await AddTenantUserTokenAsync("pickup-cashier@example.com", UserRole.Cashier, scene.BranchId));
+
+        (await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Cashier_cannot_cancel_a_pickup()
+    {
+        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
+        var pickup = await CreatePickupAsync(scene, 4m);
+        Authorize(await AddTenantUserTokenAsync("pickup-cashier2@example.com", UserRole.Cashier, scene.BranchId));
+
+        var response = await Client.PostAsJsonAsync($"/api/pickups/{pickup.Id}/cancel",
+            new CancelPickupRequest("Changed mind", CancellationDisposition.PickupLater, null));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
 }

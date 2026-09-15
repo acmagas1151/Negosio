@@ -476,6 +476,34 @@ public class FulfillmentConversionTests : IntegrationTest
         summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(6m);
     }
 
+    /// <summary>Spec test 10's Pickup-side mirror of
+    /// <c>A_cancelled_schedule_stays_in_history_and_is_counted_nowhere</c> above (which only exercises
+    /// a cancelled Delivery). Pickup and Delivery share the same DeliveryReceipt entity and controller
+    /// actions, but nothing before this test ever actually cancelled a Pickup and then re-fetched it —
+    /// every other Pickup-cancellation test reads only the synchronous response body, never a
+    /// subsequent GET/list/summary round trip. This proves the cancelled Pickup is real, persisted
+    /// history: still listed by id, still present on the sale's fulfillment summary, and its released
+    /// quantity is counted in no bucket other than pickup-unscheduled.</summary>
+    [Fact]
+    public async Task A_cancelled_pickup_stays_in_history_and_is_counted_nowhere()
+    {
+        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
+        var pickup = await CreatePickupAsync(scene, 4m);
+        (await CancelPickupAsync(pickup.Id, CancellationDisposition.PickupLater, null, "No show")).Status
+            .Should().Be(HttpStatusCode.OK);
+
+        var reloaded = await Client.GetFromJsonAsync<FulfillmentScheduleDto>(
+            $"/api/delivery-receipts/{pickup.Id}", TestJson.Options);
+        reloaded!.Status.Should().Be(FulfillmentStatus.Cancelled);
+        reloaded.Items.Should().ContainSingle(); // its own item rows are preserved as history
+
+        var summary = await GetSummaryAsync(scene);
+        summary!.Pickups.Should().ContainSingle(p => p.Id == pickup.Id && p.Status == FulfillmentStatus.Cancelled);
+        summary.Items[0].PickupPendingQuantity.Should().Be(0m);
+        summary.Items[0].ClaimedQuantity.Should().Be(0m);
+        summary.Items[0].PickupUnscheduledQuantity.Should().Be(6m); // fully released, counted here only
+    }
+
     /// <summary>Spec test 26 — a delivery charge belongs to the SALE, not to a schedule. Converting the
     /// last delivery into a pickup must not refund, zero or otherwise touch it; only the pickup's own DTO
     /// reports 0, because a pickup never carries a charge.</summary>
