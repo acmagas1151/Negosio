@@ -10,7 +10,7 @@ interface ModalProps {
   title: string
   children: ReactNode
   footer?: ReactNode
-  size?: 'sm' | 'md'
+  size?: 'sm' | 'md' | 'lg'
   /** Keeps `title` as the dialog's accessible name but doesn't render it as visible header text —
    * for content (like a success confirmation) that wants its own bespoke heading in the body
    * instead of the standard title-bar row. The close button still renders, alone, top-right. */
@@ -106,7 +106,7 @@ export function Modal({ open, onClose, title, children, footer, size = 'md', hid
         tabIndex={-1}
         className={cn(
           'relative z-10 w-full rounded-2xl bg-surface p-5 shadow-card-lg outline-none',
-          size === 'sm' ? 'max-w-sm' : 'max-w-lg',
+          size === 'sm' ? 'max-w-sm' : size === 'lg' ? 'max-w-2xl' : 'max-w-lg',
         )}
       >
         <div className={cn('flex items-start gap-4', hideTitle ? 'justify-end' : 'mb-4 justify-between')}>

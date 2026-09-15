@@ -12,6 +12,7 @@ import {
 import { formatMoney } from '../../lib/format'
 import { cn } from '../../lib/cn'
 import { Button, Callout, Modal, TextField } from '../ui'
+import { FulfillmentAllocationFields } from './FulfillmentAllocationFields'
 import { FulfillmentDetailsFields } from './FulfillmentDetailsFields'
 import { PaymentMethodIcon } from './PaymentMethodIcon'
 
@@ -37,6 +38,7 @@ interface Props {
     variantId: string
     name: string
     variantName: string | null
+    quantity: number
     deliveryRequiredQuantity: number
     pickupRequiredQuantity: number
   }[]
@@ -46,6 +48,11 @@ interface Props {
    * it must survive the modal closing and reopening after a failed-payment retry. */
   deliveryCharge: string
   onDeliveryChargeChange: (value: string) => void
+  /** Editing callbacks for the Take now / Delivery / Pickup allocation table below — the same
+   * `PosTerminal` callbacks CartItem used to call directly before this allocation UI moved here.
+   * The underlying state (`usePosCart`'s cart lines) is unchanged; only who calls these moved. */
+  onSetDeliveryRequired: (variantId: string, quantity: number) => void
+  onSetPickupRequired: (variantId: string, quantity: number) => void
 }
 
 export function PaymentModal({
@@ -60,6 +67,8 @@ export function PaymentModal({
   pickup,
   deliveryCharge,
   onDeliveryChargeChange,
+  onSetDeliveryRequired,
+  onSetPickupRequired,
 }: Props) {
   const [method, setMethod] = useState<PaymentMethod>('Cash')
   const [received, setReceived] = useState('')
@@ -77,8 +86,8 @@ export function PaymentModal({
   }, [open])
 
   // Whether this sale involves each method at all — derived straight from the cart lines (set via
-  // CartItem's per-line allocation) rather than a manual toggle, so there's no way for the
-  // fulfillment section's visibility to drift from what's actually on the cart.
+  // the Fulfillment allocation table below) rather than a manual toggle, so there's no way for the
+  // schedule section's visibility to drift from what's actually on the cart.
   const anyDelivery = cartLines.some((l) => l.deliveryRequiredQuantity > 0)
   const anyPickup = cartLines.some((l) => l.pickupRequiredQuantity > 0)
   const deliveryLines = cartLines
@@ -142,6 +151,7 @@ export function PaymentModal({
       open={open}
       onClose={onClose}
       title="Take payment"
+      size="lg"
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose} disabled={submitting}>
@@ -159,6 +169,24 @@ export function PaymentModal({
         <div className="mb-4 rounded-lg bg-surface-subtle px-3 py-3 text-center">
           <p className="text-[12px] uppercase tracking-wide text-text-muted">Amount due</p>
           <p className="text-2xl font-bold text-text-primary">{formatMoney(effectiveAmountDue)}</p>
+        </div>
+
+        {/* Allocation happens before payment method: how much of the sale is taken now vs. set
+            aside for delivery/pickup determines whether the Delivery/Pickup schedule sections
+            below even appear, so the cashier settles it first rather than discovering it after
+            already picking how they're being paid. */}
+        <div className="mb-4 rounded-lg border border-border-strong px-4 py-3.5">
+          <p className="text-sm font-semibold text-text-secondary">Fulfillment</p>
+          <div className="mt-3">
+            <FulfillmentAllocationFields
+              cartLines={cartLines}
+              deliverySchedules={delivery.schedules}
+              pickupSchedules={pickup.schedules}
+              onSetDeliveryRequired={onSetDeliveryRequired}
+              onSetPickupRequired={onSetPickupRequired}
+              disabled={submitting}
+            />
+          </div>
         </div>
 
         <div className="mb-4 grid grid-cols-5 gap-2">
@@ -231,10 +259,10 @@ export function PaymentModal({
           />
         )}
 
-        {/* Whether this sale involves delivery and/or pickup is decided on the cart, per line
-            (CartItem's Take now / Delivery / Pickup allocation) — there's no toggle here to drift
-            out of sync with it. Each method gets its own section, its own schedule list, and its
-            own "attempted" gating, but they share one Confirm-payment gate. */}
+        {/* Whether this sale involves delivery and/or pickup is decided by the Fulfillment
+            allocation table above (Take now / Delivery / Pickup, per line) — there's no separate
+            toggle here to drift out of sync with it. Each method gets its own section, its own
+            schedule list, and its own "attempted" gating, but they share one Confirm-payment gate. */}
         {anyDelivery && (
           <div className="mt-4 rounded-lg border border-border-strong px-4 py-3.5">
             <p className="text-sm font-semibold text-text-secondary">Delivery</p>

@@ -246,6 +246,53 @@ export function reconcileSchedules(
   return { schedules: changed ? next : schedules, changed }
 }
 
+export interface FulfillmentAllocationSummary {
+  totalSold: number
+  takeNow: number
+  scheduledForDelivery: number
+  deliverLater: number
+  scheduledForPickup: number
+  pickupLater: number
+}
+
+/**
+ * Cart-wide totals for the Payment modal's allocation summary: how much of the sale is taken at
+ * the counter today vs. set aside for delivery/pickup, and — within what's set aside — how much
+ * already has an active schedule covering it vs. is allocated but not yet scheduled. The latter
+ * distinction matters because a cart line's `deliveryRequiredQuantity` (or
+ * `pickupRequiredQuantity`) can be only partially covered by the schedules built so far (a
+ * schedule may cover part of a line's requirement, per `scheduledQuantityFor`) — lumping
+ * "allocated" and "scheduled" into one number would hide that gap from the cashier.
+ */
+export function computeFulfillmentAllocationSummary(
+  lines: {
+    variantId: string
+    quantity: number
+    deliveryRequiredQuantity: number
+    pickupRequiredQuantity: number
+  }[],
+  deliverySchedules: FulfillmentSchedule[],
+  pickupSchedules: FulfillmentSchedule[],
+): FulfillmentAllocationSummary {
+  let totalSold = 0
+  let takeNow = 0
+  let scheduledForDelivery = 0
+  let deliverLater = 0
+  let scheduledForPickup = 0
+  let pickupLater = 0
+  for (const l of lines) {
+    totalSold += l.quantity
+    takeNow += Math.max(0, l.quantity - l.deliveryRequiredQuantity - l.pickupRequiredQuantity)
+    const claimedDelivery = scheduledQuantityFor(deliverySchedules, l.variantId)
+    scheduledForDelivery += claimedDelivery
+    deliverLater += Math.max(0, l.deliveryRequiredQuantity - claimedDelivery)
+    const claimedPickup = scheduledQuantityFor(pickupSchedules, l.variantId)
+    scheduledForPickup += claimedPickup
+    pickupLater += Math.max(0, l.pickupRequiredQuantity - claimedPickup)
+  }
+  return { totalSold, takeNow, scheduledForDelivery, deliverLater, scheduledForPickup, pickupLater }
+}
+
 /** Default/reset value for the delivery-charge input — a formatted string so the field always
  * starts showing "0.00", matching how a cashier would type a peso amount. */
 export const EMPTY_DELIVERY_CHARGE = '0.00'

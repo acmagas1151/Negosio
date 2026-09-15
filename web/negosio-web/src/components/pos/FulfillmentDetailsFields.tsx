@@ -14,7 +14,7 @@ interface CartLineInfo {
   requiredQuantity: number
 }
 
-interface QuantityInputProps {
+export interface QuantityInputProps {
   value: number
   max: number
   onCommit: (quantity: number) => void
@@ -24,14 +24,16 @@ interface QuantityInputProps {
 }
 
 /** A quantity `<input type="number">` that holds its own raw-string draft while being edited and
- * only parses/clamps/commits on blur (or Enter) — mirrors CartItem.tsx's `qtyDraft` pattern. A
- * controlled numeric input that re-renders with a coerced number on every keystroke breaks
+ * only parses/clamps/commits on blur (or Enter) — mirrors CartItem.tsx's old `qtyDraft` pattern.
+ * A controlled numeric input that re-renders with a coerced number on every keystroke breaks
  * fractional entry: typing "1", then ".", then "5" would otherwise collapse to "15" because the
  * DOM value snaps back to the coerced integer before the "5" lands. Since this app has real
  * fractional-quantity (weighed) products, that would be a real usability bug, not a cosmetic one.
  * Each `.map()`-rendered row gets its own instance, so each has its own independent draft state —
- * no shared state to leak across rows. */
-function QuantityInput({ value, max, onCommit, ariaLabel, disabled, className }: QuantityInputProps) {
+ * no shared state to leak across rows. Exported so FulfillmentAllocationFields (the Take now /
+ * Delivery / Pickup allocation table in PaymentModal) reuses the exact same drafting pattern
+ * rather than inventing a third copy of it. */
+export function QuantityInput({ value, max, onCommit, ariaLabel, disabled, className }: QuantityInputProps) {
   // While being edited this holds the raw typed string; `null` means "show the committed value".
   const [draft, setDraft] = useState<string | null>(null)
 

@@ -814,8 +814,6 @@ export function PosTerminal({
             onSetQty={onSetQty}
             onRemove={onRemove}
             onSetDiscount={onSetDiscount}
-            onSetDeliveryRequired={onSetDeliveryRequired}
-            onSetPickupRequired={onSetPickupRequired}
             onCharge={() => {
               setCheckoutError(null)
               setPayError(null)
@@ -855,6 +853,8 @@ export function PosTerminal({
         }}
         deliveryCharge={deliveryCharge}
         onDeliveryChargeChange={onDeliveryChargeChange}
+        onSetDeliveryRequired={onSetDeliveryRequired}
+        onSetPickupRequired={onSetPickupRequired}
       />
 
       <PaymentSuccessModal
