@@ -6,6 +6,10 @@ import type {
   DeliveryFulfillmentReportResultDto,
   DeliveryReportParams,
   DeliveryReportResultDto,
+  FulfillmentReportParams,
+  FulfillmentReportResultDto,
+  PickupReportParams,
+  PickupReportResultDto,
   ReportFilterParams,
   ReportsOverviewDto,
   TopProductDto,
@@ -28,4 +32,10 @@ export const reportsApi = {
     apiRequest<DeliveryFulfillmentReportResultDto>(
       `/api/reports/delivery-fulfillment${qs({ ...params })}`,
     ),
+
+  pickups: (params: PickupReportParams) =>
+    apiRequest<PickupReportResultDto>(`/api/reports/pickup${qs({ ...params })}`),
+
+  fulfillment: (params: FulfillmentReportParams) =>
+    apiRequest<FulfillmentReportResultDto>(`/api/reports/fulfillment${qs({ ...params })}`),
 }

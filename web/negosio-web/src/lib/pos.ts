@@ -1,4 +1,11 @@
-import type { DeliveryStatus, PaymentMethod, SaleFulfillmentStatus, SaleStatus } from '../api/types'
+import type {
+  CancellationDisposition,
+  FulfillmentMethod,
+  FulfillmentStatus,
+  PaymentMethod,
+  SaleFulfillmentStatus,
+  SaleStatus,
+} from '../api/types'
 
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   Cash: 'Cash',
@@ -41,46 +48,66 @@ export function saleStatusTone(s: SaleStatus): 'neutral' | 'success' | 'warning'
   }
 }
 
-export const DELIVERY_STATUS_LABELS: Record<DeliveryStatus, string> = {
-  Pending: 'Pending',
-  Delivered: 'Delivered',
-  Cancelled: 'Cancelled',
-}
-
-export function deliveryStatusTone(s: DeliveryStatus): 'neutral' | 'success' | 'warning' | 'danger' {
-  switch (s) {
-    case 'Pending':
-      return 'warning'
-    case 'Delivered':
-      return 'success'
-    case 'Cancelled':
-      return 'neutral'
+/** The spec's label table. A status never renders on its own — it always renders through its
+ * method, because "Completed" means "Delivered" for a delivery and "Claimed" for a pickup. */
+export function fulfillmentStatusLabel(method: FulfillmentMethod, status: FulfillmentStatus): string {
+  if (method === 'TakeNow') return status === 'Completed' ? 'Taken now' : 'Take now'
+  if (method === 'Delivery') {
+    switch (status) {
+      case 'Unscheduled': return 'For delivery (unscheduled)'
+      case 'Pending': return 'Scheduled for delivery'
+      case 'Completed': return 'Delivered'
+      case 'Cancelled': return 'Delivery cancelled'
+    }
+  }
+  switch (status) {
+    case 'Unscheduled': return 'For pickup (unscheduled)'
+    case 'Pending': return 'Scheduled for pickup'
+    case 'Completed': return 'Claimed'
+    case 'Cancelled': return 'Pickup cancelled'
   }
 }
 
+export function fulfillmentStatusTone(status: FulfillmentStatus): 'neutral' | 'success' | 'warning' | 'danger' {
+  switch (status) {
+    case 'Completed': return 'success'
+    case 'Pending': return 'warning'
+    case 'Cancelled': return 'danger'
+    default: return 'neutral'
+  }
+}
+
+export const FULFILLMENT_METHOD_LABELS: Record<FulfillmentMethod, string> = {
+  TakeNow: 'Take now',
+  Delivery: 'Delivery',
+  Pickup: 'Pickup',
+}
+
+export const CANCELLATION_DISPOSITION_LABELS: Record<CancellationDisposition, string> = {
+  DeliverLater: 'Deliver later (reschedule)',
+  PickupLater: 'Pick up later (reschedule)',
+  ConvertToDelivery: 'Convert to delivery',
+  ConvertToPickup: 'Convert to pickup',
+  CustomerPickedUpInstead: 'Customer picked it up instead',
+}
+
 export const SALE_FULFILLMENT_STATUS_LABELS: Record<SaleFulfillmentStatus, string> = {
-  NotApplicable: 'Not applicable',
-  Unscheduled: 'Unscheduled',
-  PartiallyScheduled: 'Partially scheduled',
-  FullyScheduled: 'Fully scheduled',
-  PartiallyDelivered: 'Partially delivered',
-  FullyDelivered: 'Fully delivered',
-  NeedsRescheduling: 'Needs rescheduling',
+  NotApplicable: 'No fulfillment needed',
+  Fulfilled: 'Fulfilled',
+  PartiallyFulfilled: 'Partially fulfilled',
+  AwaitingDelivery: 'Awaiting delivery',
+  AwaitingPickup: 'Awaiting pickup',
+  AwaitingDeliveryAndPickup: 'Awaiting delivery and pickup',
+  NeedsScheduling: 'Needs scheduling',
+  NeedsAttention: 'Needs attention',
 }
 
 export function saleFulfillmentStatusTone(s: SaleFulfillmentStatus): 'neutral' | 'success' | 'warning' | 'danger' {
   switch (s) {
-    case 'FullyDelivered':
-      return 'success'
-    case 'PartiallyDelivered':
-    case 'FullyScheduled':
-    case 'PartiallyScheduled':
-      return 'warning'
-    case 'NeedsRescheduling':
-      return 'danger'
-    case 'Unscheduled':
-    case 'NotApplicable':
-      return 'neutral'
+    case 'Fulfilled': return 'success'
+    case 'NeedsAttention': return 'danger'
+    case 'NotApplicable': return 'neutral'
+    default: return 'warning'
   }
 }
 

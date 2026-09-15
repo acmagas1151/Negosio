@@ -470,6 +470,10 @@ export interface CheckoutItemInput {
   /** How much of this line is not taken at the counter today — defaults to 0 (all Take-now) when
    * omitted. Never negative, never more than `quantity`. */
   deliveryRequiredQuantity: number
+  /** How much of this line is set aside for pickup rather than taken at the counter today —
+   * defaults to 0 when omitted. Never negative, and `deliveryRequiredQuantity +
+   * pickupRequiredQuantity` never exceeds `quantity`. */
+  pickupRequiredQuantity: number
 }
 
 export interface CheckoutPaymentInput {
@@ -499,6 +503,7 @@ export interface SaleResultItemDto {
   variantName: string | null
   quantity: number
   deliveryRequiredQuantity: number
+  pickupRequiredQuantity: number
 }
 
 export interface SaleResultDto {
@@ -538,6 +543,7 @@ export interface SaleItemDto {
   costPriceSnapshot: number | null
   returnedQuantity: number
   deliveryRequiredQuantity: number
+  pickupRequiredQuantity: number
 }
 
 export interface SalePaymentDto {
@@ -703,21 +709,36 @@ export interface ReceiptDto {
   width: ReceiptWidth
 }
 
-// ---- Delivery fulfillment ----
+// ---- Fulfillment ----
 // Backend contract (SalesController / DeliveryReceiptsController):
-//   POST /api/sales/{saleId}/delivery-receipts/batch -> 201, DeliveryReceiptBatchResultDto
-//   POST /api/sales/{saleId}/delivery-receipts        -> 201, DeliveryReceiptDto
-//   GET  /api/sales/{saleId}/delivery-receipts        -> 200, DeliveryReceiptDto[]
-//   GET  /api/sales/{saleId}/delivery-summary         -> 200, SaleDeliverySummaryDto
-//   GET  /api/delivery-receipts/{id}                  -> 200 | 404
-//   POST /api/delivery-receipts/{id}/deliver          -> 200, DeliveryReceiptDto
-//   POST /api/delivery-receipts/{id}/cancel           -> 200, DeliveryReceiptDto (Owner/Admin/Manager only)
-// A Sale may now have MULTIPLE DeliveryReceipts ("Delivery 1", "Delivery 2", ...); each shows only
-// its own assigned items, never the whole sale.
+//   POST /api/sales/{saleId}/delivery-receipts        -> 201, FulfillmentScheduleDto
+//   POST /api/sales/{saleId}/delivery-receipts/batch  -> 201, FulfillmentBatchResultDto
+//   POST /api/sales/{saleId}/pickups                  -> 201, FulfillmentScheduleDto
+//   POST /api/sales/{saleId}/pickups/batch            -> 201, FulfillmentBatchResultDto
+//   GET  /api/sales/{saleId}/delivery-receipts        -> 200, FulfillmentScheduleDto[]  (both methods)
+//   GET  /api/sales/{saleId}/fulfillment              -> 200, SaleFulfillmentSummaryDto
+//   GET  /api/delivery-receipts/{id}                  -> 200 | 404  (serves pickups too)
+//   POST /api/delivery-receipts/{id}/deliver          -> 200, FulfillmentScheduleDto
+//   POST /api/delivery-receipts/{id}/claim            -> 200, FulfillmentScheduleDto
+//   POST /api/delivery-receipts/{id}/cancel           -> 200, CancellationResultDto  (Owner/Admin/Manager)
+//   POST /api/pickups/{id}/cancel                     -> 200, CancellationResultDto  (Owner/Admin/Manager)
 
-export type DeliveryStatus = 'Pending' | 'Delivered' | 'Cancelled'
+export type FulfillmentMethod = 'TakeNow' | 'Delivery' | 'Pickup'
+export type FulfillmentStatus = 'Unscheduled' | 'Pending' | 'Completed' | 'Cancelled'
 
-export interface DeliveryReceiptItemDto {
+export type CancellationDisposition =
+  | 'DeliverLater'
+  | 'PickupLater'
+  | 'ConvertToDelivery'
+  | 'ConvertToPickup'
+  | 'CustomerPickedUpInstead'
+
+export interface FulfillmentItemInput {
+  saleItemId: string
+  quantity: number
+}
+
+export interface FulfillmentItemDto {
   saleItemId: string
   productName: string
   variantName: string | null
@@ -726,26 +747,30 @@ export interface DeliveryReceiptItemDto {
   amount: number | null
 }
 
-export interface DeliveryReceiptDto {
+export interface FulfillmentScheduleDto {
   id: string
   saleId: string | null
   relatedSaleNumber: string | null
+  method: FulfillmentMethod
   sequenceNumber: number
-  scheduledDeliveryDate: string // yyyy-MM-dd
-  status: DeliveryStatus
+  scheduledDate: string // yyyy-MM-dd
+  status: FulfillmentStatus
   createdAtUtc: string
   branchName: string
   recipientName: string
-  deliveryAddress: string
+  /** null for pickups — a pickup transports nothing. */
+  deliveryAddress: string | null
   contactNumber: string | null
-  deliveryNotes: string | null
+  notes: string | null
   preparedByName: string
-  deliveredAtUtc: string | null
-  deliveredByName: string | null
+  completedAtUtc: string | null
+  completedByName: string | null
   cancelledAtUtc: string | null
   cancelledByName: string | null
   cancellationReason: string | null
-  items: DeliveryReceiptItemDto[]
+  cancellationDisposition: CancellationDisposition | null
+  items: FulfillmentItemDto[]
+  /** Read from the Sale; always 0 for a pickup. Never stored on the schedule. */
   deliveryCharge: number
   headerText: string | null
   footerText: string | null
@@ -759,18 +784,21 @@ export interface DeliveryReceiptDto {
   showSignatureFields: boolean
 }
 
-export interface CreateDeliveryReceiptItemInput {
-  saleItemId: string
-  quantity: number
-}
-
 export interface CreateDeliveryReceiptRequest {
-  scheduledDeliveryDate: string // yyyy-MM-dd
+  scheduledDate: string
   recipientName: string
   deliveryAddress: string
   contactNumber: string | null
-  deliveryNotes: string | null
-  items: CreateDeliveryReceiptItemInput[]
+  notes: string | null
+  items: FulfillmentItemInput[]
+}
+
+export interface CreatePickupRequest {
+  scheduledDate: string
+  recipientName: string
+  contactNumber: string | null
+  notes: string | null
+  items: FulfillmentItemInput[]
 }
 
 export interface CreateDeliveryReceiptBatchRequest {
@@ -778,60 +806,98 @@ export interface CreateDeliveryReceiptBatchRequest {
   schedules: CreateDeliveryReceiptRequest[]
 }
 
-export interface DeliveryReceiptBatchResultDto {
-  created: DeliveryReceiptDto[]
+export interface CreatePickupBatchRequest {
+  batchRequestId: string
+  schedules: CreatePickupRequest[]
+}
+
+export interface FulfillmentBatchResultDto {
+  created: FulfillmentScheduleDto[]
   wasExistingBatch: boolean
 }
 
-export interface CancelDeliveryReceiptRequest {
+export interface PickupReplacementInput {
+  scheduledDate: string
+  recipientName: string
+  contactNumber: string | null
+  notes: string | null
+}
+
+export interface DeliveryReplacementInput {
+  scheduledDate: string
+  recipientName: string
+  deliveryAddress: string
+  contactNumber: string | null
+  notes: string | null
+}
+
+export interface CancelDeliveryRequest {
   reason: string
+  disposition: CancellationDisposition
+  replacement: PickupReplacementInput | null
+}
+
+export interface CancelPickupRequest {
+  reason: string
+  disposition: CancellationDisposition
+  replacement: DeliveryReplacementInput | null
+}
+
+export interface CancellationResultDto {
+  cancelled: FulfillmentScheduleDto
+  replacement: FulfillmentScheduleDto | null
 }
 
 export type SaleFulfillmentStatus =
   | 'NotApplicable'
-  | 'Unscheduled'
-  | 'PartiallyScheduled'
-  | 'FullyScheduled'
-  | 'PartiallyDelivered'
-  | 'FullyDelivered'
-  | 'NeedsRescheduling'
+  | 'Fulfilled'
+  | 'PartiallyFulfilled'
+  | 'AwaitingDelivery'
+  | 'AwaitingPickup'
+  | 'AwaitingDeliveryAndPickup'
+  | 'NeedsScheduling'
+  | 'NeedsAttention'
 
+/** The 8 buckets rendered per line on the Sale-detail page. All computed server-side. */
 export interface SaleItemFulfillmentDto {
   saleItemId: string
   productName: string
   variantName: string | null
   quantity: number
   takeNowQuantity: number
-  deliveryRequiredQuantity: number
-  pendingQuantity: number
+  deliveryUnscheduledQuantity: number
+  deliveryPendingQuantity: number
   deliveredQuantity: number
-  /** Never trust a frontend-computed version of this for a write — always send only what this field
-   * currently says, and let the backend re-validate at submit time regardless. */
-  availableToScheduleQuantity: number
+  pickupUnscheduledQuantity: number
+  pickupPendingQuantity: number
+  claimedQuantity: number
 }
 
-export interface DeliveryReceiptSummaryDto {
+export interface FulfillmentConversionDto {
   id: string
-  sequenceNumber: number
-  scheduledDeliveryDate: string
-  status: DeliveryStatus
-  recipientName: string
-  deliveryAddress: string
-  contactNumber: string | null
-  deliveryNotes: string | null
-  deliveredAtUtc: string | null
-  cancelledAtUtc: string | null
-  cancellationReason: string | null
-  items: DeliveryReceiptItemDto[]
+  saleItemId: string
+  productName: string
+  variantName: string | null
+  quantity: number
+  fromMethod: FulfillmentMethod
+  toMethod: FulfillmentMethod
+  sourceRecordId: string | null
+  replacementRecordId: string | null
+  reason: string
+  createdAtUtc: string
+  createdByName: string
 }
 
-export interface SaleDeliverySummaryDto {
+export interface SaleFulfillmentSummaryDto {
   saleId: string
   fulfillmentStatus: SaleFulfillmentStatus
   deliveryCharge: number
   items: SaleItemFulfillmentDto[]
-  deliveries: DeliveryReceiptSummaryDto[]
+  deliveries: FulfillmentScheduleDto[]
+  pickups: FulfillmentScheduleDto[]
+  conversions: FulfillmentConversionDto[]
   canCreateDelivery: boolean
+  canCreatePickup: boolean
 }
 
 // ---- Returns ----
@@ -1020,7 +1086,7 @@ export interface DeliveryReportRowDto {
   saleNumber: string
   sequenceNumber: number
   scheduledDeliveryDate: string
-  status: DeliveryStatus
+  status: FulfillmentStatus
   isOverdue: boolean
   createdAtUtc: string
   recipientName: string
@@ -1055,7 +1121,100 @@ export interface DeliveryReportParams {
   preset?: DeliveryReportPreset
   fromDate?: string
   toDate?: string
-  status?: DeliveryStatus
+  status?: FulfillmentStatus
+  search?: string
+  page?: number
+  pageSize?: number
+}
+
+// ---- Pickup report (mirrors the delivery report above, method == Pickup) ----
+
+export type PickupReportPreset = 'All' | 'Today' | 'Upcoming' | 'Overdue' | 'Pending' | 'Claimed' | 'Cancelled'
+
+export interface PickupReportRowDto {
+  deliveryReceiptId: string
+  saleId: string
+  saleNumber: string
+  sequenceNumber: number
+  scheduledPickupDate: string
+  status: FulfillmentStatus
+  isOverdue: boolean
+  createdAtUtc: string
+  recipientName: string
+  contactNumber: string | null
+  notes: string | null
+  /** Always 0 for a pickup — never inherited from the sale like the delivery report's figure. */
+  deliveryCharge: number
+  saleGrandTotal: number
+  paymentSummary: string
+  preparedByName: string
+  completedAtUtc: string | null
+  cancelledAtUtc: string | null
+  cancellationReason: string | null
+}
+
+export interface PickupReportTotalsDto {
+  totalSchedules: number
+  distinctSalesCount: number
+}
+
+export interface PickupReportResultDto {
+  page: PagedResult<PickupReportRowDto>
+  totals: PickupReportTotalsDto
+}
+
+export interface PickupReportParams {
+  branchId?: string
+  preset?: PickupReportPreset
+  fromDate?: string
+  toDate?: string
+  status?: FulfillmentStatus
+  search?: string
+  page?: number
+  pageSize?: number
+}
+
+// ---- Combined fulfillment view (one row per sale-item-per-method allocation) ----
+
+export interface FulfillmentReportRowDto {
+  saleId: string
+  saleNumber: string
+  saleItemId: string
+  productName: string
+  variantName: string | null
+  quantity: number
+  method: FulfillmentMethod
+  status: FulfillmentStatus
+  scheduledDate: string | null
+  completedAtUtc: string | null
+  recipientName: string | null
+  sourceScheduleId: string | null
+  replacementScheduleId: string | null
+}
+
+export interface FulfillmentReportSummaryDto {
+  totalTakeNowQuantity: number
+  totalDeliveryUnscheduledQuantity: number
+  totalDeliveryPendingQuantity: number
+  totalDeliveredQuantity: number
+  totalPickupUnscheduledQuantity: number
+  totalPickupPendingQuantity: number
+  totalClaimedQuantity: number
+  totalCancelledSchedules: number
+  fullyFulfilledSalesCount: number
+  salesNeedingAttentionCount: number
+  totalDeliveryCharges: number
+}
+
+export interface FulfillmentReportResultDto {
+  page: PagedResult<FulfillmentReportRowDto>
+  summary: FulfillmentReportSummaryDto
+}
+
+export interface FulfillmentReportParams {
+  branchId?: string
+  method?: FulfillmentMethod
+  status?: FulfillmentStatus
   search?: string
   page?: number
   pageSize?: number
