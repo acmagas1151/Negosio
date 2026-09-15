@@ -449,13 +449,13 @@ charge" line, the Total, Amount paid, and Change due were all bit-for-bit unchan
   it indicates any problem with the suite itself.
 - Nothing was merged or pushed at any point across the whole plan, Task 19 included. Confirmed
   repeatedly via `git status -sb` and `git rev-parse HEAD`; `origin/master` was never touched (no
-  `git push`, `git merge`, or `git checkout master` was ever run). One correction to a stale prior
-  memory note: this session's own investigation (see "Final whole-branch review" below) found via
-  `git merge-base` that the pre-existing, separately-shipped Delivery-only feature this plan extends
-  is **not** actually on local `master` — the whole `feature/pos-for-delivery` branch, Delivery and
-  Pickup work both, diverges from `master` at `a8028b8` and sits entirely on this one unreleased
-  branch. A prior memory note claiming Delivery was "merged to local master" was wrong; git history
-  is the authority here, not the note.
+  `git push`, `git merge`, or `git checkout master` was ever run). One clarification on the layering
+  here, checked via `git merge-base`: `master`'s tip (`a8028b8`) already contains the earlier
+  Receipt Settings + persistent Delivery Receipt (print document) feature, merged as `a5c2df1` in a
+  prior session — that part genuinely is on `master`. What is *not* on `master` is everything built
+  on `feature/pos-for-delivery` since then: `Sales.DeliveryCharge`, the "for delivery" at-checkout
+  capability, the full Delivery fulfillment/scheduling system, and now this entire Pickup
+  fulfillment plan (`a8028b8..1537ac0`, 71 commits) — none of it has been merged.
 
 ## Final whole-branch review
 
