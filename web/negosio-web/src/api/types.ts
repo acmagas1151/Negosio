@@ -503,7 +503,6 @@ export interface SaleResultItemDto {
   variantName: string | null
   quantity: number
   deliveryRequiredQuantity: number
-  pickupRequiredQuantity: number
 }
 
 export interface SaleResultDto {
@@ -543,7 +542,6 @@ export interface SaleItemDto {
   costPriceSnapshot: number | null
   returnedQuantity: number
   deliveryRequiredQuantity: number
-  pickupRequiredQuantity: number
 }
 
 export interface SalePaymentDto {
