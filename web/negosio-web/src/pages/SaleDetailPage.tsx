@@ -1,18 +1,28 @@
 import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { branchesApi } from '../api/branches'
 import { ApiError } from '../api/client'
-import { deliveryReceiptsApi } from '../api/deliveryReceipts'
+import { fulfillmentApi } from '../api/fulfillment'
 import { salesApi } from '../api/pos'
-import { PAYMENT_METHOD_LABELS, SALE_FULFILLMENT_STATUS_LABELS, VOID_INELIGIBLE_MESSAGES, saleFulfillmentStatusTone } from '../lib/pos'
-import { formatMoney, formatQty } from '../lib/format'
+import type { FulfillmentScheduleDto } from '../api/types'
+import {
+  CANCELLATION_DISPOSITION_LABELS,
+  FULFILLMENT_METHOD_LABELS,
+  PAYMENT_METHOD_LABELS,
+  SALE_FULFILLMENT_STATUS_LABELS,
+  VOID_INELIGIBLE_MESSAGES,
+  saleFulfillmentStatusTone,
+} from '../lib/pos'
+import { formatMoney } from '../lib/format'
 import { hasReturnableQty } from '../lib/returns'
 import { useCan } from '../lib/useCan'
 import { CancelDeliveryModal } from '../components/sales/CancelDeliveryModal'
-import { CreateDeliveryReceiptModal, type DeliveryPrefill } from '../components/sales/CreateDeliveryReceiptModal'
-import { DeliveryStatusBadge } from '../components/sales/DeliveryStatusBadge'
+import { ConversionHistoryList } from '../components/sales/ConversionHistoryList'
+import { CreateFulfillmentScheduleModal } from '../components/sales/CreateFulfillmentScheduleModal'
+import { FulfillmentBreakdownTable } from '../components/sales/FulfillmentBreakdownTable'
+import { FulfillmentStatusBadge } from '../components/sales/FulfillmentStatusBadge'
 import { ReturnModal } from '../components/sales/ReturnModal'
 import { SaleItemsTable } from '../components/sales/SaleItemsTable'
 import { SaleReturnsList } from '../components/sales/SaleReturnsList'
@@ -21,18 +31,94 @@ import { VoidSaleModal } from '../components/sales/VoidSaleModal'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
 import { Badge, Button, ConfirmDialog, ErrorState, LoadingState, useToast } from '../components/ui'
 
+/** One row in the Deliveries or Pickups section. "Mark delivered" only ever appears on a Delivery
+ * row and "Mark claimed" only ever appears on a Pickup row — the backend would reject the mismatch,
+ * but the UI must not offer it in the first place. */
+function ScheduleRow({
+  schedule,
+  canCancel,
+  onMarkDelivered,
+  onMarkClaimed,
+  onCancel,
+}: {
+  schedule: FulfillmentScheduleDto
+  canCancel: boolean
+  /** Only invoked for a Delivery row — see the render guard below. */
+  onMarkDelivered?: () => void
+  /** Only invoked for a Pickup row — see the render guard below. */
+  onMarkClaimed?: () => void
+  onCancel: () => void
+}) {
+  const isPending = schedule.status === 'Pending'
+  return (
+    <div className="rounded-xl border border-border bg-surface p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-text-primary">
+            {FULFILLMENT_METHOD_LABELS[schedule.method]} {schedule.sequenceNumber}
+          </span>
+          <FulfillmentStatusBadge method={schedule.method} status={schedule.status} />
+          <span className="text-[12px] text-text-muted">{new Date(schedule.scheduledDate).toLocaleDateString()}</span>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => window.open(`/delivery-receipts/${schedule.id}?print=1`, '_blank', 'noopener')}
+          >
+            Print
+          </Button>
+          {isPending && schedule.method === 'Delivery' && (
+            <Button size="sm" onClick={onMarkDelivered}>
+              Mark delivered
+            </Button>
+          )}
+          {isPending && schedule.method === 'Pickup' && (
+            <Button size="sm" onClick={onMarkClaimed}>
+              Mark claimed
+            </Button>
+          )}
+          {isPending && canCancel && (
+            <Button variant="destructive" size="sm" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      </div>
+      <p className="mt-1 text-[13px] text-text-secondary">
+        {schedule.recipientName}
+        {schedule.deliveryAddress ? ` · ${schedule.deliveryAddress}` : ''}
+      </p>
+      {schedule.status === 'Cancelled' && (
+        <p className="mt-1 text-[12px] text-text-muted">
+          Cancelled: {schedule.cancellationReason} ·{' '}
+          {schedule.cancellationDisposition
+            ? CANCELLATION_DISPOSITION_LABELS[schedule.cancellationDisposition]
+            : '—'}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function SaleDetailPage() {
   const { id = '' } = useParams()
   const { toast } = useToast()
+  const qc = useQueryClient()
   const canRefund = useCan('sales:return')
   const canVoidCapability = useCan('sales:void')
-  const canCancelDelivery = useCan('delivery:cancel')
+  // Mirrors AuthorizationPolicies.FulfillmentCancel (Owner/Admin/Manager) on the backend. The
+  // capability key itself is still named 'delivery:cancel' in useCan.ts — it predates the backend's
+  // DeliveryCancel -> FulfillmentCancel rename and covers the same role set for both Delivery and
+  // Pickup cancellation. Renaming the key is out of this task's file list (useCan.ts isn't touched
+  // here); flagged for whoever next edits useCan.ts (likely Task 16, which owns the cancel modal).
+  const canCancelFulfillment = useCan('delivery:cancel')
   const [returnOpen, setReturnOpen] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)
-  const [createDeliveryOpen, setCreateDeliveryOpen] = useState(false)
-  const [reschedulePrefill, setReschedulePrefill] = useState<DeliveryPrefill | null>(null)
-  const [cancelTarget, setCancelTarget] = useState<{ id: string; sequenceNumber: number } | null>(null)
+  const [createMethod, setCreateMethod] = useState<'Delivery' | 'Pickup' | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<FulfillmentScheduleDto | null>(null)
   const [deliverTarget, setDeliverTarget] = useState<{ id: string; sequenceNumber: number } | null>(null)
+  const [claimTarget, setClaimTarget] = useState<{ id: string; sequenceNumber: number } | null>(null)
 
   const query = useQuery({
     queryKey: ['sales', id],
@@ -43,32 +129,53 @@ export default function SaleDetailPage() {
     queryKey: ['branches', 'sales-filter'],
     queryFn: () => branchesApi.list({ includeInactive: true }),
   })
-  const deliverySummaryQuery = useQuery({
-    queryKey: ['sales', id, 'delivery-summary'],
-    queryFn: () => deliveryReceiptsApi.getSaleSummary(id),
+  const fulfillmentSummaryQuery = useQuery({
+    queryKey: ['sales', id, 'fulfillment-summary'],
+    queryFn: () => fulfillmentApi.getSaleSummary(id),
     enabled: !!id,
   })
 
+  const invalidateFulfillment = () => {
+    qc.invalidateQueries({ queryKey: ['sales', id] })
+    qc.invalidateQueries({ queryKey: ['sales', id, 'fulfillment-summary'] })
+  }
+
   const markDeliveredMutation = useMutation({
-    mutationFn: (deliveryReceiptId: string) => deliveryReceiptsApi.markDelivered(deliveryReceiptId),
+    mutationFn: (deliveryReceiptId: string) => fulfillmentApi.markDelivered(deliveryReceiptId),
     onSuccess: () => {
-      deliverySummaryQuery.refetch()
+      invalidateFulfillment()
       setDeliverTarget(null)
     },
     onError: (err) => {
-      // Mirrors CancelDeliveryModal's handling of the same conflict — this delivery has a
-      // RowVersion, so a concurrent status change (another tab/user) is a real, expected outcome,
-      // not an unmapped error. This mutation drives a bare ConfirmDialog (no inline error slot of
-      // its own), so it reports through the page's toast mechanism instead. Either way, close the
-      // dialog and refetch so the UI reflects the current (possibly-changed-by-someone-else) state
-      // rather than leaving the confirm dialog open with no explanation.
+      // This schedule has a RowVersion, so a concurrent status change (another tab/user) is a real,
+      // expected outcome, not an unmapped error. This mutation drives a bare ConfirmDialog (no inline
+      // error slot of its own), so it reports through the page's toast mechanism instead. Either way,
+      // close the dialog and refetch so the UI reflects the current (possibly-changed-by-someone-else)
+      // state rather than leaving the confirm dialog open with no explanation.
       if (err instanceof ApiError && err.code === 'DELIVERY_RECEIPT_CONCURRENCY_CONFLICT') {
         toast('error', 'This delivery was changed by someone else. Please refresh and try again.')
       } else {
         toast('error', err instanceof ApiError ? err.message : 'Could not mark this delivery as delivered.')
       }
-      deliverySummaryQuery.refetch()
+      invalidateFulfillment()
       setDeliverTarget(null)
+    },
+  })
+
+  const markClaimedMutation = useMutation({
+    mutationFn: (pickupId: string) => fulfillmentApi.markClaimed(pickupId),
+    onSuccess: () => {
+      invalidateFulfillment()
+      setClaimTarget(null)
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'DELIVERY_RECEIPT_CONCURRENCY_CONFLICT') {
+        toast('error', 'This pickup was changed by someone else. Please refresh and try again.')
+      } else {
+        toast('error', err instanceof ApiError ? err.message : 'Could not mark this pickup as claimed.')
+      }
+      invalidateFulfillment()
+      setClaimTarget(null)
     },
   })
 
@@ -92,6 +199,7 @@ export default function SaleDetailPage() {
         ) : (
           (() => {
             const d = query.data
+            const summary = fulfillmentSummaryQuery.data
             const canStartReturn =
               canRefund &&
               (d.sale.status === 'Completed' || d.sale.status === 'PartiallyRefunded') &&
@@ -232,136 +340,78 @@ export default function SaleDetailPage() {
                   </div>
                 )}
 
-                {deliverySummaryQuery.data && deliverySummaryQuery.data.fulfillmentStatus !== 'NotApplicable' && (
-                  <div className="space-y-3">
+                {summary && summary.fulfillmentStatus !== 'NotApplicable' && (
+                  <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <h2 className="text-lg font-bold text-text-primary">Delivery fulfillment</h2>
-                      <Badge tone={saleFulfillmentStatusTone(deliverySummaryQuery.data.fulfillmentStatus)}>
-                        {SALE_FULFILLMENT_STATUS_LABELS[deliverySummaryQuery.data.fulfillmentStatus]}
+                      <h2 className="text-lg font-bold text-text-primary">Fulfillment</h2>
+                      <Badge tone={saleFulfillmentStatusTone(summary.fulfillmentStatus)}>
+                        {SALE_FULFILLMENT_STATUS_LABELS[summary.fulfillmentStatus]}
                       </Badge>
                     </div>
 
-                    <div className="overflow-x-auto rounded-xl border border-border bg-surface">
-                      <table className="w-full text-left text-[13px]">
-                        <thead className="border-b border-border text-text-muted">
-                          <tr>
-                            <th className="px-3 py-2 font-medium">Item</th>
-                            <th className="px-3 py-2 text-right font-medium">Sold</th>
-                            <th className="px-3 py-2 text-right font-medium">Take-now</th>
-                            <th className="px-3 py-2 text-right font-medium">Required</th>
-                            <th className="px-3 py-2 text-right font-medium">Pending</th>
-                            <th className="px-3 py-2 text-right font-medium">Delivered</th>
-                            <th className="px-3 py-2 text-right font-medium">Available</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {deliverySummaryQuery.data.items.map((i) => (
-                            <tr key={i.saleItemId} className="border-b border-border-light last:border-0">
-                              <td className="px-3 py-2 text-text-primary">
-                                {i.productName}
-                                {i.variantName && <span className="text-text-muted"> · {i.variantName}</span>}
-                              </td>
-                              <td className="px-3 py-2 text-right">{formatQty(i.quantity)}</td>
-                              <td className="px-3 py-2 text-right">{formatQty(i.takeNowQuantity)}</td>
-                              <td className="px-3 py-2 text-right">{formatQty(i.deliveryRequiredQuantity)}</td>
-                              <td className="px-3 py-2 text-right">{formatQty(i.pendingQuantity)}</td>
-                              <td className="px-3 py-2 text-right">{formatQty(i.deliveredQuantity)}</td>
-                              <td className="px-3 py-2 text-right">{formatQty(i.availableToScheduleQuantity)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {deliverySummaryQuery.data.canCreateDelivery ? (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => {
-                          setReschedulePrefill(null)
-                          setCreateDeliveryOpen(true)
-                        }}
-                      >
-                        Create delivery
-                      </Button>
-                    ) : (
-                      <p className="text-[13px] text-text-muted">
-                        All delivery items have already been scheduled or delivered.
-                      </p>
-                    )}
+                    <FulfillmentBreakdownTable items={summary.items} />
 
                     <div className="space-y-2">
-                      {deliverySummaryQuery.data.deliveries.map((dr) => (
-                        <div key={dr.id} className="rounded-xl border border-border bg-surface p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-text-primary">Delivery {dr.sequenceNumber}</span>
-                              <DeliveryStatusBadge status={dr.status} />
-                              <span className="text-[12px] text-text-muted">
-                                {new Date(dr.scheduledDeliveryDate).toLocaleDateString()}
-                              </span>
-                            </div>
-                            <div className="flex gap-2">
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => window.open(`/delivery-receipts/${dr.id}?print=1`, '_blank', 'noopener')}
-                              >
-                                View
-                              </Button>
-                              {dr.status === 'Pending' && (
-                                <Button size="sm" onClick={() => setDeliverTarget({ id: dr.id, sequenceNumber: dr.sequenceNumber })}>
-                                  Mark delivered
-                                </Button>
-                              )}
-                              {dr.status === 'Pending' && canCancelDelivery && (
-                                <Button
-                                  variant="destructive"
-                                  size="sm"
-                                  onClick={() => setCancelTarget({ id: dr.id, sequenceNumber: dr.sequenceNumber })}
-                                >
-                                  Cancel
-                                </Button>
-                              )}
-                              {dr.status === 'Cancelled' && deliverySummaryQuery.data!.canCreateDelivery && (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() => {
-                                    setReschedulePrefill({
-                                      recipientName: dr.recipientName,
-                                      deliveryAddress: dr.deliveryAddress,
-                                      contactNumber: dr.contactNumber ?? '',
-                                      deliveryNotes: dr.deliveryNotes ?? '',
-                                      itemQuantities: Object.fromEntries(dr.items.map((i) => [i.saleItemId, i.quantity])),
-                                    })
-                                    setCreateDeliveryOpen(true)
-                                  }}
-                                >
-                                  Schedule again
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-                          <p className="mt-1 text-[13px] text-text-secondary">
-                            {dr.recipientName} · {dr.deliveryAddress}
-                          </p>
-                          {dr.status === 'Cancelled' && dr.cancellationReason && (
-                            <p className="mt-1 text-[12px] text-text-muted">Cancelled: {dr.cancellationReason}</p>
-                          )}
-                        </div>
-                      ))}
+                      <h3 className="text-sm font-semibold text-text-primary">Deliveries</h3>
+                      {summary.canCreateDelivery ? (
+                        <Button variant="secondary" size="sm" onClick={() => setCreateMethod('Delivery')}>
+                          Create delivery
+                        </Button>
+                      ) : (
+                        <p className="text-[13px] text-text-muted">
+                          All delivery items have already been scheduled or delivered.
+                        </p>
+                      )}
+                      <div className="space-y-2">
+                        {summary.deliveries.map((dr) => (
+                          <ScheduleRow
+                            key={dr.id}
+                            schedule={dr}
+                            canCancel={canCancelFulfillment}
+                            onMarkDelivered={() => setDeliverTarget({ id: dr.id, sequenceNumber: dr.sequenceNumber })}
+                            onCancel={() => setCancelTarget(dr)}
+                          />
+                        ))}
+                      </div>
                     </div>
+
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-semibold text-text-primary">Pickups</h3>
+                      {summary.canCreatePickup ? (
+                        <Button variant="secondary" size="sm" onClick={() => setCreateMethod('Pickup')}>
+                          Create pickup
+                        </Button>
+                      ) : (
+                        <p className="text-[13px] text-text-muted">
+                          All pickup items have already been scheduled or claimed.
+                        </p>
+                      )}
+                      <div className="space-y-2">
+                        {summary.pickups.map((pu) => (
+                          <ScheduleRow
+                            key={pu.id}
+                            schedule={pu}
+                            canCancel={canCancelFulfillment}
+                            onMarkClaimed={() => setClaimTarget({ id: pu.id, sequenceNumber: pu.sequenceNumber })}
+                            onCancel={() => setCancelTarget(pu)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <ConversionHistoryList conversions={summary.conversions} />
                   </div>
                 )}
 
                 <ReturnModal open={returnOpen} onClose={() => setReturnOpen(false)} sale={d} />
-                <CreateDeliveryReceiptModal
-                  open={createDeliveryOpen}
-                  onClose={() => setCreateDeliveryOpen(false)}
+                <CreateFulfillmentScheduleModal
+                  open={createMethod != null}
+                  onClose={() => setCreateMethod(null)}
                   saleId={d.sale.id}
-                  availableItems={(deliverySummaryQuery.data?.items ?? []).filter((i) => i.availableToScheduleQuantity > 0)}
-                  prefill={reschedulePrefill ?? undefined}
+                  method={createMethod ?? 'Delivery'}
+                  availableItems={(summary?.items ?? []).filter((i) =>
+                    createMethod === 'Pickup' ? i.pickupUnscheduledQuantity > 0 : i.deliveryUnscheduledQuantity > 0,
+                  )}
                 />
                 {cancelTarget && (
                   <CancelDeliveryModal
@@ -380,6 +430,15 @@ export default function SaleDetailPage() {
                   message="This completes every item on this delivery. It cannot be undone from here — a mistaken delivery would need to be corrected as a fresh workflow, not reopened."
                   confirmLabel="Mark delivered"
                   loading={markDeliveredMutation.isPending}
+                />
+                <ConfirmDialog
+                  open={claimTarget != null}
+                  onClose={() => setClaimTarget(null)}
+                  onConfirm={() => claimTarget && markClaimedMutation.mutate(claimTarget.id)}
+                  title={`Mark Pickup ${claimTarget?.sequenceNumber ?? ''} as claimed?`}
+                  message="This completes every item on this pickup. It cannot be undone from here — a mistaken claim would need to be corrected as a fresh workflow, not reopened."
+                  confirmLabel="Mark claimed"
+                  loading={markClaimedMutation.isPending}
                 />
                 <VoidSaleModal
                   open={voidOpen}
