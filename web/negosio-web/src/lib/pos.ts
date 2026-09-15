@@ -54,17 +54,17 @@ export function fulfillmentStatusLabel(method: FulfillmentMethod, status: Fulfil
   if (method === 'TakeNow') return status === 'Completed' ? 'Taken now' : 'Take now'
   if (method === 'Delivery') {
     switch (status) {
-      case 'Unscheduled': return 'For delivery (unscheduled)'
-      case 'Pending': return 'Scheduled for delivery'
+      case 'Unscheduled': return 'Deliver later'
+      case 'Pending': return 'Pending delivery'
       case 'Completed': return 'Delivered'
-      case 'Cancelled': return 'Delivery cancelled'
+      case 'Cancelled': return 'Cancelled delivery'
     }
   }
   switch (status) {
-    case 'Unscheduled': return 'For pickup (unscheduled)'
-    case 'Pending': return 'Scheduled for pickup'
+    case 'Unscheduled': return 'Pickup not scheduled'
+    case 'Pending': return 'Pending pickup'
     case 'Completed': return 'Claimed'
-    case 'Cancelled': return 'Pickup cancelled'
+    case 'Cancelled': return 'Cancelled pickup'
   }
 }
 
