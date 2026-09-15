@@ -132,8 +132,10 @@ function historyLabel(row: { status: FulfillmentStatus; replacementScheduleId: s
   )
 }
 
+/** `d` is a `DateOnly` ("yyyy-MM-dd"), never a full timestamp. Anchor to local midnight so a
+ * negative-UTC-offset browser doesn't parse it as UTC midnight and roll the date back a day. */
 function formatDateOnly(d: string | null): string {
-  return d ? new Date(d).toLocaleDateString() : '—'
+  return d ? new Date(`${d}T00:00:00`).toLocaleDateString() : '—'
 }
 
 function formatDateTime(d: string | null): string {
@@ -692,7 +694,7 @@ export default function FulfillmentReportsPage() {
                             #{r.saleNumber}
                           </Link>
                         </Table.Cell>
-                        <Table.Cell>{new Date(r.scheduledPickupDate).toLocaleDateString()}</Table.Cell>
+                        <Table.Cell>{new Date(`${r.scheduledPickupDate}T00:00:00`).toLocaleDateString()}</Table.Cell>
                         <Table.Cell>
                           <FulfillmentStatusBadge method="Pickup" status={r.status} />
                           {r.isOverdue && <span className="ml-1.5 text-[11px] font-semibold text-danger">Overdue</span>}

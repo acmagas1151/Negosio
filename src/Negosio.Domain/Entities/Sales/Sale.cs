@@ -114,10 +114,16 @@ public class Sale : Entity
             throw new ArgumentOutOfRangeException(nameof(quantity), "Quantity must be greater than zero.");
         }
 
-        if (deliveryRequiredQuantity < 0m || pickupRequiredQuantity < 0m)
+        if (deliveryRequiredQuantity < 0m)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(deliveryRequiredQuantity), "Fulfillment quantities cannot be negative.");
+        }
+
+        if (pickupRequiredQuantity < 0m)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(pickupRequiredQuantity), "Fulfillment quantities cannot be negative.");
         }
 
         if (deliveryRequiredQuantity + pickupRequiredQuantity > quantity)
