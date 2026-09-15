@@ -5,7 +5,7 @@ import { RequireCapability } from './auth/RequireCapability'
 import CategoriesPage from './pages/CategoriesPage'
 import DashboardPage from './pages/DashboardPage'
 import DeliveryReceiptPage from './pages/DeliveryReceiptPage'
-import DeliveryReportsPage from './pages/DeliveryReportsPage'
+import FulfillmentReportsPage from './pages/FulfillmentReportsPage'
 import InventoryPage from './pages/InventoryPage'
 import InviteAcceptPage from './pages/InviteAcceptPage'
 import LoginPage from './pages/LoginPage'
@@ -34,6 +34,15 @@ function PickupRedirect() {
   const [params] = useSearchParams()
   const qs = params.toString()
   return <Navigate to={`/delivery-receipts/${id}${qs ? `?${qs}` : ''}`} replace />
+}
+
+/** Forwards the old /reports/delivery path (this report page's name and scope before it grew
+ * Pickups and All-fulfillment tabs) to the canonical /reports/fulfillment route, preserving any
+ * query string (search/filter/page/tab) so an old bookmark or shared link still lands correctly. */
+function FulfillmentReportsRedirect() {
+  const [params] = useSearchParams()
+  const qs = params.toString()
+  return <Navigate to={`/reports/fulfillment${qs ? `?${qs}` : ''}`} replace />
 }
 
 const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
@@ -83,13 +92,15 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
     ),
   },
   {
-    path: '/reports/delivery',
+    path: '/reports/fulfillment',
     element: (
-      <RequireCapability capability="reports:view" title="Delivery Reports">
-        <DeliveryReportsPage />
+      <RequireCapability capability="reports:view" title="Fulfillment Reports">
+        <FulfillmentReportsPage />
       </RequireCapability>
     ),
   },
+  // Old name/path for this report page, from before it grew Pickups and All-fulfillment tabs.
+  { path: '/reports/delivery', element: <FulfillmentReportsRedirect /> },
   { path: '/settings', element: <Navigate to="/settings/tax" replace /> },
   { path: '/settings/tax', element: <SettingsPage /> },
   {
