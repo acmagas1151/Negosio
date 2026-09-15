@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useParams, useSearchParams } from 'react-router-dom'
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import { RequireCapability } from './auth/RequireCapability'
 import CategoriesPage from './pages/CategoriesPage'
@@ -26,6 +26,15 @@ import BranchesPage from './pages/BranchesPage'
 import SettingsPage from './pages/SettingsPage'
 import ReceiptSettingsPage from './pages/settings/ReceiptSettingsPage'
 import StaffPage from './pages/StaffPage'
+
+/** Forwards the friendlier /pickups/:id alias to the canonical /delivery-receipts/:id route,
+ * preserving the id and any query string (e.g. ?print=1). */
+function PickupRedirect() {
+  const { id = '' } = useParams()
+  const [params] = useSearchParams()
+  const qs = params.toString()
+  return <Navigate to={`/delivery-receipts/${id}${qs ? `?${qs}` : ''}`} replace />
+}
 
 const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
   { path: '/dashboard', element: <DashboardPage /> },
@@ -62,6 +71,9 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
   },
   { path: '/sales/:id/receipt', element: <ReceiptPage /> },
   { path: '/delivery-receipts/:id', element: <DeliveryReceiptPage /> },
+  // Friendlier alias for pickups — the canonical, linked-from-everywhere path stays
+  // /delivery-receipts/:id (see task-17-brief.md Step 2); this just forwards the id.
+  { path: '/pickups/:id', element: <PickupRedirect /> },
   {
     path: '/reports',
     element: (

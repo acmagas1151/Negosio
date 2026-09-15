@@ -1,13 +1,18 @@
 import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { deliveryReceiptsApi } from '../api/deliveryReceipts'
+import { fulfillmentApi } from '../api/fulfillment'
+import type { FulfillmentItemDto } from '../api/types'
 import { formatDeliveryCharge, formatMoney, formatQty } from '../lib/format'
+import { fulfillmentStatusLabel } from '../lib/pos'
 import { Button, ErrorState, LoadingState } from '../components/ui'
 import { deliveryReceiptCss } from '../components/receipt/deliveryReceiptStyles'
 import { ReceiptHeader } from '../components/receipt/ReceiptHeader'
 import { ReceiptFooter } from '../components/receipt/ReceiptFooter'
 
+/** Print page for both fulfillment methods — a Delivery Receipt and a Pickup Slip differ by a
+ * handful of labels and the address/delivery-charge blocks, not by the whole document, so one
+ * route/component renders both, driven by `dto.method`. See task-17-brief.md. */
 export default function DeliveryReceiptPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
@@ -17,7 +22,7 @@ export default function DeliveryReceiptPage() {
 
   const query = useQuery({
     queryKey: ['delivery-receipts', id],
-    queryFn: () => deliveryReceiptsApi.get(id),
+    queryFn: () => fulfillmentApi.get(id),
     enabled: !!id,
   })
 
@@ -44,11 +49,21 @@ export default function DeliveryReceiptPage() {
   }
 
   const d = query.data
+  const isPickup = d.method === 'Pickup'
   const when = new Date(d.createdAtUtc).toLocaleString()
   const hasCustomHeader = !!(d.headerText && d.headerText.trim())
   const showContact = d.showContactNumber && !!d.contactNumber
   const showRelatedSale = d.showRelatedSaleNumber && !!d.relatedSaleNumber
   const showPriceColumns = d.showPrices
+
+  // Method-driven labels (spec table in task-17-brief.md). Kept the document title's existing
+  // all-caps convention rather than the table's title-case rendering, since that's this file's
+  // pre-existing style for that one element.
+  const documentTitle = isPickup ? 'PICKUP SLIP' : 'DELIVERY RECEIPT'
+  const sequenceLabel = isPickup ? 'Pickup' : 'Delivery'
+  const dateLabel = isPickup ? 'Scheduled pickup date' : 'Scheduled delivery date'
+  const completedLabel = isPickup ? 'Claimed' : 'Delivered'
+  const notesLabel = isPickup ? 'Pickup notes' : 'Delivery notes'
 
   return (
     <div className="dr-page">
@@ -65,26 +80,34 @@ export default function DeliveryReceiptPage() {
             showBranch: false,
           }}
         />
-        {!hasCustomHeader && <p className="dr-title">DELIVERY RECEIPT — Delivery {d.sequenceNumber}</p>}
+        {!hasCustomHeader && (
+          <p className="dr-title">
+            {documentTitle} — {sequenceLabel} {d.sequenceNumber}
+          </p>
+        )}
         <hr />
 
         <div className="dr-meta">
           <span>Prepared: {when}</span>
-          <span>Scheduled for: {new Date(d.scheduledDeliveryDate).toLocaleDateString()}</span>
+          <span>
+            {dateLabel}: {new Date(d.scheduledDate).toLocaleDateString()}
+          </span>
           <span>Branch: {d.branchName}</span>
         </div>
 
         <div className="dr-line">
-          <span className="label">Status:</span> {d.status}
+          <span className="label">Status:</span> {fulfillmentStatusLabel(d.method, d.status)}
         </div>
 
         <div className="dr-recipient">
           <div className="dr-line">
             <span className="label">Recipient:</span> {d.recipientName}
           </div>
-          <div className="dr-line">
-            <span className="label">Address:</span> {d.deliveryAddress}
-          </div>
+          {!isPickup && (
+            <div className="dr-line">
+              <span className="label">Address:</span> {d.deliveryAddress}
+            </div>
+          )}
           {showContact && (
             <div className="dr-line">
               <span className="label">Contact:</span> {d.contactNumber}
@@ -107,7 +130,7 @@ export default function DeliveryReceiptPage() {
             </tr>
           </thead>
           <tbody>
-            {d.items.map((item, i) => (
+            {d.items.map((item: FulfillmentItemDto, i: number) => (
               <tr key={i}>
                 <td className="num">{formatQty(item.quantity)}</td>
                 <td>
@@ -125,10 +148,10 @@ export default function DeliveryReceiptPage() {
           </tbody>
         </table>
 
-        {d.status === 'Delivered' && d.deliveredAtUtc && (
+        {d.status === 'Completed' && d.completedAtUtc && (
           <div className="dr-line">
-            <span className="label">Delivered:</span> {new Date(d.deliveredAtUtc).toLocaleString()}
-            {d.deliveredByName ? ` by ${d.deliveredByName}` : ''}
+            <span className="label">{completedLabel}:</span> {new Date(d.completedAtUtc).toLocaleString()}
+            {d.completedByName ? ` by ${d.completedByName}` : ''}
           </div>
         )}
         {d.status === 'Cancelled' && d.cancelledAtUtc && (
@@ -139,15 +162,15 @@ export default function DeliveryReceiptPage() {
           </div>
         )}
 
-        {showPriceColumns && (
+        {!isPickup && showPriceColumns && (
           <div className="dr-line">
             <span className="label">Delivery fee:</span> {formatDeliveryCharge(d.deliveryCharge)}
           </div>
         )}
 
-        {d.deliveryNotes && d.deliveryNotes.trim() && (
+        {d.notes && d.notes.trim() && (
           <div className="dr-notes">
-            <span className="label">Delivery notes:</span> {d.deliveryNotes}
+            <span className="label">{notesLabel}:</span> {d.notes}
           </div>
         )}
 
@@ -156,16 +179,18 @@ export default function DeliveryReceiptPage() {
             <div className="dr-sig">
               <span className="name">Prepared by: {d.preparedByName}</span>
             </div>
+            {!isPickup && (
+              <div className="dr-sig">
+                Delivered by:
+                <span className="dr-sig-rule" />
+              </div>
+            )}
             <div className="dr-sig">
-              Delivered by:
+              {isPickup ? 'Claimed by:' : 'Received by:'}
               <span className="dr-sig-rule" />
             </div>
             <div className="dr-sig">
-              Received by:
-              <span className="dr-sig-rule" />
-            </div>
-            <div className="dr-sig">
-              Date received:
+              {isPickup ? 'Date claimed:' : 'Date received:'}
               <span className="dr-sig-rule" />
             </div>
           </div>

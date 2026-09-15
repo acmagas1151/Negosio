@@ -1,5 +1,8 @@
 /**
- * A4 print stylesheet for the persistent Delivery Receipt.
+ * A4 print stylesheet for the persistent fulfillment print page — shared by the Delivery Receipt
+ * and the Pickup Slip (DeliveryReceiptPage.tsx renders both from one component, driven by
+ * `dto.method`; the two documents differ only in which text/blocks are present, not in layout,
+ * so a single class set covers both).
  * Mirrors the shape of `thermalReceiptCss` (a function returning a self-contained CSS string
  * injected via an inline <style>), but this is A4-only — do NOT reuse the thermal sheet.
  */
