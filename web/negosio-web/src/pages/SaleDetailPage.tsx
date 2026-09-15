@@ -18,7 +18,7 @@ import {
 import { formatMoney } from '../lib/format'
 import { hasReturnableQty } from '../lib/returns'
 import { useCan } from '../lib/useCan'
-import { CancelDeliveryModal } from '../components/sales/CancelDeliveryModal'
+import { CancelFulfillmentModal } from '../components/sales/CancelFulfillmentModal'
 import { ConversionHistoryList } from '../components/sales/ConversionHistoryList'
 import { CreateFulfillmentScheduleModal } from '../components/sales/CreateFulfillmentScheduleModal'
 import { FulfillmentBreakdownTable } from '../components/sales/FulfillmentBreakdownTable'
@@ -414,12 +414,12 @@ export default function SaleDetailPage() {
                   )}
                 />
                 {cancelTarget && (
-                  <CancelDeliveryModal
+                  <CancelFulfillmentModal
+                    key={cancelTarget.id}
                     open
                     onClose={() => setCancelTarget(null)}
                     saleId={d.sale.id}
-                    deliveryReceiptId={cancelTarget.id}
-                    sequenceNumber={cancelTarget.sequenceNumber}
+                    schedule={cancelTarget}
                   />
                 )}
                 <ConfirmDialog
