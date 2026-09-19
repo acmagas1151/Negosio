@@ -91,6 +91,20 @@ public sealed class CancelDeliveryRequestValidator : AbstractValidator<CancelDel
         RuleFor(x => x.Replacement!)
             .SetValidator(new PickupReplacementInputValidator())
             .When(x => x.Replacement != null);
+
+        RuleFor(x => x.RescheduledDelivery)
+            .NotNull()
+            .WithMessage("A new delivery's details are required for this disposition.")
+            .When(x => x.Disposition == CancellationDisposition.DeliverLater);
+
+        RuleFor(x => x.RescheduledDelivery)
+            .Null()
+            .WithMessage("Rescheduled-delivery details must not be provided for this disposition.")
+            .When(x => x.Disposition != CancellationDisposition.DeliverLater);
+
+        RuleFor(x => x.RescheduledDelivery!)
+            .SetValidator(new DeliveryReplacementInputValidator())
+            .When(x => x.RescheduledDelivery != null);
     }
 }
 
@@ -123,5 +137,19 @@ public sealed class CancelPickupRequestValidator : AbstractValidator<CancelPicku
         RuleFor(x => x.Replacement!)
             .SetValidator(new DeliveryReplacementInputValidator())
             .When(x => x.Replacement != null);
+
+        RuleFor(x => x.RescheduledPickup)
+            .NotNull()
+            .WithMessage("A new pickup's details are required for this disposition.")
+            .When(x => x.Disposition == CancellationDisposition.PickupLater);
+
+        RuleFor(x => x.RescheduledPickup)
+            .Null()
+            .WithMessage("Rescheduled-pickup details must not be provided for this disposition.")
+            .When(x => x.Disposition != CancellationDisposition.PickupLater);
+
+        RuleFor(x => x.RescheduledPickup!)
+            .SetValidator(new PickupReplacementInputValidator())
+            .When(x => x.RescheduledPickup != null);
     }
 }

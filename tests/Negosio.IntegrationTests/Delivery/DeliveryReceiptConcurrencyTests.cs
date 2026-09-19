@@ -75,22 +75,32 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         summary.ActiveSchedule!.Status.Should().Be(FulfillmentStatus.Pending);
     }
 
+    // Under the whole-sale model, a DeliverLater cancel creates its replacement Pending delivery
+    // atomically as part of the cancel itself (Task 3B) — there is no longer an "unscheduled" window
+    // between cancelling and rescheduling for two concurrent creates to race over. Both creates now
+    // deterministically lose to the replacement that already exists.
     [Fact]
-    public async Task Rescheduling_after_a_cancel_races_correctly_against_a_second_create()
+    public async Task Creating_after_a_DeliverLater_cancel_is_rejected_because_the_replacement_already_exists()
     {
         var scene = await ArrangeSaleAsync();
         var firstResponse = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", DeliveryReq());
         var first = (await firstResponse.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
         await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel",
-            new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null));
+            new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null)));
 
         HttpRequestMessage CreateRequest() => AuthorizedRequest(
             HttpMethod.Post, $"/api/sales/{scene.SaleId}/delivery-receipts", scene.Token, DeliveryReq());
 
         var results = await Task.WhenAll(Client.SendAsync(CreateRequest()), Client.SendAsync(CreateRequest()));
 
-        results.Count(r => r.StatusCode == HttpStatusCode.Created).Should().Be(1);
-        results.Count(r => r.StatusCode == HttpStatusCode.BadRequest).Should().Be(1);
+        results.Count(r => r.StatusCode == HttpStatusCode.BadRequest).Should().Be(2);
+
+        var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
+            $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
+        summary!.Deliveries.Should().HaveCount(2); // the cancelled original + its replacement, never a third
+        summary.ActiveSchedule.Should().NotBeNull();
+        summary.ActiveSchedule!.Status.Should().Be(FulfillmentStatus.Pending);
     }
 
     [Fact]
@@ -120,7 +130,8 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
         var deliverTask = Client.SendAsync(AuthorizedRequest(HttpMethod.Post, $"/api/delivery-receipts/{dr.Id}/deliver", scene.Token));
         var cancelTask = Client.SendAsync(AuthorizedRequest(
-            HttpMethod.Post, $"/api/delivery-receipts/{dr.Id}/cancel", scene.Token, new CancelDeliveryRequest("Race", CancellationDisposition.DeliverLater, null)));
+            HttpMethod.Post, $"/api/delivery-receipts/{dr.Id}/cancel", scene.Token, new CancelDeliveryRequest("Race", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null))));
 
         var results = await Task.WhenAll(deliverTask, cancelTask);
 
@@ -153,7 +164,8 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
         var claimTask = Client.SendAsync(AuthorizedRequest(HttpMethod.Post, $"/api/delivery-receipts/{pickup.Id}/claim", scene.Token));
         var cancelTask = Client.SendAsync(AuthorizedRequest(
-            HttpMethod.Post, $"/api/pickups/{pickup.Id}/cancel", scene.Token, new CancelPickupRequest("Race", CancellationDisposition.PickupLater, null)));
+            HttpMethod.Post, $"/api/pickups/{pickup.Id}/cancel", scene.Token, new CancelPickupRequest("Race", CancellationDisposition.PickupLater, null,
+                RescheduledPickup: new PickupReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "0917 111 2222", null))));
 
         var results = await Task.WhenAll(claimTask, cancelTask);
 
@@ -263,7 +275,8 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
         HttpRequestMessage CancelRequest() => AuthorizedRequest(
             HttpMethod.Post, $"/api/delivery-receipts/{dr.Id}/cancel", scene.Token,
-            new CancelDeliveryRequest("Race", CancellationDisposition.DeliverLater, null));
+            new CancelDeliveryRequest("Race", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null)));
 
         var results = await Task.WhenAll(Client.SendAsync(CancelRequest()), Client.SendAsync(CancelRequest()));
 

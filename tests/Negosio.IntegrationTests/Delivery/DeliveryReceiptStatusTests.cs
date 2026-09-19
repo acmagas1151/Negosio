@@ -81,34 +81,49 @@ public class DeliveryReceiptStatusTests : IntegrationTest
     }
 
     [Fact]
-    public async Task Cancel_transitions_pending_to_cancelled_and_releases_quantity_to_unscheduled()
+    public async Task Cancel_with_DeliverLater_transitions_pending_to_cancelled_and_creates_a_pending_replacement()
     {
         var scene = await ArrangeSaleAsync(qty: 10m);
         var dr = await CreateDeliveryAsync(scene); // covers the whole line
 
-        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryRequest("Customer rescheduled", CancellationDisposition.DeliverLater, null));
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel",
+            new CancelDeliveryRequest("Customer rescheduled", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null)));
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var result = (await response.Content.ReadFromJsonAsync<CancellationResultDto>(TestJson.Options))!;
-        result.Replacement.Should().BeNull(); // DeliverLater just releases the quantity
         var cancelled = result.Cancelled;
         cancelled.Status.Should().Be(FulfillmentStatus.Cancelled);
         cancelled.CancellationReason.Should().Be("Customer rescheduled");
         cancelled.CancellationDisposition.Should().Be(CancellationDisposition.DeliverLater);
         cancelled.Items.Should().ContainSingle(); // its own item rows are preserved, unchanged, as history
 
+        // Per spec, DeliverLater must end with exactly one active replacement schedule covering the
+        // complete sale — never a bare release back to "unscheduled" (Task 3B).
+        result.Replacement.Should().NotBeNull();
+        var replacement = result.Replacement!;
+        replacement.Status.Should().Be(FulfillmentStatus.Pending);
+        replacement.Method.Should().Be(FulfillmentMethod.Delivery);
+        replacement.DeliveryAddress.Should().Be("456 Ortigas Ave");
+        replacement.Items.Should().ContainSingle();
+        replacement.Items[0].Quantity.Should().Be(scene.Quantity); // full sale quantity, whole-sale allocation
+
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>($"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
-        summary!.ActiveSchedule.Should().BeNull(); // fully released, no active schedule remains
-        summary.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow);
+        summary!.ActiveSchedule.Should().NotBeNull();
+        summary.ActiveSchedule!.Id.Should().Be(replacement.Id);
+        summary.ActiveSchedule!.Status.Should().Be(FulfillmentStatus.Pending);
+        summary.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PendingDelivery);
     }
 
     [Fact]
-    public async Task Rescheduling_after_a_cancel_creates_a_new_record_and_never_reactivates_the_cancelled_one()
+    public async Task Rescheduling_via_DeliverLater_creates_a_new_record_and_never_reactivates_the_cancelled_one()
     {
         var scene = await ArrangeSaleAsync(qty: 10m);
         var first = await CreateDeliveryAsync(scene);
-        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel", new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null));
-
-        var second = await CreateDeliveryAsync(scene); // re-schedule the same released quantity
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel",
+            new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null)));
+        var result = (await response.Content.ReadFromJsonAsync<CancellationResultDto>(TestJson.Options))!;
+        var second = result.Replacement!; // the cancel itself creates the reschedule now (Task 3B)
 
         second.Id.Should().NotBe(first.Id);
         second.SequenceNumber.Should().Be(2);
@@ -125,7 +140,9 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         var dr = await CreateDeliveryAsync(scene);
         (await Client.PostAsync($"/api/delivery-receipts/{dr.Id}/deliver", null)).EnsureSuccessStatusCode();
 
-        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryRequest("Too late", CancellationDisposition.DeliverLater, null));
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel",
+            new CancelDeliveryRequest("Too late", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null)));
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -146,7 +163,9 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         var dr = await CreateDeliveryAsync(scene);
         Authorize(await AddTenantUserTokenAsync("cashier2@example.com", UserRole.Cashier, scene.BranchId));
 
-        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel", new CancelDeliveryRequest("Changed mind", CancellationDisposition.DeliverLater, null));
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel",
+            new CancelDeliveryRequest("Changed mind", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null)));
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 }

@@ -327,12 +327,15 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         switch (request.Disposition)
         {
             case CancellationDisposition.DeliverLater:
-                RejectUnwantedReplacement(request.Replacement, request.Disposition);
+            {
+                var replacement = RequireReplacement(request.RescheduledDelivery);
+                EnsureNotPastBusinessToday(replacement.ScheduledDate, FulfillmentMethod.Delivery);
                 return await CancelWithDispositionAsync(
                     id, FulfillmentMethod.Delivery, request.Reason, request.Disposition,
                     convertToMethod: FulfillmentMethod.Delivery,
                     completeReplacementImmediately: false,
-                    buildReplacement: null, ct);
+                    buildReplacement: DeliveryReplacementFactory(replacement), ct);
+            }
 
             case CancellationDisposition.ConvertToPickup:
             {
@@ -373,12 +376,15 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         switch (request.Disposition)
         {
             case CancellationDisposition.PickupLater:
-                RejectUnwantedReplacement(request.Replacement, request.Disposition);
+            {
+                var replacement = RequireReplacement(request.RescheduledPickup);
+                EnsureNotPastBusinessToday(replacement.ScheduledDate, FulfillmentMethod.Pickup);
                 return await CancelWithDispositionAsync(
                     id, FulfillmentMethod.Pickup, request.Reason, request.Disposition,
                     convertToMethod: FulfillmentMethod.Pickup,
                     completeReplacementImmediately: false,
-                    buildReplacement: null, ct);
+                    buildReplacement: PickupReplacementFactory(replacement), ct);
+            }
 
             case CancellationDisposition.ConvertToDelivery:
             {
@@ -411,16 +417,6 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
     private static T RequireReplacement<T>(T? replacement) where T : class =>
         replacement ?? throw new BusinessRuleException(
             ErrorCodes.ReplacementDetailsRequired, "Replacement schedule details are required for this disposition.");
-
-    private static void RejectUnwantedReplacement(object? replacement, CancellationDisposition disposition)
-    {
-        if (replacement is not null)
-        {
-            throw new BusinessRuleException(
-                ErrorCodes.InvalidCancellationDisposition,
-                $"{disposition} releases the quantity back to unscheduled and must not carry replacement details.");
-        }
-    }
 
     /// <summary>
     /// Cancels a pending schedule and applies its disposition — all inside one transaction, with the

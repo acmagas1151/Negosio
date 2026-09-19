@@ -72,16 +72,19 @@ public class DeliveryReceiptCreateTests : IntegrationTest
     }
 
     [Fact]
-    public async Task Rescheduling_after_a_cancel_gets_sequence_number_two()
+    public async Task Rescheduling_via_a_DeliverLater_cancel_gets_sequence_number_two()
     {
         var scene = await ArrangeSaleAsync();
         var first = (await (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req()))
             .Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
-        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel",
-            new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null));
 
-        var second = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req());
-        var dr = (await second.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
+        // Per spec (Task 3B), DeliverLater's cancel creates the reschedule itself, atomically — there is
+        // no longer a separate follow-up create call (the sale can have only one active schedule at a
+        // time, and the replacement the cancel just created already occupies that slot).
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel",
+            new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null)));
+        var dr = (await response.Content.ReadFromJsonAsync<CancellationResultDto>(TestJson.Options))!.Replacement!;
 
         dr.SequenceNumber.Should().Be(2);
     }
@@ -129,9 +132,10 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var scene = await ArrangeSaleAsync();
         var first = (await (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req()))
             .Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
+        // Per spec (Task 3B), DeliverLater's cancel creates the reschedule (sequence 2) itself.
         await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel",
-            new CancelDeliveryRequest("Reschedule", CancellationDisposition.DeliverLater, null));
-        await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req());
+            new CancelDeliveryRequest("Reschedule", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null)));
 
         var list = await Client.GetFromJsonAsync<List<FulfillmentScheduleDto>>(
             $"/api/sales/{scene.SaleId}/delivery-receipts", TestJson.Options);

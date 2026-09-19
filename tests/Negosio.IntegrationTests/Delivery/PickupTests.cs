@@ -69,24 +69,24 @@ public class PickupTests : IntegrationTest
         Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>($"/api/sales/{s.SaleId}/fulfillment", TestJson.Options);
 
     /// <summary>Sequence numbers are per-sale AND per-method: a sale whose delivery was created (and later
-    /// released) still names its first pickup "Pickup 1" — not "2". A pickup also never carries an
-    /// address. (A sale can have only one ACTIVE schedule at a time, so the delivery must be cancelled
-    /// before the pickup can be created; the test-only <c>SetFulfillmentIntentAsync</c> backdoor moves the
-    /// released quantity to pickup intent afterward, since real checkout is whole-sale-method and can
-    /// never itself produce a sale with both delivery and pickup history.)</summary>
+    /// cancelled into a pickup) still names that pickup "Pickup 1" — not "2". A pickup also never
+    /// carries an address. (A sale can have only one ACTIVE schedule at a time; since Task 3B, every
+    /// cancel disposition creates its replacement as part of the SAME cancel call — there is no longer
+    /// an "unscheduled" window in which an unrelated, freshly-POSTed pickup could be created, so
+    /// ConvertToPickup's replacement is exercised directly here instead.)</summary>
     [Fact]
-    public async Task Create_pickup_numbers_independently_of_deliveries_and_carries_no_address()
+    public async Task Cancelling_a_delivery_into_a_pickup_numbers_it_independently_and_carries_no_address()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, method: FulfillmentMethod.Delivery);
         var delivery = await CreateDeliveryAsync(scene);
         delivery.SequenceNumber.Should().Be(1);
         delivery.Method.Should().Be(FulfillmentMethod.Delivery);
 
-        await Client.PostAsJsonAsync($"/api/delivery-receipts/{delivery.Id}/cancel",
-            new CancelDeliveryRequest("Customer changed mind", CancellationDisposition.DeliverLater, null));
-        await SetFulfillmentIntentAsync(scene.SaleItemId, 0m, scene.Quantity);
-
-        var pickup = await CreatePickupAsync(scene);
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{delivery.Id}/cancel",
+            new CancelDeliveryRequest("Customer changed mind", CancellationDisposition.ConvertToPickup,
+                new PickupReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "0917 111 2222", "Collect at the counter")));
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var pickup = (await response.Content.ReadFromJsonAsync<CancellationResultDto>(TestJson.Options))!.Replacement!;
 
         pickup.SequenceNumber.Should().Be(1); // NOT 2 — the two methods number separately
         pickup.Method.Should().Be(FulfillmentMethod.Pickup);
@@ -174,7 +174,8 @@ public class PickupTests : IntegrationTest
         (await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null)).EnsureSuccessStatusCode();
 
         var response = await Client.PostAsJsonAsync($"/api/pickups/{pickup.Id}/cancel",
-            new CancelPickupRequest("Too late", CancellationDisposition.PickupLater, null));
+            new CancelPickupRequest("Too late", CancellationDisposition.PickupLater, null,
+                RescheduledPickup: new PickupReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "0917 111 2222", null)));
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -234,7 +235,8 @@ public class PickupTests : IntegrationTest
         Authorize(await AddTenantUserTokenAsync("pickup-cashier2@example.com", UserRole.Cashier, scene.BranchId));
 
         var response = await Client.PostAsJsonAsync($"/api/pickups/{pickup.Id}/cancel",
-            new CancelPickupRequest("Changed mind", CancellationDisposition.PickupLater, null));
+            new CancelPickupRequest("Changed mind", CancellationDisposition.PickupLater, null,
+                RescheduledPickup: new PickupReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "0917 111 2222", null)));
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }

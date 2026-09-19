@@ -30,21 +30,32 @@ public sealed record CreatePickupRequest(
 /// Cancel a pending DELIVERY. <see cref="Disposition"/> must be DeliverLater, ConvertToPickup or
 /// CustomerPickedUpInstead. <see cref="Replacement"/> is required for ConvertToPickup (the future pickup
 /// to create) and for CustomerPickedUpInstead (the already-collected pickup to record, which is created
-/// directly as Completed/Claimed); it must be null for DeliverLater.
+/// directly as Completed/Claimed); it must be null for every other disposition.
 /// </summary>
 public sealed record CancelDeliveryRequest(
     string Reason,
     CancellationDisposition Disposition,
-    PickupReplacementInput? Replacement);
+    /// <summary>Required for ConvertToPickup and CustomerPickedUpInstead — the pickup to create.
+    /// Must be null for every other disposition.</summary>
+    PickupReplacementInput? Replacement,
+    /// <summary>Required for DeliverLater — the new Delivery to create, replacing the cancelled
+    /// one. Must be null for every other disposition.</summary>
+    DeliveryReplacementInput? RescheduledDelivery = null);
 
 /// <summary>
 /// Cancel a pending PICKUP. <see cref="Disposition"/> must be PickupLater or ConvertToDelivery.
-/// <see cref="Replacement"/> is required for ConvertToDelivery, null for PickupLater.
+/// <see cref="Replacement"/> is required for ConvertToDelivery; must be null for every other
+/// disposition.
 /// </summary>
 public sealed record CancelPickupRequest(
     string Reason,
     CancellationDisposition Disposition,
-    DeliveryReplacementInput? Replacement);
+    /// <summary>Required for ConvertToDelivery — the delivery to create. Must be null for every
+    /// other disposition.</summary>
+    DeliveryReplacementInput? Replacement,
+    /// <summary>Required for PickupLater — the new Pickup to create, replacing the cancelled one.
+    /// Must be null for every other disposition.</summary>
+    PickupReplacementInput? RescheduledPickup = null);
 
 /// <summary>The pickup to create when a delivery is cancelled into one. For
 /// CustomerPickedUpInstead the date is the collection date (today or earlier is fine — it already

@@ -78,20 +78,22 @@ public class FulfillmentConversionTests : IntegrationTest
     }
 
     private async Task<(HttpStatusCode Status, CancellationResultDto? Body)> CancelDeliveryAsync(
-        Guid id, CancellationDisposition disposition, PickupReplacementInput? replacement, string reason = "Customer request")
+        Guid id, CancellationDisposition disposition, PickupReplacementInput? replacement, string reason = "Customer request",
+        DeliveryReplacementInput? rescheduledDelivery = null)
     {
         var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{id}/cancel",
-            new CancelDeliveryRequest(reason, disposition, replacement));
+            new CancelDeliveryRequest(reason, disposition, replacement, rescheduledDelivery));
         return response.IsSuccessStatusCode
             ? (response.StatusCode, await response.Content.ReadFromJsonAsync<CancellationResultDto>(TestJson.Options))
             : (response.StatusCode, null);
     }
 
     private async Task<(HttpStatusCode Status, CancellationResultDto? Body)> CancelPickupAsync(
-        Guid id, CancellationDisposition disposition, DeliveryReplacementInput? replacement, string reason = "Customer request")
+        Guid id, CancellationDisposition disposition, DeliveryReplacementInput? replacement, string reason = "Customer request",
+        PickupReplacementInput? rescheduledPickup = null)
     {
         var response = await Client.PostAsJsonAsync($"/api/pickups/{id}/cancel",
-            new CancelPickupRequest(reason, disposition, replacement));
+            new CancelPickupRequest(reason, disposition, replacement, rescheduledPickup));
         return response.IsSuccessStatusCode
             ? (response.StatusCode, await response.Content.ReadFromJsonAsync<CancellationResultDto>(TestJson.Options))
             : (response.StatusCode, null);
@@ -115,30 +117,42 @@ public class FulfillmentConversionTests : IntegrationTest
 
     // ---- Delivery dispositions ----
 
-    /// <summary>"Deliver later" is a plain release: the quantity returns to delivery-unscheduled, the
-    /// pickup pool is untouched, and no replacement is created — but the audit trail still records WHY
-    /// the quantity came back, as a same-method conversion event.</summary>
+    /// <summary>Per spec (Task 3B), "Deliver later" is no longer a plain release: it must end with
+    /// exactly one active replacement Pending delivery covering the complete sale. The pickup pool is
+    /// untouched (same-method conversion — nothing moves between pools), and the audit trail records
+    /// the replacement's id as ReplacementRecordId, same as any other disposition that creates one.</summary>
     [Fact]
-    public async Task Delivery_cancelled_with_DeliverLater_releases_to_delivery_unscheduled_and_records_a_same_method_event()
+    public async Task Delivery_cancelled_with_DeliverLater_creates_a_pending_replacement_delivery_and_records_a_same_method_event()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m, pickupRequiredQuantity: 2m);
         var delivery = await CreateDeliveryAsync(scene);
 
-        var (status, body) = await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null, "Van broke down");
+        var (status, body) = await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null, "Van broke down",
+            rescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null));
         status.Should().Be(HttpStatusCode.OK);
 
         body!.Cancelled.Status.Should().Be(FulfillmentStatus.Cancelled);
         body.Cancelled.CancellationDisposition.Should().Be(CancellationDisposition.DeliverLater);
-        body.Replacement.Should().BeNull();
+
+        body.Replacement.Should().NotBeNull();
+        var replacement = body.Replacement!;
+        replacement.Method.Should().Be(FulfillmentMethod.Delivery);
+        replacement.Status.Should().Be(FulfillmentStatus.Pending);
+        replacement.SequenceNumber.Should().Be(2); // second delivery on this sale
+        replacement.DeliveryAddress.Should().Be("456 Ortigas Ave");
+        replacement.Items.Should().ContainSingle();
+        replacement.Items[0].Quantity.Should().Be(6m); // the whole delivery-required quantity carried across
 
         var intent = await GetIntentAsync(scene.SaleItemId);
-        intent.Delivery.Should().Be(6m); // unchanged — a release moves nothing between pools
+        intent.Delivery.Should().Be(6m); // unchanged — a same-method conversion moves nothing between pools
         intent.Pickup.Should().Be(2m);
 
         var summary = await GetSummaryAsync(scene);
-        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow); // no active schedule remains
-        summary.ActiveSchedule.Should().BeNull();
-        summary.Deliveries.Should().ContainSingle(d => d.Id == delivery.Id && d.Status == FulfillmentStatus.Cancelled);
+        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PendingDelivery);
+        summary.ActiveSchedule.Should().NotBeNull();
+        summary.ActiveSchedule!.Id.Should().Be(replacement.Id);
+        summary.Deliveries.Should().Contain(d => d.Id == delivery.Id && d.Status == FulfillmentStatus.Cancelled);
+        summary.Deliveries.Should().Contain(d => d.Id == replacement.Id && d.Status == FulfillmentStatus.Pending);
 
         var conversions = await GetConversionsAsync(scene.SaleId);
         var conversion = conversions.Should().ContainSingle().Subject;
@@ -146,7 +160,7 @@ public class FulfillmentConversionTests : IntegrationTest
         conversion.ToMethod.Should().Be(FulfillmentMethod.Delivery);
         conversion.Quantity.Should().Be(6m); // the whole delivery-required quantity, per Task 2
         conversion.SourceRecordId.Should().Be(delivery.Id);
-        conversion.ReplacementRecordId.Should().BeNull();
+        conversion.ReplacementRecordId.Should().Be(replacement.Id);
         conversion.Reason.Should().Be("Van broke down");
     }
 
@@ -240,32 +254,44 @@ public class FulfillmentConversionTests : IntegrationTest
 
     // ---- Pickup dispositions ----
 
+    /// <summary>Per spec (Task 3B), "Pickup later" is no longer a plain release: it must end with
+    /// exactly one active replacement Pending pickup covering the complete sale.</summary>
     [Fact]
-    public async Task Pickup_cancelled_with_PickupLater_releases_back_to_pickup_unscheduled()
+    public async Task Pickup_cancelled_with_PickupLater_creates_a_pending_replacement_pickup()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
         var pickup = await CreatePickupAsync(scene);
 
-        var (status, body) = await CancelPickupAsync(pickup.Id, CancellationDisposition.PickupLater, null, "No show");
+        var (status, body) = await CancelPickupAsync(pickup.Id, CancellationDisposition.PickupLater, null, "No show",
+            rescheduledPickup: new PickupReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "0917 111 2222", null));
         status.Should().Be(HttpStatusCode.OK);
         body!.Cancelled.Status.Should().Be(FulfillmentStatus.Cancelled);
         body.Cancelled.CancellationDisposition.Should().Be(CancellationDisposition.PickupLater);
-        body.Replacement.Should().BeNull();
+
+        body.Replacement.Should().NotBeNull();
+        var replacement = body.Replacement!;
+        replacement.Method.Should().Be(FulfillmentMethod.Pickup);
+        replacement.Status.Should().Be(FulfillmentStatus.Pending);
+        replacement.SequenceNumber.Should().Be(2); // second pickup on this sale
+        replacement.Items.Should().ContainSingle();
+        replacement.Items[0].Quantity.Should().Be(6m);
 
         var intent = await GetIntentAsync(scene.SaleItemId);
-        intent.Pickup.Should().Be(6m);
+        intent.Pickup.Should().Be(6m); // unchanged — a same-method conversion moves nothing between pools
         intent.Delivery.Should().Be(0m);
 
         var summary = await GetSummaryAsync(scene);
-        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow); // no active schedule remains
-        summary.ActiveSchedule.Should().BeNull();
-        summary.Pickups.Should().ContainSingle(p => p.Id == pickup.Id && p.Status == FulfillmentStatus.Cancelled);
+        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PendingPickup);
+        summary.ActiveSchedule.Should().NotBeNull();
+        summary.ActiveSchedule!.Id.Should().Be(replacement.Id);
+        summary.Pickups.Should().Contain(p => p.Id == pickup.Id && p.Status == FulfillmentStatus.Cancelled);
+        summary.Pickups.Should().Contain(p => p.Id == replacement.Id && p.Status == FulfillmentStatus.Pending);
 
         var conversion = (await GetConversionsAsync(scene.SaleId)).Should().ContainSingle().Subject;
         conversion.FromMethod.Should().Be(FulfillmentMethod.Pickup);
         conversion.ToMethod.Should().Be(FulfillmentMethod.Pickup);
         conversion.SourceRecordId.Should().Be(pickup.Id);
-        conversion.ReplacementRecordId.Should().BeNull();
+        conversion.ReplacementRecordId.Should().Be(replacement.Id);
     }
 
     [Fact]
@@ -417,11 +443,12 @@ public class FulfillmentConversionTests : IntegrationTest
         reloaded.CancellationDisposition.Should().BeNull();
     }
 
-    /// <summary>A release-only disposition creates nothing, so it stays permitted even on a voided sale —
-    /// the released quantity can never be used, because creating a schedule against a voided sale is
-    /// already blocked at the create endpoint.</summary>
+    /// <summary>Since Task 3B, DeliverLater/PickupLater build a replacement exactly like ConvertTo* does,
+    /// so they now correctly inherit the same voided-sale gate (<c>LoadFulfillableSaleAsync</c>) that
+    /// <c>Cancelling_into_a_replacement_is_rejected_when_the_sale_was_voided</c> above exercises for
+    /// ConvertToPickup — there is no longer a "release-only, ungated" disposition at all.</summary>
     [Fact]
-    public async Task Cancelling_with_a_release_only_disposition_still_works_on_a_voided_sale()
+    public async Task Cancelling_with_DeliverLater_is_rejected_when_the_sale_was_voided()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
         var delivery = await CreateDeliveryAsync(scene);
@@ -429,11 +456,21 @@ public class FulfillmentConversionTests : IntegrationTest
         (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/void", new VoidSaleRequest("Wrong customer")))
             .EnsureSuccessStatusCode();
 
-        var (status, body) = await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null);
+        var response = await Client.PostAsJsonAsync($"/api/delivery-receipts/{delivery.Id}/cancel",
+            new CancelDeliveryRequest("Van broke down", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null)));
 
-        status.Should().Be(HttpStatusCode.OK);
-        body!.Cancelled.Status.Should().Be(FulfillmentStatus.Cancelled);
-        body.Replacement.Should().BeNull();
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadFromJsonAsync<ApiErrorBody>(TestJson.Options))!
+            .Code.Should().Be(ErrorCodes.DeliveryReceiptNotAllowed);
+
+        // Nothing was written: no replacement delivery, no conversion row, and the original delivery
+        // was not cancelled either — the cancellation is part of the same transaction.
+        var reloaded = await Client.GetFromJsonAsync<FulfillmentScheduleDto>(
+            $"/api/delivery-receipts/{delivery.Id}", TestJson.Options);
+        reloaded!.Status.Should().Be(FulfillmentStatus.Pending);
+        reloaded.CancellationDisposition.Should().BeNull();
+        (await GetConversionsAsync(scene.SaleId)).Should().BeEmpty();
     }
 
     /// <summary>Spec test 22 — Delivered is terminal.</summary>
@@ -444,7 +481,8 @@ public class FulfillmentConversionTests : IntegrationTest
         var delivery = await CreateDeliveryAsync(scene);
         (await Client.PostAsync($"/api/delivery-receipts/{delivery.Id}/deliver", null)).EnsureSuccessStatusCode();
 
-        var (status, _) = await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null);
+        var (status, _) = await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null,
+            rescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null));
         status.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -456,7 +494,8 @@ public class FulfillmentConversionTests : IntegrationTest
         var pickup = await CreatePickupAsync(scene);
         (await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null)).EnsureSuccessStatusCode();
 
-        (await CancelPickupAsync(pickup.Id, CancellationDisposition.PickupLater, null)).Status
+        (await CancelPickupAsync(pickup.Id, CancellationDisposition.PickupLater, null,
+            rescheduledPickup: new PickupReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "0917 111 2222", null))).Status
             .Should().Be(HttpStatusCode.BadRequest);
 
         (await CancelPickupAsync(pickup.Id, CancellationDisposition.ConvertToDelivery,
@@ -492,7 +531,8 @@ public class FulfillmentConversionTests : IntegrationTest
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
         var delivery = await CreateDeliveryAsync(scene);
-        (await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null, "Wrong address")).Status
+        (await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null, "Wrong address",
+            rescheduledDelivery: new DeliveryReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null))).Status
             .Should().Be(HttpStatusCode.OK);
 
         var list = await Client.GetFromJsonAsync<List<FulfillmentScheduleDto>>(
@@ -503,8 +543,10 @@ public class FulfillmentConversionTests : IntegrationTest
 
         var summary = await GetSummaryAsync(scene);
         summary!.Deliveries.Should().ContainSingle(d => d.Id == delivery.Id && d.Status == FulfillmentStatus.Cancelled);
-        summary.ActiveSchedule.Should().BeNull();
-        summary.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow);
+        // Per spec (Task 3B), DeliverLater's replacement is now the sale's active schedule.
+        summary.ActiveSchedule.Should().NotBeNull();
+        summary.ActiveSchedule!.Status.Should().Be(FulfillmentStatus.Pending);
+        summary.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PendingDelivery);
     }
 
     /// <summary>Spec test 10's Pickup-side mirror of
@@ -520,7 +562,8 @@ public class FulfillmentConversionTests : IntegrationTest
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
         var pickup = await CreatePickupAsync(scene);
-        (await CancelPickupAsync(pickup.Id, CancellationDisposition.PickupLater, null, "No show")).Status
+        (await CancelPickupAsync(pickup.Id, CancellationDisposition.PickupLater, null, "No show",
+            rescheduledPickup: new PickupReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "0917 111 2222", null))).Status
             .Should().Be(HttpStatusCode.OK);
 
         var reloaded = await Client.GetFromJsonAsync<FulfillmentScheduleDto>(
@@ -530,8 +573,10 @@ public class FulfillmentConversionTests : IntegrationTest
 
         var summary = await GetSummaryAsync(scene);
         summary!.Pickups.Should().ContainSingle(p => p.Id == pickup.Id && p.Status == FulfillmentStatus.Cancelled);
-        summary.ActiveSchedule.Should().BeNull();
-        summary.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow);
+        // Per spec (Task 3B), PickupLater's replacement is now the sale's active schedule.
+        summary.ActiveSchedule.Should().NotBeNull();
+        summary.ActiveSchedule!.Status.Should().Be(FulfillmentStatus.Pending);
+        summary.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PendingPickup);
     }
 
     /// <summary>Spec test 26 — a delivery charge belongs to the SALE, not to a schedule. Converting the
