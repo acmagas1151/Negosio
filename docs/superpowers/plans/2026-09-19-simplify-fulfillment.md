@@ -19,7 +19,7 @@
 - A sale may have **at most one active (non-Cancelled) `DeliveryReceipt`, of either method, at any time** — enforced server-side, never trusted from the client.
 - Every new Delivery/Pickup schedule always covers **every Sale item at its full sold quantity** — there is no client-supplied item list anymore.
 - Delivery charge: stored once on `Sale`, added once to the total, must be `0` whenever the active method is not Delivery (validated server-side, not just normalized client-side).
-- Cancellation/conversion behavior (`DeliverLater`/`ConvertToPickup`/`CustomerPickedUpInstead` for Delivery; `PickupLater`/`ConvertToDelivery` for Pickup) is **unchanged** — same dispositions, same validators, same atomic transaction. Do not touch `DeliveryReceipt.Cancel`, `SaleItem.ConvertFulfillment`, `FulfillmentConversion`, or `CancelWithDispositionAsync`'s replacement-building loop (`DeliveryReceiptService.cs:567-723`) — they already build a replacement from the cancelled schedule's own item list, which is correct unchanged.
+- **Correction found during Task 3 (see ledger for the full discovery):** this plan originally assumed cancellation/conversion behavior was entirely unchanged. That's true for `ConvertToPickup`/`CustomerPickedUpInstead`/`ConvertToDelivery` (they already build a replacement of the *opposite* method, matching the spec exactly) — but the spec's own "Deliver later"/"Pickup later" sections require creating **a new Pending replacement of the SAME method**, which the pre-existing implementation does not do (`CancelDeliveryAsync`/`CancelPickupAsync` currently call `RejectUnwantedReplacement` and pass `buildReplacement: null` for these two dispositions — a pure release, no replacement). Task 3B fixes this. `DeliveryReceipt.Cancel`, `SaleItem.ConvertFulfillment`, `FulfillmentConversion`, and `CancelWithDispositionAsync`'s replacement-building loop itself (`DeliveryReceiptService.cs`, the `CancelWithDispositionAsync` method) genuinely need **zero changes** even for this fix — they already branch correctly on whether `buildReplacement` is null, so passing a real factory for `DeliverLater`/`PickupLater` instead of `null` is sufficient. The fix is confined to `CancelDeliveryAsync`/`CancelPickupAsync`'s switch-case bodies, the two cancel-request contract shapes, and their validators.
 
 ---
 
@@ -432,6 +432,166 @@ git commit -m "feat(delivery): simplify SaleFulfillmentStatus to six whole-sale 
 
 ---
 
+### Task 3B: Fix `DeliverLater`/`PickupLater` to create a replacement schedule, per spec
+
+**Inserted mid-plan.** Discovered during Task 3's execution and independently confirmed by the
+controller: the spec's "Cancellation and replacement behavior" section requires **every** cancel
+disposition — including `DeliverLater`/`PickupLater`, not just the `ConvertTo*`/
+`CustomerPickedUpInstead` ones — to end with exactly one active replacement schedule. Read the
+spec's own text again if you want to confirm this yourself:
+
+> **Deliver later**
+> - Cancel the current Delivery.
+> - Preserve the cancelled record and reason.
+> - Create a new Pending Delivery covering the complete Sale.
+> - Require a new valid delivery date.
+> - Prefill recipient, address, contact, notes, and delivery charge where appropriate.
+
+> **Pickup later**
+> - Cancel the current Pickup.
+> - Preserve the cancelled record and reason.
+> - Create a new Pending Pickup covering the complete Sale.
+> - Require a new expected pickup date.
+
+The pre-existing (already-shipped-on-this-branch, pre-dating this whole simplification plan)
+implementation does not do this: `CancelDeliveryAsync`/`CancelPickupAsync` currently call
+`RejectUnwantedReplacement(...)` and pass `buildReplacement: null` for `DeliverLater`/`PickupLater`
+— a pure release back to "unscheduled," with no new schedule. That was correct under the OLD
+partial-allocation design (where "unscheduled but still earmarked" was a first-class, durable state
+the cashier could act on later via a "Create delivery"/"Create pickup" button). Under this plan's
+whole-sale model, that intermediate state and its UI trigger no longer exist (Task 10 deletes
+`CreateFulfillmentScheduleModal.tsx` and its trigger buttons entirely) — so without this fix, a
+`DeliverLater`/`PickupLater` cancellation would leave a sale with **no way to ever get a schedule
+again**, silently reverting it to reporting as `TakeNow`. This is a genuine data-integrity gap the
+plan's own later tasks (9, 10) would otherwise build on top of without noticing.
+
+**Files:**
+- Modify: `src/Negosio.Application/Delivery/DeliveryReceiptContracts.cs`
+- Modify: `src/Negosio.Application/Delivery/DeliveryReceiptValidators.cs`
+- Modify: `src/Negosio.Application/Delivery/DeliveryReceiptService.cs`
+- Test: `tests/Negosio.UnitTests/Delivery/DeliveryReceiptEntityTests.cs`
+- Test: `tests/Negosio.IntegrationTests/Delivery/{DeliveryReceiptConcurrencyTests,DeliveryReceiptCreateTests,DeliveryReceiptStatusTests,FulfillmentConversionTests,PickupTests}.cs`
+
+**Interfaces:**
+- Consumes: `PickupReplacementFactory`/`DeliveryReplacementFactory` (existing, unchanged — `DeliveryReceiptService.cs`), `RequireReplacement<T>` (existing, unchanged), `EnsureNotPastBusinessToday` (existing, unchanged), `PickupReplacementInput`/`DeliveryReplacementInput` (existing contract types, unchanged shape — reused, not duplicated).
+- Produces: `CancelDeliveryRequest`/`CancelPickupRequest` each gain one new optional field. Task 6 (frontend types) and the not-yet-dispatched frontend cancellation-modal work (folded into this task — see Step 4) must match these exact new field names.
+
+- [ ] **Step 1: Extend the two cancel-request contracts**
+
+`CancelDeliveryRequest`'s existing `Replacement: PickupReplacementInput?` field is only ever the
+right shape for `ConvertToPickup`/`CustomerPickedUpInstead` (both build a *Pickup*).
+`DeliverLater` needs a *Delivery*-shaped replacement (it needs `DeliveryAddress`, which
+`PickupReplacementInput` has no field for) — a genuinely different shape, so it needs its own
+field, not a reuse of `Replacement`. In `DeliveryReceiptContracts.cs`:
+
+```csharp
+public sealed record CancelDeliveryRequest(
+    string Reason,
+    CancellationDisposition Disposition,
+    /// <summary>Required for ConvertToPickup and CustomerPickedUpInstead — the pickup to create.
+    /// Must be null for every other disposition.</summary>
+    PickupReplacementInput? Replacement,
+    /// <summary>Required for DeliverLater — the new Delivery to create, replacing the cancelled
+    /// one. Must be null for every other disposition.</summary>
+    DeliveryReplacementInput? RescheduledDelivery = null);
+
+public sealed record CancelPickupRequest(
+    string Reason,
+    CancellationDisposition Disposition,
+    /// <summary>Required for ConvertToDelivery — the delivery to create. Must be null for every
+    /// other disposition.</summary>
+    DeliveryReplacementInput? Replacement,
+    /// <summary>Required for PickupLater — the new Pickup to create, replacing the cancelled one.
+    /// Must be null for every other disposition.</summary>
+    PickupReplacementInput? RescheduledPickup = null);
+```
+
+- [ ] **Step 2: Update the two cancel validators**
+
+In `DeliveryReceiptValidators.cs`, `CancelDeliveryRequestValidator`: change the existing
+`.Null().When(x => x.Disposition == CancellationDisposition.DeliverLater)` rule on `Replacement`
+to stay as-is (still correct — `Replacement`, the Pickup-shaped field, must still be null for
+`DeliverLater`), and add the mirror pair for the new field:
+
+```csharp
+RuleFor(x => x.RescheduledDelivery)
+    .NotNull()
+    .WithMessage("A new delivery's details are required for this disposition.")
+    .When(x => x.Disposition == CancellationDisposition.DeliverLater);
+
+RuleFor(x => x.RescheduledDelivery)
+    .Null()
+    .WithMessage("Rescheduled-delivery details must not be provided for this disposition.")
+    .When(x => x.Disposition != CancellationDisposition.DeliverLater);
+
+RuleFor(x => x.RescheduledDelivery!)
+    .SetValidator(new DeliveryReplacementInputValidator())
+    .When(x => x.RescheduledDelivery != null);
+```
+
+Mirror for `CancelPickupRequestValidator` with `RescheduledPickup`/`PickupLater`/
+`PickupReplacementInputValidator`. `DeliveryReplacementInputValidator`/`PickupReplacementInputValidator`
+already exist (used by the `ConvertTo*` paths) — reuse them, do not duplicate.
+
+- [ ] **Step 3: Rewire `CancelDeliveryAsync`/`CancelPickupAsync`**
+
+In `DeliveryReceiptService.cs`, change the `DeliverLater` case from a reject-and-release to a
+require-and-replace, mirroring the `ConvertToPickup` case immediately below it:
+
+```csharp
+case CancellationDisposition.DeliverLater:
+{
+    var replacement = RequireReplacement(request.RescheduledDelivery);
+    EnsureNotPastBusinessToday(replacement.ScheduledDate, FulfillmentMethod.Delivery);
+    return await CancelWithDispositionAsync(
+        id, FulfillmentMethod.Delivery, request.Reason, request.Disposition,
+        convertToMethod: FulfillmentMethod.Delivery,
+        completeReplacementImmediately: false,
+        buildReplacement: DeliveryReplacementFactory(replacement), ct);
+}
+```
+
+Mirror for `PickupLater` in `CancelPickupAsync`, using `PickupReplacementFactory(replacement)` and
+`request.RescheduledPickup`. `RejectUnwantedReplacement` becomes unused after this change — delete
+it (grep first to confirm no other call site).
+
+**Do not touch** `CancelWithDispositionAsync` itself, `DeliveryReceipt.Cancel`,
+`SaleItem.ConvertFulfillment`, or `FulfillmentConversion.Record` — `CancelWithDispositionAsync`
+already branches correctly on whether `buildReplacement` is null (including the sale-status
+"reject a replacement against a voided sale" guard, which `DeliverLater`/`PickupLater` now
+correctly inherit for free simply by passing a non-null factory). Read that method once to confirm
+this for yourself before concluding you need to change it — you should conclude you don't.
+
+- [ ] **Step 4: Update every test that constructs a `DeliverLater`/`PickupLater` cancel request**
+
+Grep `DeliverLater`/`PickupLater` across `tests/` (both projects). Every call site currently
+passing `replacement: null` for one of these two dispositions and expecting success now needs a
+real `RescheduledDelivery`/`RescheduledPickup` payload instead — construct one the same way the
+neighboring `ConvertToPickup`/`ConvertToDelivery` test cases in the same file already do (same
+`DeliveryReplacementInput`/`PickupReplacementInput` shape, a future date, a plausible
+recipient/contact/notes). Any assertion that specifically checked "the released quantity has no
+active schedule" / "still shows unscheduled" for these dispositions needs updating to instead
+assert the new replacement schedule exists, is `Pending`, and covers every item at full quantity —
+the same assertion pattern the `ConvertToPickup`/`ConvertToDelivery` tests in the same files
+already use.
+
+- [ ] **Step 5: Run and verify**
+
+Run: `dotnet build` — 0 new errors (the pre-existing `ReportsService.cs` break from Task 3 is
+still expected and not this task's concern). Run:
+`dotnet test tests/Negosio.UnitTests tests/Negosio.IntegrationTests --filter "FullyQualifiedName~Delivery|FullyQualifiedName~Pickup"`
+— no regressions versus Task 3's own baseline (the same pre-existing `FulfillmentReportTests`
+failures are expected and unrelated; anything else failing is this task's to fix).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A
+git commit -m "fix(delivery): DeliverLater/PickupLater now create a replacement schedule, per spec"
+```
+
+---
+
 ### Task 4: Backend — reports simplification (drop the combined per-allocation report)
 
 **Files:**
@@ -527,6 +687,8 @@ git commit -m "test: close backend coverage gaps for the whole-sale fulfillment 
 `CreateDeliveryReceiptRequest`/`CreatePickupRequest`: remove `items`. Delete `CreateDeliveryReceiptBatchRequest`, `CreatePickupBatchRequest`, `FulfillmentBatchResultDto`, `FulfillmentItemInput` — none of these are referenced anywhere after this plan (Task 8 builds schedule-creation requests with no item list at all, since the backend now resolves items itself).
 
 In `api/fulfillment.ts`, delete `createDeliveryBatch`/`createPickupBatch`. `createDelivery`/`createPickup` keep their existing routes (`POST /api/sales/{saleId}/delivery-receipts`, `POST /api/sales/{saleId}/pickups`) with the now-`items`-free request body.
+
+**Also mirror Task 3B's cancel-request additions** (Task 3B lands before this task and changes the backend contract — read its section above for the full rationale): `CancelDeliveryRequest` gains `rescheduledDelivery: DeliveryReplacementInput | null` (required when `disposition === 'DeliverLater'`, `null` otherwise — a *Delivery*-shaped replacement, since `DeliverLater`'s existing `replacement` field is Pickup-shaped and cannot represent this). `CancelPickupRequest` gains `rescheduledPickup: PickupReplacementInput | null` (required when `disposition === 'PickupLater'`, `null` otherwise). Both new fields are optional/nullable, matching the backend's C# `= null` defaults. `DeliveryReplacementInput`/`PickupReplacementInput` already exist as types here — reuse them, do not redefine.
 
 - [ ] **Step 3: Mirror the sale-fulfillment-summary contract**
 
@@ -904,9 +1066,85 @@ Replace the breakdown table + two schedule-list sections + create buttons with:
 - Mark-Delivered/Mark-Claimed/Cancel buttons: gate on `summary.activeSchedule` (present and `Pending`) instead of iterating a list — there is only ever one active schedule to act on.
 - Conversion history (`ConversionHistoryList`, unchanged component) continues to render from `summary.conversions` exactly as today.
 
-- [ ] **Step 4: Verify `CancelFulfillmentModal.tsx` needs no changes**
+- [ ] **Step 4: Update `CancelFulfillmentModal.tsx` for Task 3B's `DeliverLater`/`PickupLater` fix**
 
-Its disposition lists, date rules, and replacement-field shapes are unchanged by this plan (Task 2's Global Constraints explicitly preserve `DeliveryReceipt.Cancel`/`CancelWithDispositionAsync` untouched). It takes a `schedule: FulfillmentScheduleDto` prop — that DTO shape is unchanged. Read the file to confirm no prop it consumes was removed; if genuinely nothing needs to change, note that explicitly in this task's completion rather than touching the file.
+**Correction:** this step originally said the modal needed no changes. That was wrong — Task 3B
+(inserted mid-plan, see its own section above) changed the backend so `DeliverLater`/`PickupLater`
+now *require* a replacement payload (a new same-method schedule) instead of forbidding one. The
+modal must be updated to match, in `web/negosio-web/src/components/sales/CancelFulfillmentModal.tsx`:
+
+- **`needsReplacement(disposition)`** — every disposition now creates a replacement (there is no
+  more "pure release" option). Delete this function; the `showReplacementForm` variable and its
+  one call site (`const showReplacementForm = needsReplacement(disposition)`) can simply become
+  `const showReplacementForm = true` — or, cleaner, delete `showReplacementForm` entirely and
+  render the sub-form unconditionally, removing every `{showReplacementForm && (...)}`/`if
+  (showReplacementForm)` guard around it.
+- **`replacementMethod(disposition)`** — currently `disposition === 'ConvertToDelivery' ? 'Delivery' : 'Pickup'`,
+  which is now wrong for `DeliverLater` (a Delivery-cancellation disposition whose replacement is
+  *also* a Delivery, not a Pickup). Fix to:
+  ```typescript
+  function replacementMethod(disposition: CancellationDisposition): 'Delivery' | 'Pickup' {
+    return disposition === 'DeliverLater' || disposition === 'ConvertToDelivery' ? 'Delivery' : 'Pickup'
+  }
+  ```
+- **`requiresFutureDate(disposition)`** — currently only `ConvertToPickup`/`ConvertToDelivery`. Per
+  the spec, `DeliverLater`/`PickupLater` also "require a new valid delivery/pickup date" (today or
+  future) — only `CustomerPickedUpInstead` is exempt (it records something that already happened).
+  Fix to: `return disposition !== 'CustomerPickedUpInstead'`.
+- **`pastDateMessage(disposition)`** — currently a two-way ternary covering only
+  `ConvertToPickup`/`ConvertToDelivery`. Since `replacementMethod(disposition)` now correctly
+  covers all 4 date-gated dispositions, simplify to one line using it directly:
+  `` `The scheduled ${replacementMethod(disposition).toLowerCase()} date cannot be in the past.` ``
+  — deleting the manual ternary rather than extending it.
+- **The `summary` `useMemo`'s `DeliverLater`/`PickupLater` cases** — currently: `` `${scheduleLabel}
+  will be cancelled. ${itemsSummary(schedule.items)} returns to unscheduled.` ``. This is no longer
+  true (nothing "returns to unscheduled" — a new schedule is created immediately). Replace both
+  cases with the same shape the `ConvertToPickup`/`ConvertToDelivery` cases already use:
+  `` `${scheduleLabel} will be cancelled and a new ${replacementMethod(disposition)} created for ${formatScheduleDate(scheduledDate)}.` ``
+  (`replacementMethod('DeliverLater')` → `'Delivery'`, `replacementMethod('PickupLater')` →
+  `'Pickup'` — reads correctly either way with no special-casing needed).
+- **The mutation's request-body construction** — currently sends the Pickup-shaped `replacement`
+  field (for Delivery cancellations) or the Delivery-shaped `replacement` field (for Pickup
+  cancellations) whenever `showReplacementForm` is true, `null` otherwise. Now that every
+  disposition shows the form, but `DeliverLater`/`PickupLater` need to populate the NEW contract
+  fields (Task 3B's `RescheduledDelivery`/`RescheduledPickup`) instead of the existing
+  `Replacement` field, branch on disposition explicitly:
+  ```typescript
+  if (isDelivery) {
+    const replacementFields = {
+      scheduledDate, recipientName: recipientName.trim(),
+      contactNumber: contactNumber.trim() || null, notes: notes.trim() || null,
+    }
+    const body: CancelDeliveryRequest = {
+      reason: trimmedReason,
+      disposition,
+      replacement: disposition === 'ConvertToPickup' || disposition === 'CustomerPickedUpInstead' ? replacementFields : null,
+      rescheduledDelivery: disposition === 'DeliverLater'
+        ? { ...replacementFields, deliveryAddress: deliveryAddress.trim() }
+        : null,
+    }
+    return fulfillmentApi.cancelDelivery(schedule.id, body)
+  }
+  // mirror for the Pickup branch: `replacement` (Delivery-shaped, deliveryAddress required) only
+  // for ConvertToDelivery; new `rescheduledPickup` (Pickup-shaped) only for PickupLater.
+  ```
+  Match the exact field names Task 6 gives `CancelDeliveryRequest`/`CancelPickupRequest` in
+  `types.ts` (`rescheduledDelivery`/`rescheduledPickup`, camelCase over the wire per this
+  codebase's established convention) — read that file rather than guessing the casing.
+- **Validation in `submit()`** — the `if (showReplacementForm)` block's field-requiredness checks
+  (date/recipient/address) already apply correctly to all 5 dispositions once
+  `showReplacementForm` is always true; the one disposition-specific check,
+  `if (disposition === 'ConvertToDelivery' && !deliveryAddress.trim())`, needs a sibling for
+  `DeliverLater` (also Delivery-shaped, also needs an address): change to
+  `if ((disposition === 'ConvertToDelivery' || disposition === 'DeliverLater') && !deliveryAddress.trim())`.
+- **`onError`'s field-error mapping** — currently checks `fields['replacement.scheduleddate']`
+  etc. Confirm (read `src/Negosio.Application/Common/ValidationExtensions.cs`'s camelCasing, or
+  just test live) whether a validation error on the new `RescheduledDelivery`/`RescheduledPickup`
+  field comes back as `rescheduleddelivery.scheduleddate` etc., and add the matching lookups
+  alongside the existing `replacement.*` ones if so — do not assume without checking, since a
+  missed mapping here means a real backend validation error would silently show nothing.
+
+Read the whole file once before starting — this touches most of its logic, not an isolated corner.
 
 - [ ] **Step 5: Run `tsc -b`**
 
