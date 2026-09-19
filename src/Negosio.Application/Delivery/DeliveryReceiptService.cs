@@ -223,35 +223,10 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             ?? throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
         await GuardBranchAsync(sale.BranchId, ErrorCodes.SaleNotFound, "Sale not found.", ct);
 
-        var availability = await ComputeAvailabilityAsync(tenantId, sale.Items, ct);
-
-        // Every line with ANY post-checkout intent, not delivery alone. A line that is entirely take-now
-        // has nothing to track and is deliberately omitted — that is what makes a wholly take-now sale
-        // derive as NotApplicable below.
-        var itemDtos = sale.Items
-            .Where(i => i.DeliveryRequiredQuantity > 0m || i.PickupRequiredQuantity > 0m)
-            .OrderBy(i => i.CreatedAtUtc)
-            .ThenBy(i => i.Id)
-            .Select(i =>
-            {
-                var delivery = availability.TotalsFor(i.Id, FulfillmentMethod.Delivery);
-                var pickup = availability.TotalsFor(i.Id, FulfillmentMethod.Pickup);
-                return new SaleItemFulfillmentDto(
-                    i.Id, i.ProductNameSnapshot, i.VariantNameSnapshot, i.Quantity, i.TakeNowQuantity,
-                    DeliveryUnscheduledQuantity: availability.Available(i.Id, FulfillmentMethod.Delivery),
-                    DeliveryPendingQuantity: delivery.Pending,
-                    DeliveredQuantity: delivery.Completed,
-                    PickupUnscheduledQuantity: availability.Available(i.Id, FulfillmentMethod.Pickup),
-                    PickupPendingQuantity: pickup.Pending,
-                    ClaimedQuantity: pickup.Completed);
-            })
-            .ToList();
-
         var schedules = await _db.DeliveryReceipts.AsNoTracking()
             .Include(d => d.Items)
             .Where(d => d.TenantId == tenantId && d.SaleId == saleId)
-            .OrderBy(d => d.Method)
-            .ThenBy(d => d.SequenceNumber)
+            .OrderByDescending(d => d.CreatedAtUtc)
             .ToListAsync(ct);
 
         var deliveries = new List<FulfillmentScheduleDto>();
@@ -262,26 +237,15 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             (dr.Method == FulfillmentMethod.Pickup ? pickups : deliveries).Add(dto);
         }
 
+        // At most one non-Cancelled schedule exists across both lists at any time — Task 2's
+        // CreateScheduleAsync guarantee — so there is never more than one to find here.
+        var activeSchedule = deliveries.Concat(pickups).SingleOrDefault(d => d.Status != FulfillmentStatus.Cancelled);
+
         var conversions = await LoadConversionsAsync(tenantId, sale, ct);
 
-        var todayLocal = BusinessToday();
-        var hasOverduePending = schedules.Any(d => d.Status == FulfillmentStatus.Pending && d.ScheduledDate < todayLocal);
+        var status = SaleFulfillmentCalculator.Derive(activeSchedule?.Method, activeSchedule?.Status);
 
-        var status = SaleFulfillmentCalculator.Derive(
-            soldQuantity: itemDtos.Sum(i => i.Quantity),
-            takeNowQuantity: itemDtos.Sum(i => i.TakeNowQuantity),
-            deliveredQuantity: itemDtos.Sum(i => i.DeliveredQuantity),
-            claimedQuantity: itemDtos.Sum(i => i.ClaimedQuantity),
-            deliveryPendingQuantity: itemDtos.Sum(i => i.DeliveryPendingQuantity),
-            pickupPendingQuantity: itemDtos.Sum(i => i.PickupPendingQuantity),
-            deliveryUnscheduledQuantity: itemDtos.Sum(i => i.DeliveryUnscheduledQuantity),
-            pickupUnscheduledQuantity: itemDtos.Sum(i => i.PickupUnscheduledQuantity),
-            hasOverduePendingSchedule: hasOverduePending);
-
-        return new SaleFulfillmentSummaryDto(
-            sale.Id, status, sale.DeliveryCharge, itemDtos, deliveries, pickups, conversions,
-            CanCreateDelivery: itemDtos.Any(i => i.DeliveryUnscheduledQuantity > 0m),
-            CanCreatePickup: itemDtos.Any(i => i.PickupUnscheduledQuantity > 0m));
+        return new SaleFulfillmentSummaryDto(sale.Id, status, sale.DeliveryCharge, activeSchedule, deliveries, pickups, conversions);
     }
 
     // ---- Completion ------------------------------------------------------------------------------
@@ -463,9 +427,9 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
     /// sale-items lock held, so the cancellation, the intent conversion, the audit event and any
     /// replacement schedule either all commit or none do.
     /// <para>Cancelling never touches the Sale or its DeliveryCharge, and this schedule's own item rows
-    /// are left exactly as they are — they stay forever as audit history. Quantities are "released" only
-    /// in the sense that <see cref="ComputeAvailabilityAsync"/> excludes Cancelled rows from its
-    /// Pending/Completed sums, so a future create sees them as available again automatically.</para>
+    /// are left exactly as they are — they stay forever as audit history. A schedule that is cancelled
+    /// simply stops being active: <see cref="CreateScheduleAsync"/>'s active-schedule check only looks
+    /// at non-Cancelled rows, so a future create is no longer blocked by this one.</para>
     /// </summary>
     private async Task<CancellationResultDto> CancelWithDispositionAsync(
         Guid id,
@@ -626,73 +590,6 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
     }
 
     // ---- Shared helpers --------------------------------------------------------------------------
-
-    private sealed record MethodTotals(decimal Pending, decimal Completed);
-
-    /// <summary>Per-SaleItem, PER-METHOD (Pending, Completed) totals — used only by the READ side
-    /// (<see cref="GetSaleFulfillmentAsync"/>) to report each line's unscheduled/pending/completed buckets.
-    /// Delivery and Pickup are two entirely separate pools — each method's schedules are only ever checked
-    /// against that method's own intent column, which is what keeps delivery-marked quantity from ever
-    /// being reported as pickup-available (or the reverse) without an explicit conversion.
-    /// <para>Creation itself no longer consults this map: <see cref="CreateScheduleAsync"/> now schedules a
-    /// sale's ENTIRE method-earmarked quantity in one shot (a sale has at most one active schedule of
-    /// either method at a time), so there is no per-line "how much is still available" question left to
-    /// answer at create time — only at read time, where cancelled/completed history still needs summarizing.</para></summary>
-    private sealed class AvailabilityMap
-    {
-        private readonly Dictionary<Guid, (decimal Delivery, decimal Pickup)> _intent;
-        public Dictionary<(Guid SaleItemId, FulfillmentMethod Method), MethodTotals> Raw { get; }
-
-        public AvailabilityMap(
-            Dictionary<Guid, (decimal Delivery, decimal Pickup)> intent,
-            Dictionary<(Guid, FulfillmentMethod), MethodTotals> raw)
-        {
-            _intent = intent;
-            Raw = raw;
-        }
-
-        public MethodTotals TotalsFor(Guid saleItemId, FulfillmentMethod method) =>
-            Raw.TryGetValue((saleItemId, method), out var v) ? v : new MethodTotals(0m, 0m);
-
-        /// <summary>Quantity of <paramref name="saleItemId"/> that is that method's intent minus what its
-        /// own pending and completed schedules already hold. Cancelled schedules are excluded upstream,
-        /// which is exactly how a cancellation releases quantity back to "unscheduled" for reporting.</summary>
-        public decimal Available(Guid saleItemId, FulfillmentMethod method)
-        {
-            var intent = _intent.TryGetValue(saleItemId, out var i) ? i : (Delivery: 0m, Pickup: 0m);
-            var methodIntent = method == FulfillmentMethod.Delivery ? intent.Delivery : intent.Pickup;
-            var totals = TotalsFor(saleItemId, method);
-            return methodIntent - totals.Pending - totals.Completed;
-        }
-    }
-
-    /// <summary>Builds the map from a specific set of sale lines, for <see cref="GetSaleFulfillmentAsync"/>'s
-    /// read-only summary.</summary>
-    private async Task<AvailabilityMap> ComputeAvailabilityAsync(
-        Guid tenantId, IReadOnlyCollection<SaleItem> saleItems, CancellationToken ct)
-    {
-        var saleItemIds = saleItems.Select(i => i.Id).ToList();
-        var allocations = await (
-            from i in _db.DeliveryReceiptItems.AsNoTracking()
-            join d in _db.DeliveryReceipts.AsNoTracking() on i.DeliveryReceiptId equals d.Id
-            where i.TenantId == tenantId && saleItemIds.Contains(i.SaleItemId)
-                  && d.Status != FulfillmentStatus.Cancelled
-            select new { i.SaleItemId, i.Quantity, d.Method, d.Status })
-            .ToListAsync(ct);
-
-        var raw = allocations
-            .GroupBy(a => (a.SaleItemId, a.Method))
-            .ToDictionary(
-                g => g.Key,
-                g => new MethodTotals(
-                    Pending: g.Where(a => a.Status == FulfillmentStatus.Pending).Sum(a => a.Quantity),
-                    Completed: g.Where(a => a.Status == FulfillmentStatus.Completed).Sum(a => a.Quantity)));
-
-        var intent = saleItems.ToDictionary(
-            i => i.Id, i => (Delivery: i.DeliveryRequiredQuantity, Pickup: i.PickupRequiredQuantity));
-
-        return new AvailabilityMap(intent, raw);
-    }
 
     private async Task<Sale> LoadFulfillableSaleAsync(Guid tenantId, Guid saleId, CancellationToken ct)
     {

@@ -97,8 +97,8 @@ public class DeliveryReceiptStatusTests : IntegrationTest
         cancelled.Items.Should().ContainSingle(); // its own item rows are preserved, unchanged, as history
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>($"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
-        summary!.Items[0].DeliveryUnscheduledQuantity.Should().Be(scene.Quantity); // fully released
-        summary.CanCreateDelivery.Should().BeTrue();
+        summary!.ActiveSchedule.Should().BeNull(); // fully released, no active schedule remains
+        summary.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow);
     }
 
     [Fact]

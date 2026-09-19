@@ -118,46 +118,23 @@ public sealed record FulfillmentScheduleDto(
 
 // ---- Sale-level fulfillment ----
 
-/// <summary>
-/// REPLACES the shipped 7-member enum entirely. The old members (Unscheduled, PartiallyScheduled,
-/// FullyScheduled, PartiallyDelivered, FullyDelivered, NeedsRescheduling) described a delivery-only
-/// world and cannot express "awaiting pickup". The spec names the replacement set directly, so this
-/// is a rename of the concept, not an extension of it. Consumers to update: SaleDetailPage,
-/// lib/pos.ts's SALE_FULFILLMENT_STATUS_LABELS, and the delivery report's status column.
-/// Note that DeliveryReportPreset's "NeedsRescheduling" is a REPORT FILTER, a different type —
-/// leave it alone.
-/// </summary>
+/// <summary>Whole-sale fulfillment status. A sale has at most one active (non-Cancelled) schedule
+/// at any time (enforced by CreateScheduleAsync), so this never needs to express "partial" or
+/// "awaiting both methods" — those were artifacts of the per-item/multi-schedule design this
+/// replaces.</summary>
 public enum SaleFulfillmentStatus
 {
-    /// <summary>Nothing on this sale was marked for delivery or pickup — everything was taken at the
-    /// counter, so there is nothing to track.</summary>
-    NotApplicable = 1,
-    /// <summary>TakenNow + Delivered + Claimed == sold quantity.</summary>
-    Fulfilled = 2,
-    PartiallyFulfilled = 3,
-    AwaitingDelivery = 4,
-    AwaitingPickup = 5,
-    AwaitingDeliveryAndPickup = 6,
-    /// <summary>Intent exists but nothing is scheduled yet.</summary>
-    NeedsScheduling = 7,
-    /// <summary>Something is overdue — a pending schedule whose date has passed.</summary>
-    NeedsAttention = 8,
+    /// <summary>No Delivery or Pickup was ever created for this sale — everything was Take now.</summary>
+    TakeNow = 1,
+    PendingDelivery = 2,
+    Delivered = 3,
+    PendingPickup = 4,
+    Claimed = 5,
+    /// <summary>The sale's most recent schedule is Cancelled with no active replacement — should not
+    /// normally occur (every cancellation disposition creates one), but is the honest label for it
+    /// rather than a crash if it ever does (e.g. data from before this simplification).</summary>
+    CancelledOrReplaced = 6,
 }
-
-/// <summary>The 8-bucket per-line breakdown the Sale-detail page renders. Every bucket is derived
-/// server-side; the frontend never recomputes one.</summary>
-public sealed record SaleItemFulfillmentDto(
-    Guid SaleItemId,
-    string ProductName,
-    string? VariantName,
-    decimal Quantity,
-    decimal TakeNowQuantity,
-    decimal DeliveryUnscheduledQuantity,
-    decimal DeliveryPendingQuantity,
-    decimal DeliveredQuantity,
-    decimal PickupUnscheduledQuantity,
-    decimal PickupPendingQuantity,
-    decimal ClaimedQuantity);
 
 public sealed record FulfillmentConversionDto(
     Guid Id,
@@ -177,16 +154,16 @@ public sealed record SaleFulfillmentSummaryDto(
     Guid SaleId,
     SaleFulfillmentStatus FulfillmentStatus,
     decimal DeliveryCharge,
-    IReadOnlyList<SaleItemFulfillmentDto> Items,
+    /// <summary>The sale's current active schedule (Pending or Completed), or null for a Take-now
+    /// sale that has never had one. At most one of Deliveries/Pickups below is the "active" one at
+    /// any time — this field exists so the frontend never has to search two lists to find it.</summary>
+    FulfillmentScheduleDto? ActiveSchedule,
+    /// <summary>All Delivery schedules ever created for this sale, active and cancelled, newest
+    /// first — the sale's full delivery history.</summary>
     IReadOnlyList<FulfillmentScheduleDto> Deliveries,
+    /// <summary>Same as Deliveries, for Pickup.</summary>
     IReadOnlyList<FulfillmentScheduleDto> Pickups,
-    IReadOnlyList<FulfillmentConversionDto> Conversions,
-    /// <summary>True when any line still has delivery-unscheduled quantity. Gates "Create delivery";
-    /// when false the UI shows "All delivery items have already been scheduled or delivered."</summary>
-    bool CanCreateDelivery,
-    /// <summary>True when any line still has pickup-unscheduled quantity. Gates "Create pickup"; when
-    /// false the UI shows "All pickup items have already been scheduled or claimed."</summary>
-    bool CanCreatePickup);
+    IReadOnlyList<FulfillmentConversionDto> Conversions);
 
 public interface IDeliveryReceiptService
 {

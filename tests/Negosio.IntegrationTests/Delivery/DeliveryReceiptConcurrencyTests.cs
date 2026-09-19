@@ -70,8 +70,9 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
-        summary!.Items[0].DeliveryPendingQuantity.Should().Be(scene.Quantity); // never duplicated
-        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(0m);
+        summary!.Deliveries.Should().ContainSingle(); // never duplicated
+        summary.ActiveSchedule.Should().NotBeNull();
+        summary.ActiveSchedule!.Status.Should().Be(FulfillmentStatus.Pending);
     }
 
     [Fact]
@@ -204,8 +205,9 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
-        summary!.Items[0].PickupPendingQuantity.Should().Be(scene.Quantity); // never duplicated
-        summary.Items[0].PickupUnscheduledQuantity.Should().Be(0m);
+        summary!.Pickups.Should().ContainSingle(); // never duplicated
+        summary.ActiveSchedule.Should().NotBeNull();
+        summary.ActiveSchedule!.Status.Should().Be(FulfillmentStatus.Pending);
     }
 
     // Scenario 2 (brief): a conversion cannot race an allocation into double-booking the sale. Under the

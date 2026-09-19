@@ -1,48 +1,25 @@
+using Negosio.Domain.Enums;
+
 namespace Negosio.Application.Delivery;
 
-/// <summary>
-/// Derives a sale's overall <see cref="SaleFulfillmentStatus"/> from its aggregate quantities.
-/// Priority-ordered — first matching rule wins. Pure and stateless, and deliberately shared by the
-/// Sale-detail summary and the combined report so the two views can never disagree.
-/// </summary>
+/// <summary>Derives a sale's whole-sale <see cref="SaleFulfillmentStatus"/> from its current active
+/// (or most recent) schedule. Pure and stateless — shared by the Sale-detail summary and the
+/// Delivery report's sale-level view so the two can never disagree.</summary>
 public static class SaleFulfillmentCalculator
 {
-    public static SaleFulfillmentStatus Derive(
-        decimal soldQuantity,
-        decimal takeNowQuantity,
-        decimal deliveredQuantity,
-        decimal claimedQuantity,
-        decimal deliveryPendingQuantity,
-        decimal pickupPendingQuantity,
-        decimal deliveryUnscheduledQuantity,
-        decimal pickupUnscheduledQuantity,
-        bool hasOverduePendingSchedule)
+    /// <param name="latestSchedule">The sale's most recent Delivery-or-Pickup schedule (by
+    /// CreatedAtUtc), across both methods — or null if the sale never had one (pure Take-now).</param>
+    public static SaleFulfillmentStatus Derive(FulfillmentMethod? method, FulfillmentStatus? status)
     {
-        var trackedQuantity = soldQuantity - takeNowQuantity;
-        if (trackedQuantity <= 0m) return SaleFulfillmentStatus.NotApplicable;
+        if (method is null) return SaleFulfillmentStatus.TakeNow;
 
-        if (takeNowQuantity + deliveredQuantity + claimedQuantity >= soldQuantity)
+        return (method, status) switch
         {
-            return SaleFulfillmentStatus.Fulfilled;
-        }
-
-        if (hasOverduePendingSchedule) return SaleFulfillmentStatus.NeedsAttention;
-
-        var awaitingDelivery = deliveryPendingQuantity > 0m;
-        var awaitingPickup = pickupPendingQuantity > 0m;
-        if (awaitingDelivery && awaitingPickup) return SaleFulfillmentStatus.AwaitingDeliveryAndPickup;
-        if (awaitingDelivery) return SaleFulfillmentStatus.AwaitingDelivery;
-        if (awaitingPickup) return SaleFulfillmentStatus.AwaitingPickup;
-
-        // Nothing pending. Either some quantity has completed (partially fulfilled with the rest
-        // unscheduled), or nothing has completed at all (nothing scheduled yet).
-        if (deliveryUnscheduledQuantity > 0m || pickupUnscheduledQuantity > 0m)
-        {
-            return deliveredQuantity + claimedQuantity > 0m
-                ? SaleFulfillmentStatus.PartiallyFulfilled
-                : SaleFulfillmentStatus.NeedsScheduling;
-        }
-
-        return SaleFulfillmentStatus.PartiallyFulfilled;
+            (FulfillmentMethod.Delivery, FulfillmentStatus.Pending) => SaleFulfillmentStatus.PendingDelivery,
+            (FulfillmentMethod.Delivery, FulfillmentStatus.Completed) => SaleFulfillmentStatus.Delivered,
+            (FulfillmentMethod.Pickup, FulfillmentStatus.Pending) => SaleFulfillmentStatus.PendingPickup,
+            (FulfillmentMethod.Pickup, FulfillmentStatus.Completed) => SaleFulfillmentStatus.Claimed,
+            _ => SaleFulfillmentStatus.CancelledOrReplaced,
+        };
     }
 }

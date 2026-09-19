@@ -136,9 +136,9 @@ public class FulfillmentConversionTests : IntegrationTest
         intent.Pickup.Should().Be(2m);
 
         var summary = await GetSummaryAsync(scene);
-        summary!.Items[0].DeliveryUnscheduledQuantity.Should().Be(6m);
-        summary.Items[0].DeliveryPendingQuantity.Should().Be(0m);
-        summary.Items[0].PickupUnscheduledQuantity.Should().Be(2m);
+        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow); // no active schedule remains
+        summary.ActiveSchedule.Should().BeNull();
+        summary.Deliveries.Should().ContainSingle(d => d.Id == delivery.Id && d.Status == FulfillmentStatus.Cancelled);
 
         var conversions = await GetConversionsAsync(scene.SaleId);
         var conversion = conversions.Should().ContainSingle().Subject;
@@ -230,12 +230,12 @@ public class FulfillmentConversionTests : IntegrationTest
         conversion.ToMethod.Should().Be(FulfillmentMethod.Pickup);
         conversion.ReplacementRecordId.Should().Be(replacement.Id);
 
-        // And the claimed units are accounted for as claimed, not as take-now or as available.
+        // And the sale's summary agrees: the replacement pickup is the active schedule, already Claimed.
         var summary = await GetSummaryAsync(scene);
-        summary!.Items[0].ClaimedQuantity.Should().Be(6m);
-        summary.Items[0].TakeNowQuantity.Should().Be(takeNowBefore);
-        summary.Items[0].PickupUnscheduledQuantity.Should().Be(0m);
-        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(0m);
+        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.Claimed);
+        summary.ActiveSchedule.Should().NotBeNull();
+        summary.ActiveSchedule!.Id.Should().Be(replacement.Id);
+        summary.ActiveSchedule.Status.Should().Be(FulfillmentStatus.Completed);
     }
 
     // ---- Pickup dispositions ----
@@ -257,9 +257,9 @@ public class FulfillmentConversionTests : IntegrationTest
         intent.Delivery.Should().Be(0m);
 
         var summary = await GetSummaryAsync(scene);
-        summary!.Items[0].PickupUnscheduledQuantity.Should().Be(6m);
-        summary.Items[0].PickupPendingQuantity.Should().Be(0m);
-        summary.CanCreatePickup.Should().BeTrue();
+        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow); // no active schedule remains
+        summary.ActiveSchedule.Should().BeNull();
+        summary.Pickups.Should().ContainSingle(p => p.Id == pickup.Id && p.Status == FulfillmentStatus.Cancelled);
 
         var conversion = (await GetConversionsAsync(scene.SaleId)).Should().ContainSingle().Subject;
         conversion.FromMethod.Should().Be(FulfillmentMethod.Pickup);
@@ -503,9 +503,8 @@ public class FulfillmentConversionTests : IntegrationTest
 
         var summary = await GetSummaryAsync(scene);
         summary!.Deliveries.Should().ContainSingle(d => d.Id == delivery.Id && d.Status == FulfillmentStatus.Cancelled);
-        summary.Items[0].DeliveryPendingQuantity.Should().Be(0m);
-        summary.Items[0].DeliveredQuantity.Should().Be(0m);
-        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(6m);
+        summary.ActiveSchedule.Should().BeNull();
+        summary.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow);
     }
 
     /// <summary>Spec test 10's Pickup-side mirror of
@@ -531,9 +530,8 @@ public class FulfillmentConversionTests : IntegrationTest
 
         var summary = await GetSummaryAsync(scene);
         summary!.Pickups.Should().ContainSingle(p => p.Id == pickup.Id && p.Status == FulfillmentStatus.Cancelled);
-        summary.Items[0].PickupPendingQuantity.Should().Be(0m);
-        summary.Items[0].ClaimedQuantity.Should().Be(0m);
-        summary.Items[0].PickupUnscheduledQuantity.Should().Be(6m); // fully released, counted here only
+        summary.ActiveSchedule.Should().BeNull();
+        summary.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow);
     }
 
     /// <summary>Spec test 26 — a delivery charge belongs to the SALE, not to a schedule. Converting the

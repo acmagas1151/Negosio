@@ -179,23 +179,24 @@ public class PickupTests : IntegrationTest
     }
 
     [Fact]
-    public async Task Claimed_quantity_is_no_longer_available_to_schedule()
+    public async Task Claiming_a_pickup_moves_the_sale_from_PendingPickup_to_Claimed()
     {
         var scene = await ArrangeSaleAsync(qty: 10m);
         var pickup = await CreatePickupAsync(scene);
 
         var beforeClaim = await GetSummaryAsync(scene);
-        beforeClaim!.Items[0].PickupPendingQuantity.Should().Be(scene.Quantity);
-        beforeClaim.Items[0].PickupUnscheduledQuantity.Should().Be(0m);
-        beforeClaim.CanCreatePickup.Should().BeFalse();
+        beforeClaim!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PendingPickup);
+        beforeClaim.ActiveSchedule.Should().NotBeNull();
+        beforeClaim.ActiveSchedule!.Id.Should().Be(pickup.Id);
+        beforeClaim.ActiveSchedule.Status.Should().Be(FulfillmentStatus.Pending);
 
         (await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null)).EnsureSuccessStatusCode();
 
         var afterClaim = await GetSummaryAsync(scene);
-        afterClaim!.Items[0].ClaimedQuantity.Should().Be(scene.Quantity);
-        afterClaim.Items[0].PickupPendingQuantity.Should().Be(0m);
-        afterClaim.Items[0].PickupUnscheduledQuantity.Should().Be(0m); // claimed is consumed, not released
-        afterClaim.CanCreatePickup.Should().BeFalse();
+        afterClaim!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.Claimed);
+        afterClaim.ActiveSchedule.Should().NotBeNull(); // Completed still counts as the active schedule
+        afterClaim.ActiveSchedule!.Id.Should().Be(pickup.Id);
+        afterClaim.ActiveSchedule.Status.Should().Be(FulfillmentStatus.Completed);
 
         // And the API agrees: re-scheduling is rejected — the schedule is Completed (not Cancelled), so
         // the one-active-schedule guard still blocks a second create.

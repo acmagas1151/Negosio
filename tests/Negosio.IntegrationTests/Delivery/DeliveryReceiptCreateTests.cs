@@ -166,7 +166,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
     }
 
     [Fact]
-    public async Task Fulfillment_summary_reflects_a_created_schedule_and_gates_CanCreateDelivery()
+    public async Task Fulfillment_summary_reflects_a_created_schedule_as_the_active_schedule()
     {
         var scene = await ArrangeSaleAsync(qty: 10m);
         await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req());
@@ -174,40 +174,41 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
 
-        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.AwaitingDelivery);
-        summary.CanCreateDelivery.Should().BeFalse(); // a create now schedules 100% in one shot
-        summary.Items[0].DeliveryPendingQuantity.Should().Be(10m);
-        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(0m);
+        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PendingDelivery);
+        summary.ActiveSchedule.Should().NotBeNull();
+        summary.ActiveSchedule!.Method.Should().Be(FulfillmentMethod.Delivery);
+        summary.ActiveSchedule.Status.Should().Be(FulfillmentStatus.Pending);
+        summary.Deliveries.Should().ContainSingle();
+        summary.Pickups.Should().BeEmpty();
     }
 
     /// <summary>The most common real call: opening a sale's fulfillment summary before anything has been
-    /// scheduled.</summary>
+    /// scheduled. In the simplified model this collapses to TakeNow — the same value as a sale with no
+    /// delivery intent at all — since status is now read directly off the schedule, and there is none
+    /// yet, regardless of the item's delivery intent.</summary>
     [Fact]
-    public async Task Fulfillment_summary_for_a_sale_with_no_deliveries_yet_reports_NeedsScheduling()
+    public async Task Fulfillment_summary_for_a_sale_with_no_schedule_yet_reports_TakeNow()
     {
         var scene = await ArrangeSaleAsync(qty: 10m); // no deliveries created
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
 
-        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.NeedsScheduling);
-        summary.CanCreateDelivery.Should().BeTrue();
-        summary.Items.Should().ContainSingle();
-        summary.Items[0].DeliveryPendingQuantity.Should().Be(0m);
-        summary.Items[0].DeliveredQuantity.Should().Be(0m);
-        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(10m);
+        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow);
+        summary.ActiveSchedule.Should().BeNull();
+        summary.Deliveries.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task A_sale_with_nothing_marked_for_delivery_reports_NotApplicable()
+    public async Task A_sale_with_nothing_marked_for_delivery_reports_TakeNow()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, method: FulfillmentMethod.TakeNow);
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
 
-        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.NotApplicable);
-        summary.CanCreateDelivery.Should().BeFalse();
+        summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.TakeNow);
+        summary.ActiveSchedule.Should().BeNull();
     }
 
     // ---- The simplified one-active-schedule invariant (spec's backend acceptance criteria) ----
