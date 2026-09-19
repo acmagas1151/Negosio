@@ -58,20 +58,21 @@ public class FulfillmentConversionTests : IntegrationTest
         return new Scene(sale.SaleId, branchId, saleItemId);
     }
 
-    private async Task<FulfillmentScheduleDto> CreateDeliveryAsync(Scene s, decimal quantity)
+    /// <summary>Schedules the entire current delivery-required (or pickup-required) quantity in one
+    /// shot — there is no per-request quantity/line selection any more; a create always covers 100% of
+    /// what is currently earmarked for its method.</summary>
+    private async Task<FulfillmentScheduleDto> CreateDeliveryAsync(Scene s)
     {
         var response = await Client.PostAsJsonAsync($"/api/sales/{s.SaleId}/delivery-receipts",
-            new CreateDeliveryReceiptRequest(Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
-                new[] { new FulfillmentItemInput(s.SaleItemId, quantity) }));
+            new CreateDeliveryReceiptRequest(Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         return (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
     }
 
-    private async Task<FulfillmentScheduleDto> CreatePickupAsync(Scene s, decimal quantity)
+    private async Task<FulfillmentScheduleDto> CreatePickupAsync(Scene s)
     {
         var response = await Client.PostAsJsonAsync($"/api/sales/{s.SaleId}/pickups",
-            new CreatePickupRequest(Today, "Juan Dela Cruz", null, null,
-                new[] { new FulfillmentItemInput(s.SaleItemId, quantity) }));
+            new CreatePickupRequest(Today, "Juan Dela Cruz", null, null));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         return (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
     }
@@ -121,7 +122,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task Delivery_cancelled_with_DeliverLater_releases_to_delivery_unscheduled_and_records_a_same_method_event()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m, pickupRequiredQuantity: 2m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
+        var delivery = await CreateDeliveryAsync(scene);
 
         var (status, body) = await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null, "Van broke down");
         status.Should().Be(HttpStatusCode.OK);
@@ -143,7 +144,7 @@ public class FulfillmentConversionTests : IntegrationTest
         var conversion = conversions.Should().ContainSingle().Subject;
         conversion.FromMethod.Should().Be(FulfillmentMethod.Delivery);
         conversion.ToMethod.Should().Be(FulfillmentMethod.Delivery);
-        conversion.Quantity.Should().Be(4m);
+        conversion.Quantity.Should().Be(6m); // the whole delivery-required quantity, per Task 2
         conversion.SourceRecordId.Should().Be(delivery.Id);
         conversion.ReplacementRecordId.Should().BeNull();
         conversion.Reason.Should().Be("Van broke down");
@@ -153,7 +154,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task Delivery_cancelled_with_ConvertToPickup_creates_a_pending_pickup_and_moves_intent()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
+        var delivery = await CreateDeliveryAsync(scene);
 
         var (status, body) = await CancelDeliveryAsync(
             delivery.Id, CancellationDisposition.ConvertToPickup,
@@ -174,17 +175,17 @@ public class FulfillmentConversionTests : IntegrationTest
         replacement.DeliveryAddress.Should().BeNull();
         replacement.Items.Should().ContainSingle();
         replacement.Items[0].SaleItemId.Should().Be(scene.SaleItemId);
-        replacement.Items[0].Quantity.Should().Be(4m); // same quantities carried across
+        replacement.Items[0].Quantity.Should().Be(6m); // the whole delivery-required quantity carried across
 
         var intent = await GetIntentAsync(scene.SaleItemId);
-        intent.Delivery.Should().Be(2m); // 6 - 4
-        intent.Pickup.Should().Be(4m);   // 0 + 4
+        intent.Delivery.Should().Be(0m); // 6 - 6
+        intent.Pickup.Should().Be(6m);   // 0 + 6
         intent.TakeNow.Should().Be(4m);  // untouched
 
         var conversion = (await GetConversionsAsync(scene.SaleId)).Should().ContainSingle().Subject;
         conversion.FromMethod.Should().Be(FulfillmentMethod.Delivery);
         conversion.ToMethod.Should().Be(FulfillmentMethod.Pickup);
-        conversion.Quantity.Should().Be(4m);
+        conversion.Quantity.Should().Be(6m);
         conversion.SourceRecordId.Should().Be(delivery.Id);
         conversion.ReplacementRecordId.Should().Be(replacement.Id);
     }
@@ -198,7 +199,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task Delivery_cancelled_with_CustomerPickedUpInstead_never_completes_the_delivery_and_claims_the_replacement()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
+        var delivery = await CreateDeliveryAsync(scene);
         var takeNowBefore = (await GetIntentAsync(scene.SaleItemId)).TakeNow;
 
         var (status, body) = await CancelDeliveryAsync(
@@ -221,8 +222,8 @@ public class FulfillmentConversionTests : IntegrationTest
         // Spec test 18: no take-now adjustment is ever created for this path.
         var intent = await GetIntentAsync(scene.SaleItemId);
         intent.TakeNow.Should().Be(takeNowBefore);
-        intent.Delivery.Should().Be(2m);
-        intent.Pickup.Should().Be(4m);
+        intent.Delivery.Should().Be(0m);
+        intent.Pickup.Should().Be(6m);
 
         var conversion = (await GetConversionsAsync(scene.SaleId)).Should().ContainSingle().Subject;
         conversion.FromMethod.Should().Be(FulfillmentMethod.Delivery);
@@ -231,10 +232,10 @@ public class FulfillmentConversionTests : IntegrationTest
 
         // And the claimed units are accounted for as claimed, not as take-now or as available.
         var summary = await GetSummaryAsync(scene);
-        summary!.Items[0].ClaimedQuantity.Should().Be(4m);
+        summary!.Items[0].ClaimedQuantity.Should().Be(6m);
         summary.Items[0].TakeNowQuantity.Should().Be(takeNowBefore);
         summary.Items[0].PickupUnscheduledQuantity.Should().Be(0m);
-        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(2m);
+        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(0m);
     }
 
     // ---- Pickup dispositions ----
@@ -243,7 +244,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task Pickup_cancelled_with_PickupLater_releases_back_to_pickup_unscheduled()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var pickup = await CreatePickupAsync(scene);
 
         var (status, body) = await CancelPickupAsync(pickup.Id, CancellationDisposition.PickupLater, null, "No show");
         status.Should().Be(HttpStatusCode.OK);
@@ -271,7 +272,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task Pickup_cancelled_with_ConvertToDelivery_creates_a_pending_delivery_and_moves_intent_the_other_way()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var pickup = await CreatePickupAsync(scene);
 
         var (status, body) = await CancelPickupAsync(
             pickup.Id, CancellationDisposition.ConvertToDelivery,
@@ -284,11 +285,11 @@ public class FulfillmentConversionTests : IntegrationTest
         replacement.Status.Should().Be(FulfillmentStatus.Pending);
         replacement.SequenceNumber.Should().Be(1); // first delivery on this sale
         replacement.DeliveryAddress.Should().Be("88 Katipunan Ave, QC");
-        replacement.Items[0].Quantity.Should().Be(4m);
+        replacement.Items[0].Quantity.Should().Be(6m);
 
         var intent = await GetIntentAsync(scene.SaleItemId);
-        intent.Pickup.Should().Be(2m);
-        intent.Delivery.Should().Be(4m);
+        intent.Pickup.Should().Be(0m);
+        intent.Delivery.Should().Be(6m);
 
         var conversion = (await GetConversionsAsync(scene.SaleId)).Should().ContainSingle().Subject;
         conversion.FromMethod.Should().Be(FulfillmentMethod.Pickup);
@@ -302,7 +303,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task Cancelling_a_delivery_with_a_pickup_only_disposition_is_rejected()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
+        var delivery = await CreateDeliveryAsync(scene);
 
         var (status, _) = await CancelDeliveryAsync(delivery.Id, CancellationDisposition.PickupLater, null);
         status.Should().Be(HttpStatusCode.BadRequest);
@@ -312,7 +313,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task Cancelling_a_delivery_with_ConvertToPickup_but_no_replacement_details_is_rejected()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
+        var delivery = await CreateDeliveryAsync(scene);
 
         var (status, _) = await CancelDeliveryAsync(delivery.Id, CancellationDisposition.ConvertToPickup, null);
         status.Should().Be(HttpStatusCode.BadRequest);
@@ -327,9 +328,34 @@ public class FulfillmentConversionTests : IntegrationTest
     [Fact]
     public async Task TakeNow_is_never_an_accepted_disposition_on_either_cancel_endpoint()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 4m, pickupRequiredQuantity: 4m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
-        var pickup = await CreatePickupAsync(scene, 4m);
+        // Two separate sales under the SAME tenant/branch/session — a sale now has at most one ACTIVE
+        // schedule at a time, so a delivery and a pickup can no longer coexist as active schedules on
+        // the same sale. (Deliberately not two calls to ArrangeSaleAsync: that helper self-registers a
+        // brand-new tenant every time, and two registrations in one test collide on the same fixed
+        // email.)
+        var login = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(login);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 40m);
+
+        async Task<Scene> CheckoutWithIntentAsync(decimal deliveryRequiredQuantity, decimal pickupRequiredQuantity)
+        {
+            var sale = await CheckoutOkAsync(new CheckoutRequest(
+                branchId, session.Id, Guid.NewGuid(),
+                new[] { new CheckoutItemInput(variantId, 10m, null) },
+                new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) }));
+            var saleItemId = sale.Items[0].SaleItemId;
+            await SetFulfillmentIntentAsync(saleItemId, deliveryRequiredQuantity, pickupRequiredQuantity);
+            return new Scene(sale.SaleId, branchId, saleItemId);
+        }
+
+        var deliveryScene = await CheckoutWithIntentAsync(4m, 0m);
+        var delivery = await CreateDeliveryAsync(deliveryScene);
+
+        var pickupScene = await CheckoutWithIntentAsync(0m, 4m);
+        var pickup = await CreatePickupAsync(pickupScene);
 
         var deliveryResponse = await Client.PostAsJsonAsync($"/api/delivery-receipts/{delivery.Id}/cancel",
             new { reason = "Customer took it", disposition = "TakeNow", replacement = (object?)null });
@@ -340,7 +366,8 @@ public class FulfillmentConversionTests : IntegrationTest
         pickupResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
         // Nothing was cancelled or converted by the rejected calls.
-        (await GetConversionsAsync(scene.SaleId)).Should().BeEmpty();
+        (await GetConversionsAsync(deliveryScene.SaleId)).Should().BeEmpty();
+        (await GetConversionsAsync(pickupScene.SaleId)).Should().BeEmpty();
     }
 
     /// <summary>
@@ -356,7 +383,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task Cancelling_into_a_replacement_is_rejected_when_the_sale_was_voided()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
+        var delivery = await CreateDeliveryAsync(scene);
 
         (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/void", new VoidSaleRequest("Wrong customer")))
             .EnsureSuccessStatusCode();
@@ -397,7 +424,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task Cancelling_with_a_release_only_disposition_still_works_on_a_voided_sale()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
+        var delivery = await CreateDeliveryAsync(scene);
 
         (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/void", new VoidSaleRequest("Wrong customer")))
             .EnsureSuccessStatusCode();
@@ -414,7 +441,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task A_completed_delivery_cannot_be_cancelled()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
+        var delivery = await CreateDeliveryAsync(scene);
         (await Client.PostAsync($"/api/delivery-receipts/{delivery.Id}/deliver", null)).EnsureSuccessStatusCode();
 
         var (status, _) = await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null);
@@ -426,7 +453,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task A_claimed_pickup_can_neither_be_cancelled_nor_converted()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var pickup = await CreatePickupAsync(scene);
         (await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null)).EnsureSuccessStatusCode();
 
         (await CancelPickupAsync(pickup.Id, CancellationDisposition.PickupLater, null)).Status
@@ -445,7 +472,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task Marking_a_pickup_claimed_does_not_cancel_it()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var pickup = await CreatePickupAsync(scene);
 
         var response = await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null);
         var claimed = (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
@@ -464,7 +491,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task A_cancelled_schedule_stays_in_history_and_is_counted_nowhere()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
+        var delivery = await CreateDeliveryAsync(scene);
         (await CancelDeliveryAsync(delivery.Id, CancellationDisposition.DeliverLater, null, "Wrong address")).Status
             .Should().Be(HttpStatusCode.OK);
 
@@ -493,7 +520,7 @@ public class FulfillmentConversionTests : IntegrationTest
     public async Task A_cancelled_pickup_stays_in_history_and_is_counted_nowhere()
     {
         var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var pickup = await CreatePickupAsync(scene);
         (await CancelPickupAsync(pickup.Id, CancellationDisposition.PickupLater, null, "No show")).Status
             .Should().Be(HttpStatusCode.OK);
 
@@ -520,7 +547,7 @@ public class FulfillmentConversionTests : IntegrationTest
             .Where(s => s.Id == scene.SaleId).Select(s => s.DeliveryCharge).SingleAsync());
         chargeBefore.Should().Be(60m);
 
-        var delivery = await CreateDeliveryAsync(scene, 6m);
+        var delivery = await CreateDeliveryAsync(scene);
         var (status, body) = await CancelDeliveryAsync(
             delivery.Id, CancellationDisposition.ConvertToPickup,
             new PickupReplacementInput(Today.AddDays(1), "Maria Santos", null, null));

@@ -12,8 +12,7 @@ public class CreateDeliveryReceiptRequestValidatorTests
         RecipientName: "John Doe",
         DeliveryAddress: "123 Main St, Apt 4, Springfield",
         ContactNumber: "555-1234",
-        Notes: "Ring doorbell twice",
-        Items: new[] { new FulfillmentItemInput(Guid.NewGuid(), 5) });
+        Notes: "Ring doorbell twice");
 
     private readonly CreateDeliveryReceiptRequestValidator _v = new();
 
@@ -30,25 +29,6 @@ public class CreateDeliveryReceiptRequestValidatorTests
     public void Accepts_valid_request_with_null_delivery_notes()
         => _v.TestValidate(Valid() with { Notes = null })
              .ShouldNotHaveAnyValidationErrors();
-
-    [Fact]
-    public void Rejects_an_empty_item_list()
-        => _v.TestValidate(Valid() with { Items = Array.Empty<FulfillmentItemInput>() })
-             .ShouldHaveValidationErrorFor(x => x.Items);
-
-    [Fact]
-    public void Rejects_duplicate_sale_item_within_one_delivery()
-    {
-        var saleItemId = Guid.NewGuid();
-        _v.TestValidate(Valid() with
-        {
-            Items = new[]
-            {
-                new FulfillmentItemInput(saleItemId, 1m),
-                new FulfillmentItemInput(saleItemId, 2m),
-            },
-        }).ShouldHaveValidationErrorFor(x => x.Items);
-    }
 
     [Fact]
     public void Rejects_a_default_unset_scheduled_date()
@@ -89,14 +69,4 @@ public class CreateDeliveryReceiptRequestValidatorTests
     public void Rejects_delivery_notes_over_1000_chars()
         => _v.TestValidate(Valid() with { Notes = new string('x', 1001) })
              .ShouldHaveValidationErrorFor(x => x.Notes);
-
-    [Fact]
-    public void Rejects_item_with_zero_quantity()
-        => _v.TestValidate(Valid() with { Items = new[] { new FulfillmentItemInput(Guid.NewGuid(), 0) } })
-             .ShouldHaveValidationErrorFor("Items[0].Quantity");
-
-    [Fact]
-    public void Rejects_item_with_negative_quantity()
-        => _v.TestValidate(Valid() with { Items = new[] { new FulfillmentItemInput(Guid.NewGuid(), -5) } })
-             .ShouldHaveValidationErrorFor("Items[0].Quantity");
 }

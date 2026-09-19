@@ -26,9 +26,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
     private readonly ITenantDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IValidator<CreateDeliveryReceiptRequest> _createDeliveryValidator;
-    private readonly IValidator<CreateDeliveryReceiptBatchRequest> _deliveryBatchValidator;
     private readonly IValidator<CreatePickupRequest> _createPickupValidator;
-    private readonly IValidator<CreatePickupBatchRequest> _pickupBatchValidator;
     private readonly IValidator<CancelDeliveryRequest> _cancelDeliveryValidator;
     private readonly IValidator<CancelPickupRequest> _cancelPickupValidator;
     private readonly IBranchAccessResolver _branchAccess;
@@ -39,9 +37,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         ITenantDbContext db,
         ICurrentUser currentUser,
         IValidator<CreateDeliveryReceiptRequest> createDeliveryValidator,
-        IValidator<CreateDeliveryReceiptBatchRequest> deliveryBatchValidator,
         IValidator<CreatePickupRequest> createPickupValidator,
-        IValidator<CreatePickupBatchRequest> pickupBatchValidator,
         IValidator<CancelDeliveryRequest> cancelDeliveryValidator,
         IValidator<CancelPickupRequest> cancelPickupValidator,
         IBranchAccessResolver branchAccess,
@@ -51,9 +47,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         _db = db;
         _currentUser = currentUser;
         _createDeliveryValidator = createDeliveryValidator;
-        _deliveryBatchValidator = deliveryBatchValidator;
         _createPickupValidator = createPickupValidator;
-        _pickupBatchValidator = pickupBatchValidator;
         _cancelDeliveryValidator = cancelDeliveryValidator;
         _cancelPickupValidator = cancelPickupValidator;
         _branchAccess = branchAccess;
@@ -63,26 +57,17 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
 
     // ---- Create ----------------------------------------------------------------------------------
     //
-    // The four public create methods are thin adapters: each validates its own request type, normalizes
-    // it into the method-agnostic ScheduleInput shape, and calls the one shared allocation path. All the
-    // ordering that makes allocation correct (transaction -> sale-items lock -> post-lock idempotency
-    // re-check -> availability snapshot -> build -> single save) lives exactly once, in those two private
-    // methods, and is unchanged from the shipped delivery-only implementation.
+    // The two public create methods are thin adapters: each validates its own request type, normalizes
+    // it into the method-agnostic ScheduleInput shape, and calls the one shared allocation path. A sale
+    // may have at most one active (non-Cancelled) schedule at a time, of either method, and a schedule
+    // always covers every item currently earmarked for its method at that item's full required quantity —
+    // there is no partial/per-line selection any more.
 
     public async Task<FulfillmentScheduleDto> CreateDeliveryAsync(
         Guid saleId, CreateDeliveryReceiptRequest request, CancellationToken ct = default)
     {
         await _createDeliveryValidator.ValidateAndThrowAppAsync(request, ct);
         return await CreateScheduleAsync(saleId, FulfillmentMethod.Delivery, ScheduleInput.From(request), ct);
-    }
-
-    public async Task<FulfillmentBatchResultDto> CreateDeliveryBatchAsync(
-        Guid saleId, CreateDeliveryReceiptBatchRequest request, CancellationToken ct = default)
-    {
-        await _deliveryBatchValidator.ValidateAndThrowAppAsync(request, ct);
-        return await CreateScheduleBatchAsync(
-            saleId, FulfillmentMethod.Delivery, request.BatchRequestId,
-            request.Schedules.Select(ScheduleInput.From).ToList(), ct);
     }
 
     public async Task<FulfillmentScheduleDto> CreatePickupAsync(
@@ -92,15 +77,6 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         return await CreateScheduleAsync(saleId, FulfillmentMethod.Pickup, ScheduleInput.From(request), ct);
     }
 
-    public async Task<FulfillmentBatchResultDto> CreatePickupBatchAsync(
-        Guid saleId, CreatePickupBatchRequest request, CancellationToken ct = default)
-    {
-        await _pickupBatchValidator.ValidateAndThrowAppAsync(request, ct);
-        return await CreateScheduleBatchAsync(
-            saleId, FulfillmentMethod.Pickup, request.BatchRequestId,
-            request.Schedules.Select(ScheduleInput.From).ToList(), ct);
-    }
-
     /// <summary>One schedule of either method, normalized off the two request shapes. A pickup carries no
     /// <see cref="DeliveryAddress"/>.</summary>
     private sealed record ScheduleInput(
@@ -108,14 +84,13 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         string RecipientName,
         string? DeliveryAddress,
         string? ContactNumber,
-        string? Notes,
-        IReadOnlyList<FulfillmentItemInput> Items)
+        string? Notes)
     {
         public static ScheduleInput From(CreateDeliveryReceiptRequest r) =>
-            new(r.ScheduledDate, r.RecipientName, r.DeliveryAddress, r.ContactNumber, r.Notes, r.Items);
+            new(r.ScheduledDate, r.RecipientName, r.DeliveryAddress, r.ContactNumber, r.Notes);
 
         public static ScheduleInput From(CreatePickupRequest r) =>
-            new(r.ScheduledDate, r.RecipientName, null, r.ContactNumber, r.Notes, r.Items);
+            new(r.ScheduledDate, r.RecipientName, null, r.ContactNumber, r.Notes);
     }
 
     private async Task<FulfillmentScheduleDto> CreateScheduleAsync(
@@ -128,13 +103,36 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
 
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
 
-        // Use the rows the lock itself returned, never the pre-lock copy on `sale`. The intent columns
-        // are mutable now (a cancellation-with-conversion moves quantity between the two pools), so a
-        // snapshot taken before the lock can already be stale by the time we hold it.
+        // Same lock every allocating/converting path takes — see LockSaleItemsAsync's doc comment.
         var lockedItems = await LockSaleItemsAsync(tenantId, sale.Id, ct);
 
-        var availability = await ComputeAvailabilityAsync(tenantId, lockedItems, ct);
-        var lines = ValidateAndResolveLines(lockedItems, availability, method, schedule.Items);
+        // One active (non-Cancelled) schedule per sale, of EITHER method, ever — this is the whole
+        // simplified invariant. A stale pre-lock read would miss a schedule someone just created while
+        // we waited on the lock, so this check runs after LockSaleItemsAsync, not before.
+        var hasActiveSchedule = await _db.DeliveryReceipts.AsNoTracking()
+            .AnyAsync(d => d.TenantId == tenantId && d.SaleId == saleId && d.Status != FulfillmentStatus.Cancelled, ct);
+        if (hasActiveSchedule)
+        {
+            await transaction.RollbackAsync(ct);
+            throw new BusinessRuleException(
+                ErrorCodes.DeliveryReceiptNotAllowed,
+                "This sale already has an active delivery or pickup. Cancel it first if you need to change the fulfillment method.");
+        }
+
+        // Every item earmarked for this method, at its full quantity — checkout already set this to
+        // 0-or-full per Task 1, so there is nothing left to validate here; this is a direct read, not a
+        // client-supplied selection.
+        var quantityColumn = method == FulfillmentMethod.Delivery
+            ? (Func<SaleItem, decimal>)(i => i.DeliveryRequiredQuantity)
+            : i => i.PickupRequiredQuantity;
+        var lines = lockedItems.Where(i => quantityColumn(i) > 0m).Select(i => (SaleItem: i, Quantity: quantityColumn(i))).ToList();
+        if (lines.Count == 0)
+        {
+            await transaction.RollbackAsync(ct);
+            throw new BusinessRuleException(
+                ErrorCodes.DeliveryReceiptNotAllowed,
+                $"This sale has no items earmarked for {MethodNoun(method)}.");
+        }
 
         var preparedByName = await ResolvePreparedByNameAsync(ct);
         var sequenceNumber = await NextSequenceNumberAsync(tenantId, saleId, method, ct);
@@ -161,101 +159,6 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
 
         await transaction.CommitAsync(ct);
         return await MapToDtoAsync(dr, ct);
-    }
-
-    private async Task<FulfillmentBatchResultDto> CreateScheduleBatchAsync(
-        Guid saleId, FulfillmentMethod method, Guid batchRequestId, IReadOnlyList<ScheduleInput> schedules, CancellationToken ct)
-    {
-        var tenantId = RequireTenant();
-
-        // Branch/tenant/sale-status guard runs first, before any idempotency shortcut — a
-        // branch-scoped caller must never be able to read another branch's schedule rows just by
-        // replaying a BatchRequestId it happens to know, even for a genuine sale id.
-        var sale = await LoadFulfillableSaleAsync(tenantId, saleId, ct);
-
-        // Idempotency fast path — a retry arriving after the original batch already fully committed
-        // returns the same rows without paying for a lock acquisition. This check alone is NOT
-        // race-proof (it runs outside the transaction); the authoritative one is re-run below, after
-        // the lock is held. Deliberately placed after LoadFulfillableSaleAsync (not before) so the
-        // branch guard above always runs first — see TryGetExistingBatchAsync's doc comment.
-        if (await TryGetExistingBatchAsync(tenantId, sale.Id, method, batchRequestId, ct) is { } alreadyApplied)
-        {
-            return alreadyApplied;
-        }
-
-        foreach (var schedule in schedules)
-        {
-            EnsureNotPastBusinessToday(schedule.ScheduledDate, method);
-        }
-
-        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
-
-        // As in CreateScheduleAsync: the locked rows, not the pre-lock copy on `sale`, are the
-        // authoritative intent snapshot.
-        var lockedItems = await LockSaleItemsAsync(tenantId, sale.Id, ct);
-
-        // The race-proof idempotency check. A concurrent call with the same BatchRequestId may have
-        // committed while this one was blocked on the lock above — in which case its rows are visible
-        // only now. Re-checking here, with the lock held, is what actually makes batch creation
-        // idempotent under concurrency; there is deliberately no unique index on BatchRequestId to fall
-        // back on, since one batch legitimately writes N rows sharing that id (a unique index cannot
-        // express that). Nothing has been written yet at this point, so the rollback is a no-op that
-        // just releases the lock.
-        if (await TryGetExistingBatchAsync(tenantId, sale.Id, method, batchRequestId, ct) is { } wonByAnother)
-        {
-            await transaction.RollbackAsync(ct);
-            return wonByAnother;
-        }
-
-        // One availability snapshot for the whole batch, decremented in-memory as each schedule is
-        // resolved in order — this is what stops two schedules in the SAME batch from double-claiming
-        // the same units (a per-schedule-only check would miss that, since neither schedule alone
-        // exceeds availability).
-        var availability = await ComputeAvailabilityAsync(tenantId, lockedItems, ct);
-        var preparedByName = await ResolvePreparedByNameAsync(ct);
-        var nextSequenceNumber = await NextSequenceNumberAsync(tenantId, saleId, method, ct);
-
-        var created = new List<DeliveryReceipt>(schedules.Count);
-        foreach (var schedule in schedules)
-        {
-            var lines = ValidateAndResolveLines(lockedItems, availability, method, schedule.Items);
-
-            var dr = BuildSchedule(tenantId, sale, method, nextSequenceNumber++, schedule, preparedByName, batchRequestId);
-
-            foreach (var (saleItem, quantity) in lines)
-            {
-                dr.AddItem(saleItem.Id, saleItem.ProductNameSnapshot, saleItem.VariantNameSnapshot, quantity, saleItem.UnitPrice);
-                availability.Consume(saleItem.Id, method, quantity); // consume for the remaining schedules in this batch
-            }
-
-            _db.DeliveryReceipts.Add(dr);
-            created.Add(dr);
-        }
-
-        try
-        {
-            await _db.SaveChangesAsync(ct);
-        }
-        // Still reachable for a genuine (SaleId, Method, SequenceNumber) race — e.g. a concurrent
-        // single-create and batch-create on the same sale and method landing on an overlapping sequence
-        // number. A BatchRequestId collision is no longer possible (that index is deliberately
-        // non-unique), so there is no idempotent-recovery branch here any more.
-        catch (DbUpdateException ex) when (SqlUniqueViolation.Is(ex))
-        {
-            await transaction.RollbackAsync(ct);
-            throw new ConflictException(ErrorCodes.DeliveryReceiptConcurrencyConflict,
-                "Another schedule was created for this sale at the same time. Please retry.");
-        }
-
-        await transaction.CommitAsync(ct);
-
-        var createdDtos = new List<FulfillmentScheduleDto>(created.Count);
-        foreach (var dr in created)
-        {
-            createdDtos.Add(await MapToDtoAsync(dr, ct));
-        }
-
-        return new FulfillmentBatchResultDto(createdDtos, WasExistingBatch: false);
     }
 
     private DeliveryReceipt BuildSchedule(
@@ -724,46 +627,17 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
 
     // ---- Shared helpers --------------------------------------------------------------------------
 
-    /// <summary>Returns the already-persisted result for <paramref name="batchRequestId"/> on
-    /// <paramref name="saleId"/> and <paramref name="method"/>, or null if that batch has not been applied
-    /// yet. Called twice by <see cref="CreateScheduleBatchAsync"/>: once as a lock-free fast path, and once
-    /// inside the transaction with the sale-items lock held — the latter is the call that actually makes
-    /// batch creation idempotent under concurrency.
-    /// <para>Scoped to <paramref name="saleId"/> and <paramref name="method"/>, not just the tenant: a batch
-    /// is always route-scoped to one sale and one method, so a stale or reused BatchRequestId must never
-    /// return a different sale's — or the other method's — rows. Both call sites run AFTER
-    /// <c>LoadFulfillableSaleAsync</c>, which already enforces tenant+branch+sale-status via
-    /// <see cref="GuardBranchAsync"/> — so even a caller who knows a specific out-of-branch
-    /// <paramref name="saleId"/> and its exact BatchRequestId cannot reach this fast path without first
-    /// clearing the branch guard.</para></summary>
-    private async Task<FulfillmentBatchResultDto?> TryGetExistingBatchAsync(
-        Guid tenantId, Guid saleId, FulfillmentMethod method, Guid batchRequestId, CancellationToken ct)
-    {
-        var existing = await _db.DeliveryReceipts.AsNoTracking()
-            .Where(d => d.TenantId == tenantId && d.SaleId == saleId && d.Method == method && d.BatchRequestId == batchRequestId)
-            .OrderBy(d => d.SequenceNumber)
-            .Include(d => d.Items)
-            .ToListAsync(ct);
-        if (existing.Count == 0)
-        {
-            return null;
-        }
-
-        var dtos = new List<FulfillmentScheduleDto>(existing.Count);
-        foreach (var dr in existing)
-        {
-            dtos.Add(await MapToDtoAsync(dr, ct));
-        }
-
-        return new FulfillmentBatchResultDto(dtos, WasExistingBatch: true);
-    }
-
     private sealed record MethodTotals(decimal Pending, decimal Completed);
 
-    /// <summary>Per-SaleItem, PER-METHOD (Pending, Completed) totals. Delivery and Pickup are two entirely
-    /// separate pools — each method's schedules are only ever checked against that method's own intent
-    /// column, which is what stops delivery-marked quantity from being scheduled as a pickup (or the
-    /// reverse) without an explicit conversion.</summary>
+    /// <summary>Per-SaleItem, PER-METHOD (Pending, Completed) totals — used only by the READ side
+    /// (<see cref="GetSaleFulfillmentAsync"/>) to report each line's unscheduled/pending/completed buckets.
+    /// Delivery and Pickup are two entirely separate pools — each method's schedules are only ever checked
+    /// against that method's own intent column, which is what keeps delivery-marked quantity from ever
+    /// being reported as pickup-available (or the reverse) without an explicit conversion.
+    /// <para>Creation itself no longer consults this map: <see cref="CreateScheduleAsync"/> now schedules a
+    /// sale's ENTIRE method-earmarked quantity in one shot (a sale has at most one active schedule of
+    /// either method at a time), so there is no per-line "how much is still available" question left to
+    /// answer at create time — only at read time, where cancelled/completed history still needs summarizing.</para></summary>
     private sealed class AvailabilityMap
     {
         private readonly Dictionary<Guid, (decimal Delivery, decimal Pickup)> _intent;
@@ -780,10 +654,9 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         public MethodTotals TotalsFor(Guid saleItemId, FulfillmentMethod method) =>
             Raw.TryGetValue((saleItemId, method), out var v) ? v : new MethodTotals(0m, 0m);
 
-        /// <summary>Quantity of <paramref name="saleItemId"/> still available to put on a NEW schedule
-        /// of <paramref name="method"/>: that method's intent minus what its own pending and completed
-        /// schedules already hold. Cancelled schedules are excluded upstream, which is exactly how a
-        /// cancellation releases quantity.</summary>
+        /// <summary>Quantity of <paramref name="saleItemId"/> that is that method's intent minus what its
+        /// own pending and completed schedules already hold. Cancelled schedules are excluded upstream,
+        /// which is exactly how a cancellation releases quantity back to "unscheduled" for reporting.</summary>
         public decimal Available(Guid saleItemId, FulfillmentMethod method)
         {
             var intent = _intent.TryGetValue(saleItemId, out var i) ? i : (Delivery: 0m, Pickup: 0m);
@@ -791,19 +664,10 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             var totals = TotalsFor(saleItemId, method);
             return methodIntent - totals.Pending - totals.Completed;
         }
-
-        /// <summary>In-memory consumption during a multi-schedule batch, so two schedules in the same
-        /// request cannot both claim the same units. Never persisted.</summary>
-        public void Consume(Guid saleItemId, FulfillmentMethod method, decimal quantity)
-        {
-            var totals = TotalsFor(saleItemId, method);
-            Raw[(saleItemId, method)] = totals with { Pending = totals.Pending + quantity };
-        }
     }
 
-    /// <summary>Builds the map from a specific set of sale lines. Allocating callers pass the rows
-    /// <see cref="LockSaleItemsAsync"/> just returned — the only intent snapshot that is guaranteed
-    /// current under the lock; read-only callers pass the sale's own loaded lines.</summary>
+    /// <summary>Builds the map from a specific set of sale lines, for <see cref="GetSaleFulfillmentAsync"/>'s
+    /// read-only summary.</summary>
     private async Task<AvailabilityMap> ComputeAvailabilityAsync(
         Guid tenantId, IReadOnlyCollection<SaleItem> saleItems, CancellationToken ct)
     {
@@ -828,39 +692,6 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             i => i.Id, i => (Delivery: i.DeliveryRequiredQuantity, Pickup: i.PickupRequiredQuantity));
 
         return new AvailabilityMap(intent, raw);
-    }
-
-    /// <summary>
-    /// Validates and resolves one schedule's requested lines against the (possibly already
-    /// batch-decremented) <paramref name="availability"/> map for <paramref name="method"/> — never trusts
-    /// the frontend's own available-quantity math. Every SaleItemId must belong to
-    /// <paramref name="saleItems"/> (same tenant and sale by construction, since that set is already
-    /// tenant/sale-scoped).
-    /// </summary>
-    private static IReadOnlyList<(SaleItem SaleItem, decimal Quantity)> ValidateAndResolveLines(
-        IReadOnlyCollection<SaleItem> saleItems, AvailabilityMap availability, FulfillmentMethod method,
-        IReadOnlyList<FulfillmentItemInput> items)
-    {
-        var pairs = new List<(SaleItem, decimal)>(items.Count);
-        foreach (var line in items)
-        {
-            var saleItem = saleItems.SingleOrDefault(i => i.Id == line.SaleItemId)
-                ?? throw new BusinessRuleException(ErrorCodes.InvalidSaleItem, "A schedule line refers to an item that is not on this sale.");
-
-            var available = availability.Available(saleItem.Id, method);
-            if (line.Quantity > available)
-            {
-                throw new BusinessRuleException(
-                    method == FulfillmentMethod.Pickup
-                        ? ErrorCodes.PickupQuantityExceedsAvailable
-                        : ErrorCodes.DeliveryQuantityExceedsAvailable,
-                    $"Only {available} of \"{saleItem.ProductNameSnapshot}\" is still available to schedule for {MethodNoun(method)}.");
-            }
-
-            pairs.Add((saleItem, line.Quantity));
-        }
-
-        return pairs;
     }
 
     private async Task<Sale> LoadFulfillableSaleAsync(Guid tenantId, Guid saleId, CancellationToken ct)

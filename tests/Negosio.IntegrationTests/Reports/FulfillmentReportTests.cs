@@ -74,11 +74,20 @@ public class FulfillmentReportTests : IntegrationTest
         return await SellAsync(branchId, sessionId, variantId, qty, deliveryRequiredQuantity, pickupRequiredQuantity, price, deliveryCharge);
     }
 
+    // NOTE (Task 2 of the whole-sale fulfillment simplification): CreateDeliveryReceiptRequest/
+    // CreatePickupRequest no longer carry an Items list or a per-request quantity — a create now always
+    // schedules 100% of whatever is currently earmarked for its method, and a sale has at most one
+    // ACTIVE schedule (of either method) at a time. These two helpers are updated only enough to keep
+    // this file compiling against the new contract shape; the `quantity` parameter is kept (but ignored)
+    // so call sites below don't all need editing here. The scenarios in this file that create both a
+    // Delivery AND a Pickup on the SAME sale, or multiple schedules on the same sale without an
+    // intervening cancel, are no longer reachable under the simplified model — full rework of this
+    // file's scenarios is Task 4's job (the combined per-allocation report), not this one's; see the
+    // NOTE on SellAsync below for the same deferral this file already carried before Task 2.
     private async Task<FulfillmentScheduleDto> CreateDeliveryAsync(Scene s, decimal quantity, DateOnly? date = null)
     {
         var response = await Client.PostAsJsonAsync($"/api/sales/{s.SaleId}/delivery-receipts",
-            new CreateDeliveryReceiptRequest(date ?? Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
-                new[] { new FulfillmentItemInput(s.SaleItemId, quantity) }));
+            new CreateDeliveryReceiptRequest(date ?? Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         return (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
     }
@@ -86,8 +95,7 @@ public class FulfillmentReportTests : IntegrationTest
     private async Task<FulfillmentScheduleDto> CreatePickupAsync(Scene s, decimal quantity, DateOnly? date = null)
     {
         var response = await Client.PostAsJsonAsync($"/api/sales/{s.SaleId}/pickups",
-            new CreatePickupRequest(date ?? Today, "Juan Dela Cruz", "0917 111 2222", null,
-                new[] { new FulfillmentItemInput(s.SaleItemId, quantity) }));
+            new CreatePickupRequest(date ?? Today, "Juan Dela Cruz", "0917 111 2222", null));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         return (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
     }

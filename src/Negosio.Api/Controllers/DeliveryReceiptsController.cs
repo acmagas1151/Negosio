@@ -53,12 +53,6 @@ public sealed class DeliveryReceiptsController : ControllerBase
         return Created($"/api/delivery-receipts/{created.Id}", created);
     }
 
-    [HttpPost("~/api/sales/{saleId:guid}/pickups/batch")]
-    [ProducesResponseType(typeof(FulfillmentBatchResultDto), StatusCodes.Status201Created)]
-    public async Task<ActionResult<FulfillmentBatchResultDto>> CreatePickupBatch(
-        Guid saleId, [FromBody] CreatePickupBatchRequest request, CancellationToken ct)
-        => Created(string.Empty, await _deliveryReceipts.CreatePickupBatchAsync(saleId, request, ct));
-
     // Narrower than the class-level SalesView — same policy as the delivery-side Cancel above.
     [HttpPost("~/api/pickups/{id:guid}/cancel")]
     [Authorize(Policy = AuthorizationPolicies.FulfillmentCancel)]

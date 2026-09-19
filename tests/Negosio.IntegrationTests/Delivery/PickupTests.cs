@@ -13,21 +13,21 @@ namespace Negosio.IntegrationTests.Delivery;
 /// Pickup is the third fulfillment method: quantity the customer collects at the branch after checkout.
 /// It shares the DeliveryReceipts table with Delivery (discriminated by <c>Method</c>) but keeps an
 /// entirely separate quantity pool, its own per-sale sequence numbering, and its own completion verb
-/// (claim, never deliver).
+/// (claim, never deliver). A sale has at most one active (non-Cancelled) schedule at a time, of either
+/// method — see Task 2 of the fulfillment-simplification plan.
 /// </summary>
 public class PickupTests : IntegrationTest
 {
     public PickupTests(NegosioApiFactory factory) : base(factory) { }
 
-    private sealed record Scene(Guid SaleId, Guid BranchId, Guid SaleItemId);
+    private sealed record Scene(Guid SaleId, Guid BranchId, Guid SaleItemId, decimal Quantity);
 
     private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
 
-    /// <summary>One completed sale whose single line carries <paramref name="deliveryRequiredQuantity"/>
-    /// of delivery intent and <paramref name="pickupRequiredQuantity"/> of pickup intent; the remainder is
-    /// take-now.</summary>
+    /// <summary>One completed sale whose single line is entirely earmarked for <paramref name="method"/> —
+    /// whole-sale intent, per Task 1.</summary>
     private async Task<Scene> ArrangeSaleAsync(
-        decimal qty = 10m, decimal deliveryRequiredQuantity = 0m, decimal pickupRequiredQuantity = 6m, decimal price = 100m)
+        decimal qty = 10m, FulfillmentMethod method = FulfillmentMethod.Pickup, decimal price = 100m)
     {
         var login = await RegisterLoginAndAuthorizeAsync();
         var branchId = await GetMainBranchIdAsync(login);
@@ -36,38 +36,31 @@ public class PickupTests : IntegrationTest
         var category = await CreateCategoryAsync();
         var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: price, openingStock: qty + 10m);
 
-        // The checkout call below only creates the SaleItem — its own Method/quantities are irrelevant
-        // because SetFulfillmentIntentAsync overwrites the item's actual delivery/pickup intent
-        // directly afterward (a test-only backdoor; see its doc comment in IntegrationTest.cs).
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
             new[] { new CheckoutItemInput(variantId, qty, null) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + 500m) }));
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + 500m) },
+            Method: method));
 
-        var saleItemId = sale.Items[0].SaleItemId;
-        await SetFulfillmentIntentAsync(saleItemId, deliveryRequiredQuantity, pickupRequiredQuantity);
-
-        return new Scene(sale.SaleId, branchId, saleItemId);
+        return new Scene(sale.SaleId, branchId, sale.Items[0].SaleItemId, qty);
     }
 
-    private static CreatePickupRequest PickupReq(Scene s, decimal quantity, DateOnly? date = null) => new(
-        date ?? Today, "Juan Dela Cruz", "0917 111 2222", "Collect at the counter",
-        new[] { new FulfillmentItemInput(s.SaleItemId, quantity) });
+    private static CreatePickupRequest PickupReq(DateOnly? date = null) => new(
+        date ?? Today, "Juan Dela Cruz", "0917 111 2222", "Collect at the counter");
 
-    private static CreateDeliveryReceiptRequest DeliveryReq(Scene s, decimal quantity, DateOnly? date = null) => new(
-        date ?? Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
-        new[] { new FulfillmentItemInput(s.SaleItemId, quantity) });
+    private static CreateDeliveryReceiptRequest DeliveryReq(DateOnly? date = null) => new(
+        date ?? Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null);
 
-    private async Task<FulfillmentScheduleDto> CreatePickupAsync(Scene s, decimal quantity, DateOnly? date = null)
+    private async Task<FulfillmentScheduleDto> CreatePickupAsync(Scene s, DateOnly? date = null)
     {
-        var response = await Client.PostAsJsonAsync($"/api/sales/{s.SaleId}/pickups", PickupReq(s, quantity, date));
+        var response = await Client.PostAsJsonAsync($"/api/sales/{s.SaleId}/pickups", PickupReq(date));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         return (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
     }
 
-    private async Task<FulfillmentScheduleDto> CreateDeliveryAsync(Scene s, decimal quantity)
+    private async Task<FulfillmentScheduleDto> CreateDeliveryAsync(Scene s, DateOnly? date = null)
     {
-        var response = await Client.PostAsJsonAsync($"/api/sales/{s.SaleId}/delivery-receipts", DeliveryReq(s, quantity));
+        var response = await Client.PostAsJsonAsync($"/api/sales/{s.SaleId}/delivery-receipts", DeliveryReq(date));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         return (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
     }
@@ -75,18 +68,25 @@ public class PickupTests : IntegrationTest
     private Task<SaleFulfillmentSummaryDto?> GetSummaryAsync(Scene s) =>
         Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>($"/api/sales/{s.SaleId}/fulfillment", TestJson.Options);
 
-    /// <summary>Sequence numbers are per-sale AND per-method, so a sale that already has "Delivery 1"
-    /// still names its first pickup "Pickup 1" — not "2". A pickup also never carries an address.</summary>
+    /// <summary>Sequence numbers are per-sale AND per-method: a sale whose delivery was created (and later
+    /// released) still names its first pickup "Pickup 1" — not "2". A pickup also never carries an
+    /// address. (A sale can have only one ACTIVE schedule at a time, so the delivery must be cancelled
+    /// before the pickup can be created; the test-only <c>SetFulfillmentIntentAsync</c> backdoor moves the
+    /// released quantity to pickup intent afterward, since real checkout is whole-sale-method and can
+    /// never itself produce a sale with both delivery and pickup history.)</summary>
     [Fact]
     public async Task Create_pickup_numbers_independently_of_deliveries_and_carries_no_address()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 3m, pickupRequiredQuantity: 5m);
-
-        var delivery = await CreateDeliveryAsync(scene, 3m);
+        var scene = await ArrangeSaleAsync(qty: 10m, method: FulfillmentMethod.Delivery);
+        var delivery = await CreateDeliveryAsync(scene);
         delivery.SequenceNumber.Should().Be(1);
         delivery.Method.Should().Be(FulfillmentMethod.Delivery);
 
-        var pickup = await CreatePickupAsync(scene, 4m);
+        await Client.PostAsJsonAsync($"/api/delivery-receipts/{delivery.Id}/cancel",
+            new CancelDeliveryRequest("Customer changed mind", CancellationDisposition.DeliverLater, null));
+        await SetFulfillmentIntentAsync(scene.SaleItemId, 0m, scene.Quantity);
+
+        var pickup = await CreatePickupAsync(scene);
 
         pickup.SequenceNumber.Should().Be(1); // NOT 2 — the two methods number separately
         pickup.Method.Should().Be(FulfillmentMethod.Pickup);
@@ -94,27 +94,27 @@ public class PickupTests : IntegrationTest
         pickup.DeliveryAddress.Should().BeNull();
         pickup.DeliveryCharge.Should().Be(0m);
         pickup.Items.Should().ContainSingle();
-        pickup.Items[0].Quantity.Should().Be(4m);
+        pickup.Items[0].Quantity.Should().Be(scene.Quantity);
     }
 
     [Fact]
-    public async Task Create_pickup_rejects_a_quantity_exceeding_what_remains_pickup_available()
+    public async Task Create_pickup_rejects_a_second_pickup_when_one_is_already_pending()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, pickupRequiredQuantity: 6m);
-        await CreatePickupAsync(scene, 4m); // 2 left
+        var scene = await ArrangeSaleAsync();
+        await CreatePickupAsync(scene);
 
-        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups", PickupReq(scene, 3m));
+        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups", PickupReq());
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     /// <summary>Delivery intent and pickup intent are two separate pools. Quantity marked for DELIVERY
     /// can never be scheduled as a pickup without an explicit conversion.</summary>
     [Fact]
-    public async Task Create_pickup_rejects_a_quantity_that_was_marked_for_delivery_not_pickup()
+    public async Task Create_pickup_is_rejected_when_nothing_is_marked_for_pickup()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m, pickupRequiredQuantity: 0m);
+        var scene = await ArrangeSaleAsync(qty: 10m, method: FulfillmentMethod.Delivery); // marked for delivery, not pickup
 
-        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups", PickupReq(scene, 1m));
+        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups", PickupReq());
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -122,7 +122,7 @@ public class PickupTests : IntegrationTest
     public async Task Mark_claimed_transitions_pending_to_completed_and_stamps_audit_fields()
     {
         var scene = await ArrangeSaleAsync();
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var pickup = await CreatePickupAsync(scene);
 
         var response = await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -137,7 +137,7 @@ public class PickupTests : IntegrationTest
     public async Task Mark_claimed_twice_is_rejected()
     {
         var scene = await ArrangeSaleAsync();
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var pickup = await CreatePickupAsync(scene);
         (await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null)).EnsureSuccessStatusCode();
 
         var response = await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null);
@@ -147,8 +147,8 @@ public class PickupTests : IntegrationTest
     [Fact]
     public async Task Marking_a_delivery_claimed_is_rejected()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 4m, pickupRequiredQuantity: 4m);
-        var delivery = await CreateDeliveryAsync(scene, 4m);
+        var scene = await ArrangeSaleAsync(qty: 10m, method: FulfillmentMethod.Delivery);
+        var delivery = await CreateDeliveryAsync(scene);
 
         var response = await Client.PostAsync($"/api/delivery-receipts/{delivery.Id}/claim", null);
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -158,7 +158,7 @@ public class PickupTests : IntegrationTest
     public async Task Marking_a_pickup_delivered_is_rejected()
     {
         var scene = await ArrangeSaleAsync();
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var pickup = await CreatePickupAsync(scene);
 
         var response = await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/deliver", null);
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -170,7 +170,7 @@ public class PickupTests : IntegrationTest
     public async Task A_claimed_pickup_cannot_be_cancelled()
     {
         var scene = await ArrangeSaleAsync();
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var pickup = await CreatePickupAsync(scene);
         (await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null)).EnsureSuccessStatusCode();
 
         var response = await Client.PostAsJsonAsync($"/api/pickups/{pickup.Id}/cancel",
@@ -181,24 +181,25 @@ public class PickupTests : IntegrationTest
     [Fact]
     public async Task Claimed_quantity_is_no_longer_available_to_schedule()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, pickupRequiredQuantity: 6m);
-        var pickup = await CreatePickupAsync(scene, 6m);
+        var scene = await ArrangeSaleAsync(qty: 10m);
+        var pickup = await CreatePickupAsync(scene);
 
         var beforeClaim = await GetSummaryAsync(scene);
-        beforeClaim!.Items[0].PickupPendingQuantity.Should().Be(6m);
+        beforeClaim!.Items[0].PickupPendingQuantity.Should().Be(scene.Quantity);
         beforeClaim.Items[0].PickupUnscheduledQuantity.Should().Be(0m);
         beforeClaim.CanCreatePickup.Should().BeFalse();
 
         (await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null)).EnsureSuccessStatusCode();
 
         var afterClaim = await GetSummaryAsync(scene);
-        afterClaim!.Items[0].ClaimedQuantity.Should().Be(6m);
+        afterClaim!.Items[0].ClaimedQuantity.Should().Be(scene.Quantity);
         afterClaim.Items[0].PickupPendingQuantity.Should().Be(0m);
         afterClaim.Items[0].PickupUnscheduledQuantity.Should().Be(0m); // claimed is consumed, not released
         afterClaim.CanCreatePickup.Should().BeFalse();
 
-        // And the API agrees: re-scheduling the claimed units is rejected.
-        (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups", PickupReq(scene, 1m)))
+        // And the API agrees: re-scheduling is rejected — the schedule is Completed (not Cancelled), so
+        // the one-active-schedule guard still blocks a second create.
+        (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups", PickupReq()))
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -216,8 +217,8 @@ public class PickupTests : IntegrationTest
     [Fact]
     public async Task Cashier_may_claim_a_pickup_but_not_cancel_it()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var scene = await ArrangeSaleAsync();
+        var pickup = await CreatePickupAsync(scene);
         Authorize(await AddTenantUserTokenAsync("pickup-cashier@example.com", UserRole.Cashier, scene.BranchId));
 
         (await Client.PostAsync($"/api/delivery-receipts/{pickup.Id}/claim", null))
@@ -227,8 +228,8 @@ public class PickupTests : IntegrationTest
     [Fact]
     public async Task Cashier_cannot_cancel_a_pickup()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 6m);
-        var pickup = await CreatePickupAsync(scene, 4m);
+        var scene = await ArrangeSaleAsync();
+        var pickup = await CreatePickupAsync(scene);
         Authorize(await AddTenantUserTokenAsync("pickup-cashier2@example.com", UserRole.Cashier, scene.BranchId));
 
         var response = await Client.PostAsJsonAsync($"/api/pickups/{pickup.Id}/cancel",

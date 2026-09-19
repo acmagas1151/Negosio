@@ -2,42 +2,27 @@ using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Delivery;
 
-// ---- Shared line input ----
-
-public sealed record FulfillmentItemInput(Guid SaleItemId, decimal Quantity);
-
 // ---- Create (delivery) ----
 
-/// <summary>One delivery schedule. Used standalone and as an entry of a checkout batch.</summary>
+/// <summary>One delivery schedule. Covers every sale item currently earmarked for delivery, at each
+/// item's full <c>DeliveryRequiredQuantity</c> — there is no per-line selection any more; a sale has at
+/// most one active (non-Cancelled) delivery or pickup schedule at a time.</summary>
 public sealed record CreateDeliveryReceiptRequest(
     DateOnly ScheduledDate,
     string RecipientName,
     string DeliveryAddress,
     string? ContactNumber,
-    string? Notes,
-    IReadOnlyList<FulfillmentItemInput> Items);
-
-public sealed record CreateDeliveryReceiptBatchRequest(
-    Guid BatchRequestId,
-    IReadOnlyList<CreateDeliveryReceiptRequest> Schedules);
+    string? Notes);
 
 // ---- Create (pickup) ----
 
-/// <summary>One pickup schedule. No address — a pickup transports nothing.</summary>
+/// <summary>One pickup schedule. No address — a pickup transports nothing. Covers every sale item
+/// currently earmarked for pickup, at each item's full <c>PickupRequiredQuantity</c>.</summary>
 public sealed record CreatePickupRequest(
     DateOnly ScheduledDate,
     string RecipientName,
     string? ContactNumber,
-    string? Notes,
-    IReadOnlyList<FulfillmentItemInput> Items);
-
-public sealed record CreatePickupBatchRequest(
-    Guid BatchRequestId,
-    IReadOnlyList<CreatePickupRequest> Schedules);
-
-public sealed record FulfillmentBatchResultDto(
-    IReadOnlyList<FulfillmentScheduleDto> Created,
-    bool WasExistingBatch);
+    string? Notes);
 
 // ---- Cancellation with disposition ----
 
@@ -205,10 +190,8 @@ public sealed record SaleFulfillmentSummaryDto(
 
 public interface IDeliveryReceiptService
 {
-    Task<FulfillmentBatchResultDto> CreateDeliveryBatchAsync(Guid saleId, CreateDeliveryReceiptBatchRequest request, CancellationToken ct = default);
     Task<FulfillmentScheduleDto> CreateDeliveryAsync(Guid saleId, CreateDeliveryReceiptRequest request, CancellationToken ct = default);
 
-    Task<FulfillmentBatchResultDto> CreatePickupBatchAsync(Guid saleId, CreatePickupBatchRequest request, CancellationToken ct = default);
     Task<FulfillmentScheduleDto> CreatePickupAsync(Guid saleId, CreatePickupRequest request, CancellationToken ct = default);
 
     Task<IReadOnlyList<FulfillmentScheduleDto>> ListForSaleAsync(Guid saleId, CancellationToken ct = default);

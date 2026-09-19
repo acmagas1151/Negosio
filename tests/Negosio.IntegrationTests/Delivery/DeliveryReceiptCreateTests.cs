@@ -11,17 +11,25 @@ using Xunit;
 
 namespace Negosio.IntegrationTests.Delivery;
 
+/// <summary>
+/// Creating a schedule is now whole-sale: a sale has at most one active (non-Cancelled) schedule, of
+/// either method, at a time, and that schedule always covers every item currently earmarked for its
+/// method at that item's full required quantity. There is no per-line selection, no partial allocation,
+/// and no batch endpoint any more — see the plan's Task 2 for the simplification this file exercises.
+/// </summary>
 public class DeliveryReceiptCreateTests : IntegrationTest
 {
     public DeliveryReceiptCreateTests(NegosioApiFactory factory) : base(factory) { }
 
-    private sealed record Scene(Guid SaleId, string SaleNumber, Guid SaleItemId, decimal DeliveryRequiredQuantity);
+    private sealed record Scene(Guid SaleId, string SaleNumber, Guid SaleItemId, decimal Quantity);
 
     private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
 
-    /// <summary>One completed sale with <paramref name="deliveryRequiredQuantity"/> of its single line
-    /// marked for delivery; the rest stays Take-now.</summary>
-    private async Task<Scene> ArrangeSaleAsync(decimal qty = 10m, decimal deliveryRequiredQuantity = 6m, decimal price = 100m)
+    /// <summary>One completed sale whose single line is entirely earmarked for <paramref name="method"/>
+    /// (or entirely take-now, when <paramref name="method"/> is <see cref="FulfillmentMethod.TakeNow"/>) —
+    /// whole-sale intent, per Task 1.</summary>
+    private async Task<Scene> ArrangeSaleAsync(
+        decimal qty = 10m, FulfillmentMethod method = FulfillmentMethod.Delivery, decimal price = 100m)
     {
         var login = await RegisterLoginAndAuthorizeAsync();
         var branchId = await GetMainBranchIdAsync(login);
@@ -34,21 +42,23 @@ public class DeliveryReceiptCreateTests : IntegrationTest
             branchId, session.Id, Guid.NewGuid(),
             new[] { new CheckoutItemInput(variantId, qty, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + 500m) },
-            Method: deliveryRequiredQuantity > 0m ? FulfillmentMethod.Delivery : FulfillmentMethod.TakeNow));
+            Method: method));
 
-        return new Scene(sale.SaleId, sale.SaleNumber, sale.Items[0].SaleItemId, deliveryRequiredQuantity);
+        return new Scene(sale.SaleId, sale.SaleNumber, sale.Items[0].SaleItemId, qty);
     }
 
-    private static CreateDeliveryReceiptRequest Req(Scene s, decimal quantity, DateOnly? date = null) => new(
-        date ?? Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", "0917 111 2222", "Leave at guardhouse",
-        new[] { new FulfillmentItemInput(s.SaleItemId, quantity) });
+    private static CreateDeliveryReceiptRequest Req(DateOnly? date = null) => new(
+        date ?? Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", "0917 111 2222", "Leave at guardhouse");
+
+    private static CreatePickupRequest PickupReq(DateOnly? date = null) => new(
+        date ?? Today, "Juan Dela Cruz", "0917 111 2222", null);
 
     [Fact]
-    public async Task Create_persists_a_pending_schedule_with_only_its_own_assigned_items()
+    public async Task Create_persists_a_pending_schedule_covering_the_full_delivery_required_quantity()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
+        var scene = await ArrangeSaleAsync(qty: 10m);
 
-        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m));
+        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req());
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var dr = (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
@@ -58,37 +68,30 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         dr.RelatedSaleNumber.Should().Be(scene.SaleNumber);
         dr.Items.Should().ContainSingle();
         dr.Items[0].SaleItemId.Should().Be(scene.SaleItemId);
-        dr.Items[0].Quantity.Should().Be(4m); // not the full sale quantity — a partial delivery
+        dr.Items[0].Quantity.Should().Be(scene.Quantity); // the whole line, never a subset
     }
 
     [Fact]
-    public async Task Second_schedule_for_the_same_sale_gets_sequence_number_two()
+    public async Task Rescheduling_after_a_cancel_gets_sequence_number_two()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m));
+        var scene = await ArrangeSaleAsync();
+        var first = (await (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req()))
+            .Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
+        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel",
+            new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null));
 
-        var second = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 2m));
+        var second = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req());
         var dr = (await second.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         dr.SequenceNumber.Should().Be(2);
     }
 
     [Fact]
-    public async Task Create_rejects_a_quantity_exceeding_what_remains_available_to_schedule()
+    public async Task Create_rejects_scheduling_when_nothing_is_marked_for_delivery()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m)); // 2 left available
+        var scene = await ArrangeSaleAsync(qty: 10m, method: FulfillmentMethod.TakeNow); // entirely Take-now
 
-        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 3m));
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
-
-    [Fact]
-    public async Task Create_rejects_scheduling_a_quantity_that_was_never_marked_for_delivery()
-    {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m); // entirely Take-now
-
-        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 1m));
+        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req());
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -97,32 +100,8 @@ public class DeliveryReceiptCreateTests : IntegrationTest
     {
         var scene = await ArrangeSaleAsync();
         (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts",
-            new CreateDeliveryReceiptRequest(Today, "  ", "123 Ayala Ave", null, null,
-                new[] { new FulfillmentItemInput(scene.SaleItemId, 1m) })))
+            new CreateDeliveryReceiptRequest(Today, "  ", "123 Ayala Ave", null, null)))
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
-
-    [Fact]
-    public async Task Create_rejects_an_empty_item_list()
-    {
-        var scene = await ArrangeSaleAsync();
-        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts",
-            new CreateDeliveryReceiptRequest(Today, "Juan", "123 Ayala Ave", null, null,
-                Array.Empty<FulfillmentItemInput>()));
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
-
-    [Fact]
-    public async Task Create_rejects_duplicate_sale_item_within_one_delivery()
-    {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts",
-            new CreateDeliveryReceiptRequest(Today, "Juan", "123 Ayala Ave", null, null, new[]
-            {
-                new FulfillmentItemInput(scene.SaleItemId, 2m),
-                new FulfillmentItemInput(scene.SaleItemId, 2m),
-            }));
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -130,7 +109,7 @@ public class DeliveryReceiptCreateTests : IntegrationTest
     {
         var scene = await ArrangeSaleAsync();
         var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts",
-            Req(scene, 1m, Today.AddDays(-1)));
+            Req(Today.AddDays(-1)));
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -140,118 +119,19 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         var scene = await ArrangeSaleAsync();
         (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/void", new VoidSaleRequest("test"))).EnsureSuccessStatusCode();
 
-        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 1m));
+        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req());
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
-
-    [Fact]
-    public async Task Batch_creates_every_schedule_with_ascending_sequence_numbers()
-    {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var batchId = Guid.NewGuid();
-
-        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts/batch",
-            new CreateDeliveryReceiptBatchRequest(batchId, new[]
-            {
-                Req(scene, 4m),
-                Req(scene, 2m, Today.AddDays(1)),
-            }));
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var result = (await response.Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options))!;
-
-        result.WasExistingBatch.Should().BeFalse();
-        result.Created.Should().HaveCount(2);
-        result.Created.Select(d => d.SequenceNumber).Should().BeEquivalentTo(new[] { 1, 2 });
-    }
-
-    [Fact]
-    public async Task Batch_rejects_two_schedules_that_together_over_allocate_the_same_sale_item()
-    {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-
-        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts/batch",
-            new CreateDeliveryReceiptBatchRequest(Guid.NewGuid(), new[] { Req(scene, 4m), Req(scene, 3m) })); // 4+3 > 6
-
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-
-        await InScopeAsync(async db =>
-        {
-            (await db.DeliveryReceipts.CountAsync(d => d.SaleId == scene.SaleId)).Should().Be(0); // nothing partially applied
-            return true;
-        });
-    }
-
-    // Final whole-branch review, Finding 3: the batch idempotency fast path used to run BEFORE
-    // LoadDeliverableSaleAsync (and therefore before GuardBranchAsync). A branch-scoped caller who
-    // knew both a foreign SaleId and the exact BatchRequestId originally used against it could hit
-    // the fast path and receive that batch's full FulfillmentScheduleDto rows without ever being
-    // branch-checked. The fix reorders CreateBatchAsync so the branch guard always runs first.
-    [Fact]
-    public async Task Batch_fast_path_never_bypasses_the_branch_guard_for_a_known_BatchRequestId()
-    {
-        var owner = await RegisterLoginAndAuthorizeAsync();
-        var mainId = await GetMainBranchIdAsync(owner);
-        var bgc = await CreateBranchAsync("BGC", "BGC");
-        var register = await CreateRegisterAsync(mainId);
-        var session = await OpenSessionAsync(register.Id);
-        var category = await CreateCategoryAsync();
-        var (_, variantId) = await SeedStockedProductAsync(mainId, category.Id, sellingPrice: 100m, openingStock: 20m);
-
-        var sale = await CheckoutOkAsync(new CheckoutRequest(
-            mainId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, 10m, null) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) },
-            Method: FulfillmentMethod.Delivery));
-
-        var batchId = Guid.NewGuid();
-        var request = new CreateDeliveryReceiptBatchRequest(batchId, new[]
-        {
-            new CreateDeliveryReceiptRequest(Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
-                new[] { new FulfillmentItemInput(sale.Items[0].SaleItemId, 4m) }),
-        });
-
-        // Owner (unrestricted) creates the real batch at MAIN first.
-        var original = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts/batch", request);
-        original.StatusCode.Should().Be(HttpStatusCode.Created);
-
-        // A cashier scoped to a DIFFERENT branch somehow learns this exact SaleId + BatchRequestId and
-        // replays the identical request. Before the fix, this hit the pre-guard fast path and returned
-        // MAIN's FulfillmentScheduleDto rows (recipient, address, delivery charge, etc.) as a 201 without
-        // ever passing GuardBranchAsync. It must now be rejected as if the sale doesn't exist.
-        var bgcCashierToken = await AddTenantUserTokenAsync("bgc.cashier@example.com", UserRole.Cashier, bgc.Id);
-        Authorize(bgcCashierToken);
-
-        var replay = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts/batch", request);
-        replay.StatusCode.Should().Be(HttpStatusCode.NotFound);
-    }
-
-    [Fact]
-    public async Task Retrying_the_same_BatchRequestId_returns_the_original_rows_without_duplicating()
-    {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var request = new CreateDeliveryReceiptBatchRequest(Guid.NewGuid(), new[] { Req(scene, 4m) });
-
-        var first = await (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts/batch", request))
-            .Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options);
-        var second = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts/batch", request);
-        var secondDto = (await second.Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options))!;
-
-        secondDto.WasExistingBatch.Should().BeTrue();
-        secondDto.Created.Single().Id.Should().Be(first!.Created.Single().Id);
-
-        await InScopeAsync(async db =>
-        {
-            (await db.DeliveryReceipts.CountAsync(d => d.SaleId == scene.SaleId)).Should().Be(1);
-            return true;
-        });
     }
 
     [Fact]
     public async Task List_for_sale_returns_every_schedule_ordered_by_sequence_number()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m));
-        await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 2m));
+        var scene = await ArrangeSaleAsync();
+        var first = (await (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req()))
+            .Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
+        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel",
+            new CancelDeliveryRequest("Reschedule", CancellationDisposition.DeliverLater, null));
+        await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req());
 
         var list = await Client.GetFromJsonAsync<List<FulfillmentScheduleDto>>(
             $"/api/sales/{scene.SaleId}/delivery-receipts", TestJson.Options);
@@ -264,8 +144,8 @@ public class DeliveryReceiptCreateTests : IntegrationTest
     [Fact]
     public async Task Get_by_id_returns_a_stable_snapshot_after_a_catalog_rename()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        var dr = (await (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m)))
+        var scene = await ArrangeSaleAsync();
+        var dr = (await (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req()))
             .Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         var productName = dr.Items[0].ProductName;
@@ -286,35 +166,26 @@ public class DeliveryReceiptCreateTests : IntegrationTest
     }
 
     [Fact]
-    public async Task Fulfillment_summary_reflects_partial_scheduling_and_gates_CanCreateDelivery()
+    public async Task Fulfillment_summary_reflects_a_created_schedule_and_gates_CanCreateDelivery()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m);
-        await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 4m));
+        var scene = await ArrangeSaleAsync(qty: 10m);
+        await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req());
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
 
         summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.AwaitingDelivery);
-        summary.CanCreateDelivery.Should().BeTrue(); // 2 units still available
-        summary.Items[0].DeliveryPendingQuantity.Should().Be(4m);
-        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(2m);
-
-        await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req(scene, 2m));
-        var full = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
-            $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
-        full!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.AwaitingDelivery);
-        full.CanCreateDelivery.Should().BeFalse();
+        summary.CanCreateDelivery.Should().BeFalse(); // a create now schedules 100% in one shot
+        summary.Items[0].DeliveryPendingQuantity.Should().Be(10m);
+        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(0m);
     }
 
     /// <summary>The most common real call: opening a sale's fulfillment summary before anything has been
-    /// scheduled. The per-sale-item allocation map only has keys for items that already appear on some
-    /// delivery, so this path must tolerate a missing key rather than throwing — the other two summary
-    /// tests both fetch after a delivery exists, or with nothing marked for delivery at all (empty item
-    /// list), so neither of them reaches the lookup with an unscheduled item.</summary>
+    /// scheduled.</summary>
     [Fact]
     public async Task Fulfillment_summary_for_a_sale_with_no_deliveries_yet_reports_NeedsScheduling()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 6m); // no deliveries created
+        var scene = await ArrangeSaleAsync(qty: 10m); // no deliveries created
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
@@ -324,18 +195,85 @@ public class DeliveryReceiptCreateTests : IntegrationTest
         summary.Items.Should().ContainSingle();
         summary.Items[0].DeliveryPendingQuantity.Should().Be(0m);
         summary.Items[0].DeliveredQuantity.Should().Be(0m);
-        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(6m);
+        summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(10m);
     }
 
     [Fact]
     public async Task A_sale_with_nothing_marked_for_delivery_reports_NotApplicable()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m);
+        var scene = await ArrangeSaleAsync(qty: 10m, method: FulfillmentMethod.TakeNow);
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
 
         summary!.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.NotApplicable);
         summary.CanCreateDelivery.Should().BeFalse();
+    }
+
+    // ---- The simplified one-active-schedule invariant (spec's backend acceptance criteria) ----
+
+    [Fact]
+    public async Task Creating_a_pickup_when_an_active_delivery_already_exists_is_rejected()
+    {
+        var scene = await ArrangeSaleAsync();
+        (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req()))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups", PickupReq());
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        await InScopeAsync(async db =>
+        {
+            (await db.DeliveryReceipts.CountAsync(d => d.SaleId == scene.SaleId && d.Method == FulfillmentMethod.Pickup))
+                .Should().Be(0);
+            return true;
+        });
+    }
+
+    [Fact]
+    public async Task Creating_a_second_delivery_when_one_is_already_pending_is_rejected()
+    {
+        var scene = await ArrangeSaleAsync();
+        (await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req()))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var response = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", Req());
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        await InScopeAsync(async db =>
+        {
+            (await db.DeliveryReceipts.CountAsync(d => d.SaleId == scene.SaleId)).Should().Be(1);
+            return true;
+        });
+    }
+
+    [Fact]
+    public async Task A_new_delivery_covers_every_item_on_the_sale_at_full_quantity()
+    {
+        var login = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(login);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId1) = await SeedStockedProductAsync(branchId, category.Id, sku: "SKU-A", sellingPrice: 100m, openingStock: 20m);
+        var (_, variantId2) = await SeedStockedProductAsync(branchId, category.Id, sku: "SKU-B", sellingPrice: 50m, openingStock: 20m);
+
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[]
+            {
+                new CheckoutItemInput(variantId1, 4m, null),
+                new CheckoutItemInput(variantId2, 6m, null),
+            },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) },
+            Method: FulfillmentMethod.Delivery));
+
+        var response = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts", Req());
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var dr = (await response.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
+
+        dr.Items.Should().HaveCount(2); // every sale item, not a subset
+        dr.Items.Should().Contain(i => i.SaleItemId == sale.Items[0].SaleItemId && i.Quantity == 4m);
+        dr.Items.Should().Contain(i => i.SaleItemId == sale.Items[1].SaleItemId && i.Quantity == 6m);
     }
 }

@@ -87,12 +87,6 @@ public sealed class SalesController : ControllerBase
         return Created($"/api/delivery-receipts/{created.Id}", created);
     }
 
-    [HttpPost("{id:guid}/delivery-receipts/batch")]
-    [ProducesResponseType(typeof(FulfillmentBatchResultDto), StatusCodes.Status201Created)]
-    public async Task<ActionResult<FulfillmentBatchResultDto>> CreateDeliveryReceiptBatch(
-        Guid id, [FromBody] CreateDeliveryReceiptBatchRequest request, CancellationToken ct)
-        => Created(string.Empty, await _deliveryReceipts.CreateDeliveryBatchAsync(id, request, ct));
-
     // No policy override — the controller's class-level SalesView already restricts this to
     // Owner/Admin/Manager/Cashier, which is exactly the void-participating role set;
     // InventoryStaff/Viewer/KitchenStaff never reach the action method at all.

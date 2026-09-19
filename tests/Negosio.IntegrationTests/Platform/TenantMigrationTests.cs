@@ -85,8 +85,7 @@ public class TenantMigrationTests : IntegrationTest
 
         var created = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
             new Negosio.Application.Delivery.CreateDeliveryReceiptRequest(
-                DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8)), "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
-                new[] { new Negosio.Application.Delivery.FulfillmentItemInput(saleItemId, 4m) }));
+                DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8)), "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null));
         created.EnsureSuccessStatusCode();
         var dr = (await created.Content.ReadFromJsonAsync<Negosio.Application.Delivery.FulfillmentScheduleDto>(TestJson.Options))!;
         (await Client.PostAsync($"/api/delivery-receipts/{dr.Id}/deliver", null)).EnsureSuccessStatusCode();
@@ -113,8 +112,8 @@ public class TenantMigrationTests : IntegrationTest
         {
             var saleItem = await db.SaleItems.AsNoTracking().SingleAsync(i => i.Id == saleItemId);
             saleItem.PickupRequiredQuantity.Should().Be(0m); // new column defaults to zero, not a guess
-            saleItem.DeliveryRequiredQuantity.Should().Be(6m); // untouched by the round trip
-            saleItem.TakeNowQuantity.Should().Be(4m);
+            saleItem.DeliveryRequiredQuantity.Should().Be(10m); // untouched by the round trip — whole-sale intent
+            saleItem.TakeNowQuantity.Should().Be(0m);
 
             var receipt = await db.DeliveryReceipts.AsNoTracking().SingleAsync(d => d.Id == dr.Id);
             receipt.Method.Should().Be(FulfillmentMethod.Delivery); // correctly defaulted for a pre-existing row

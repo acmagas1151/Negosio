@@ -27,18 +27,11 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         return request;
     }
 
-    private sealed record Scene(Guid SaleId, Guid SaleItemId, string Token);
+    private sealed record Scene(Guid SaleId, Guid SaleItemId, decimal Quantity, string Token);
 
-    /// <summary>
-    /// One completed sale whose single line carries <paramref name="deliveryRequiredQuantity"/> of
-    /// delivery intent (set directly at checkout, as before) and, when non-zero,
-    /// <paramref name="pickupRequiredQuantity"/> of pickup intent — set via the same test-only raw-SQL
-    /// backdoor <c>PickupTests</c> uses, since checkout cannot yet allocate a pickup quantity itself.
-    /// Existing callers that never pass <paramref name="pickupRequiredQuantity"/> are unaffected: the
-    /// backdoor is skipped entirely when it is zero, so the four pre-Task-11 tests below see no
-    /// behavioral change.
-    /// </summary>
-    private async Task<Scene> ArrangeSaleAsync(decimal qty = 10m, decimal deliveryRequiredQuantity = 4m, decimal pickupRequiredQuantity = 0m)
+    /// <summary>One completed sale whose single line is entirely earmarked for <paramref name="method"/> —
+    /// whole-sale intent, per Task 1.</summary>
+    private async Task<Scene> ArrangeSaleAsync(decimal qty = 10m, FulfillmentMethod method = FulfillmentMethod.Delivery)
     {
         var owner = await RegisterLoginAndAuthorizeAsync();
         var branchId = await GetMainBranchIdAsync(owner);
@@ -51,32 +44,24 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
             branchId, session.Id, Guid.NewGuid(),
             new[] { new CheckoutItemInput(variantId, qty, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) },
-            Method: deliveryRequiredQuantity > 0m ? FulfillmentMethod.Delivery : FulfillmentMethod.TakeNow));
+            Method: method));
 
-        var saleItemId = sale.Items[0].SaleItemId;
-        if (pickupRequiredQuantity > 0m)
-        {
-            await SetFulfillmentIntentAsync(saleItemId, deliveryRequiredQuantity, pickupRequiredQuantity);
-        }
-
-        return new Scene(sale.SaleId, saleItemId, owner.AccessToken);
+        return new Scene(sale.SaleId, sale.Items[0].SaleItemId, qty, owner.AccessToken);
     }
 
-    private static CreateDeliveryReceiptRequest FullyClaimingRequest(Scene s, decimal quantity) => new(
-        Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
-        new[] { new FulfillmentItemInput(s.SaleItemId, quantity) });
+    private static CreateDeliveryReceiptRequest DeliveryReq() => new(
+        Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null);
 
-    private static CreatePickupRequest FullyClaimingPickupRequest(Scene s, decimal quantity) => new(
-        Today, "Juan Dela Cruz", "0917 111 2222", null,
-        new[] { new FulfillmentItemInput(s.SaleItemId, quantity) });
+    private static CreatePickupRequest PickupReq() => new(
+        Today, "Juan Dela Cruz", "0917 111 2222", null);
 
     [Fact]
-    public async Task Two_concurrent_creates_claiming_the_same_last_units_only_one_succeeds()
+    public async Task Two_concurrent_creates_on_the_same_sale_only_one_succeeds()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 4m);
+        var scene = await ArrangeSaleAsync();
 
         HttpRequestMessage CreateRequest() => AuthorizedRequest(
-            HttpMethod.Post, $"/api/sales/{scene.SaleId}/delivery-receipts", scene.Token, FullyClaimingRequest(scene, 4m));
+            HttpMethod.Post, $"/api/sales/{scene.SaleId}/delivery-receipts", scene.Token, DeliveryReq());
 
         var results = await Task.WhenAll(Client.SendAsync(CreateRequest()), Client.SendAsync(CreateRequest()));
 
@@ -85,21 +70,21 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
-        summary!.Items[0].DeliveryPendingQuantity.Should().Be(4m); // never over-allocated past what was ever delivery-required
+        summary!.Items[0].DeliveryPendingQuantity.Should().Be(scene.Quantity); // never duplicated
         summary.Items[0].DeliveryUnscheduledQuantity.Should().Be(0m);
     }
 
     [Fact]
-    public async Task Rescheduling_after_a_cancel_races_correctly_against_a_second_claim_of_the_released_quantity()
+    public async Task Rescheduling_after_a_cancel_races_correctly_against_a_second_create()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 4m);
-        var firstResponse = await Client.PostAsJsonAsync(
-            $"/api/sales/{scene.SaleId}/delivery-receipts", FullyClaimingRequest(scene, 4m));
+        var scene = await ArrangeSaleAsync();
+        var firstResponse = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", DeliveryReq());
         var first = (await firstResponse.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
-        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel", new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null));
+        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel",
+            new CancelDeliveryRequest("Wrong address", CancellationDisposition.DeliverLater, null));
 
         HttpRequestMessage CreateRequest() => AuthorizedRequest(
-            HttpMethod.Post, $"/api/sales/{scene.SaleId}/delivery-receipts", scene.Token, FullyClaimingRequest(scene, 4m));
+            HttpMethod.Post, $"/api/sales/{scene.SaleId}/delivery-receipts", scene.Token, DeliveryReq());
 
         var results = await Task.WhenAll(Client.SendAsync(CreateRequest()), Client.SendAsync(CreateRequest()));
 
@@ -111,7 +96,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
     public async Task Two_concurrent_mark_delivered_calls_on_the_same_delivery_only_one_succeeds()
     {
         var scene = await ArrangeSaleAsync();
-        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", FullyClaimingRequest(scene, 4m));
+        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", DeliveryReq());
         var dr = (await created.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         HttpRequestMessage DeliverRequest() => AuthorizedRequest(HttpMethod.Post, $"/api/delivery-receipts/{dr.Id}/deliver", scene.Token);
@@ -129,7 +114,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
     public async Task Concurrent_mark_delivered_and_cancel_on_the_same_delivery_never_both_succeed()
     {
         var scene = await ArrangeSaleAsync();
-        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", FullyClaimingRequest(scene, 4m));
+        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", DeliveryReq());
         var dr = (await created.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         var deliverTask = Client.SendAsync(AuthorizedRequest(HttpMethod.Post, $"/api/delivery-receipts/{dr.Id}/deliver", scene.Token));
@@ -161,8 +146,8 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
     [Fact]
     public async Task Concurrent_mark_claimed_and_cancel_on_the_same_pickup_never_both_succeed()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 4m);
-        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups", FullyClaimingPickupRequest(scene, 4m));
+        var scene = await ArrangeSaleAsync(method: FulfillmentMethod.Pickup);
+        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups", PickupReq());
         var pickup = (await created.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         var claimTask = Client.SendAsync(AuthorizedRequest(HttpMethod.Post, $"/api/delivery-receipts/{pickup.Id}/claim", scene.Token));
@@ -189,49 +174,24 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         }
     }
 
-    // Controller addendum (Task 9 review gap): the post-lock batch-idempotency re-check — added
-    // mid-Task-9 because a unique index can't coexist with a batch writing N rows sharing one
-    // BatchRequestId — has no test proving it survives a genuine concurrent race until this one.
-    [Fact]
-    public async Task Two_concurrent_batch_creates_with_the_same_BatchRequestId_only_one_set_of_rows_persists()
-    {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 4m);
-        var batchId = Guid.NewGuid();
-        var batchRequest = new CreateDeliveryReceiptBatchRequest(batchId, new[] { FullyClaimingRequest(scene, 4m) });
-
-        HttpRequestMessage BatchRequest() => AuthorizedRequest(
-            HttpMethod.Post, $"/api/sales/{scene.SaleId}/delivery-receipts/batch", scene.Token, batchRequest);
-
-        var results = await Task.WhenAll(Client.SendAsync(BatchRequest()), Client.SendAsync(BatchRequest()));
-
-        // Both responses must succeed (idempotent — a retry is never an error) and describe the SAME
-        // underlying batch, whether one raced ahead as the "real" creator or the other found it already
-        // committed via the post-lock re-check.
-        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.Created);
-        var bodies = await Task.WhenAll(results.Select(r => r.Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options)));
-        bodies[0]!.Created.Single().Id.Should().Be(bodies[1]!.Created.Single().Id);
-
-        await InScopeAsync(async db =>
-        {
-            (await db.DeliveryReceipts.CountAsync(d => d.SaleId == scene.SaleId)).Should().Be(1); // never duplicated
-            return true;
-        });
-    }
-
     // ================================================================================================
     // Task 11 — concurrency and idempotency coverage for the pickup and conversion paths.
+    // (Adapted for Task 2 of the fulfillment-simplification plan: a sale now has at most one active
+    // schedule of either method, so every "claiming the same last units" scenario below is re-expressed
+    // as "only one of N concurrent creates on the same sale ever succeeds", rather than partial
+    // over-allocation of a shared quantity pool.)
     // ================================================================================================
 
-    // Scenario 1 (brief): concurrent pickup creation cannot over-allocate. The pickup-side mirror of
-    // Two_concurrent_creates_claiming_the_same_last_units_only_one_succeeds above — same UPDLOCK/HOLDLOCK
+    // Scenario 1 (brief): concurrent pickup creation cannot double-book the same sale. The pickup-side
+    // mirror of Two_concurrent_creates_on_the_same_sale_only_one_succeeds above — same UPDLOCK/HOLDLOCK
     // path, exercised through the pickup endpoints instead of the delivery ones.
     [Fact]
-    public async Task Two_concurrent_pickup_creates_claiming_the_same_last_units_only_one_succeeds()
+    public async Task Two_concurrent_pickup_creates_on_the_same_sale_only_one_succeeds()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 4m);
+        var scene = await ArrangeSaleAsync(method: FulfillmentMethod.Pickup);
 
         HttpRequestMessage CreateRequest() => AuthorizedRequest(
-            HttpMethod.Post, $"/api/sales/{scene.SaleId}/pickups", scene.Token, FullyClaimingPickupRequest(scene, 4m));
+            HttpMethod.Post, $"/api/sales/{scene.SaleId}/pickups", scene.Token, PickupReq());
 
         var results = await Task.WhenAll(Client.SendAsync(CreateRequest()), Client.SendAsync(CreateRequest()));
 
@@ -240,34 +200,27 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
         var loser = results.Single(r => r.StatusCode == HttpStatusCode.BadRequest);
         var error = await loser.Content.ReadFromJsonAsync<ApiErrorBody>();
-        error!.Code.Should().Be(Negosio.Application.Common.ErrorCodes.PickupQuantityExceedsAvailable);
+        error!.Code.Should().Be(Negosio.Application.Common.ErrorCodes.DeliveryReceiptNotAllowed);
 
         var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
             $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
-        summary!.Items[0].PickupPendingQuantity.Should().Be(4m); // never over-allocated past what was ever pickup-required
+        summary!.Items[0].PickupPendingQuantity.Should().Be(scene.Quantity); // never duplicated
         summary.Items[0].PickupUnscheduledQuantity.Should().Be(0m);
     }
 
-    // Scenario 2 (brief): a conversion cannot race an allocation. This is the test Task 6's
-    // LockSaleItemsAsync fix (returning the rows it just locked, so every allocating path reads intent
-    // from the POST-lock snapshot rather than the pre-lock one on `sale`) exists to make correct.
-    //
-    // Setup: DeliveryRequiredQuantity is set to exactly the quantity DR1 (the one Pending delivery)
-    // already holds — there is deliberately no extra "unscheduled" headroom. That means a genuinely
-    // correct implementation can NEVER let (b) succeed, in either lock-acquisition order:
-    //   - if (b) wins the lock first, it reads DR1 still Pending, so Available = 4 - 4 = 0 -> rejected.
-    //   - if (a) wins first, it cancels DR1 and converts its 4 units away, so DeliveryRequiredQuantity
-    //     drops to 0 and Available = 0 - 0 = 0 -> rejected.
-    // A buggy implementation that computes (b)'s availability from the pre-lock `sale.Items` snapshot
-    // instead of the freshly-locked rows would, in the second ordering, still see the STALE
-    // DeliveryRequiredQuantity of 4 combined with a FRESH (already-cancelled) pending sum of 0 -- i.e.
-    // Available = 4, wrongly admitting a phantom second delivery for quantity that was simultaneously
-    // moved to Pickup intent. That is exactly the race this test is designed to catch.
+    // Scenario 2 (brief): a conversion cannot race an allocation into double-booking the sale. Under the
+    // simplified one-active-schedule invariant, a concurrent create can NEVER win this race regardless of
+    // lock-acquisition order: if it wins the lock first, it sees DR1 still Pending and is rejected; if the
+    // cancellation wins first, it replaces DR1 with a new Pending Pickup, and the create still sees an
+    // active schedule and is rejected. This is the test Task 6's LockSaleItemsAsync fix (returning the
+    // rows it just locked, so every allocating path reads intent from the POST-lock snapshot rather than
+    // the pre-lock one on `sale`) exists to make correct — a buggy implementation that consulted a
+    // pre-lock snapshot could still let the create wrongly see the sale as schedule-free.
     [Fact]
-    public async Task A_cancel_with_conversion_cannot_race_a_new_allocation_of_the_quantity_it_is_moving()
+    public async Task A_cancel_with_conversion_never_loses_a_race_to_a_concurrent_create()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 4m);
-        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", FullyClaimingRequest(scene, 4m));
+        var scene = await ArrangeSaleAsync();
+        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", DeliveryReq());
         var dr1 = (await created.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         var cancelTask = Client.SendAsync(AuthorizedRequest(
@@ -275,24 +228,24 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
             new CancelDeliveryRequest("Address changed", CancellationDisposition.ConvertToPickup,
                 new PickupReplacementInput(Today, "Juan Dela Cruz", "0917 111 2222", null))));
         var createTask = Client.SendAsync(AuthorizedRequest(
-            HttpMethod.Post, $"/api/sales/{scene.SaleId}/delivery-receipts", scene.Token, FullyClaimingRequest(scene, 4m)));
+            HttpMethod.Post, $"/api/sales/{scene.SaleId}/delivery-receipts", scene.Token, DeliveryReq()));
 
         var results = await Task.WhenAll(cancelTask, createTask);
 
-        results.Count(r => r.IsSuccessStatusCode).Should().Be(1);
+        results.Count(r => r.IsSuccessStatusCode).Should().Be(1); // the create can never win this race
 
         var saleItem = await InScopeAsync(db => db.SaleItems.AsNoTracking().SingleAsync(i => i.Id == scene.SaleItemId));
-        (saleItem.DeliveryRequiredQuantity + saleItem.PickupRequiredQuantity).Should().Be(4m); // conserved, never exceeds Quantity
-        saleItem.DeliveryRequiredQuantity.Should().BeOneOf(0m, 4m);
-        saleItem.PickupRequiredQuantity.Should().BeOneOf(0m, 4m);
+        (saleItem.DeliveryRequiredQuantity + saleItem.PickupRequiredQuantity).Should().Be(scene.Quantity); // conserved
+        saleItem.DeliveryRequiredQuantity.Should().BeOneOf(0m, scene.Quantity);
+        saleItem.PickupRequiredQuantity.Should().BeOneOf(0m, scene.Quantity);
 
-        var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
-            $"/api/sales/{scene.SaleId}/fulfillment", TestJson.Options);
-        var line = summary!.Items[0];
-        // The real over-allocation check: what schedules actually hold must never exceed what the
-        // intent columns currently say is theirs, on EITHER side of the conversion.
-        (line.DeliveryPendingQuantity + line.DeliveredQuantity).Should().BeLessThanOrEqualTo(saleItem.DeliveryRequiredQuantity);
-        (line.PickupPendingQuantity + line.ClaimedQuantity).Should().BeLessThanOrEqualTo(saleItem.PickupRequiredQuantity);
+        await InScopeAsync(async db =>
+        {
+            // Never more than one active schedule on the sale, however the race actually resolved.
+            (await db.DeliveryReceipts.CountAsync(d => d.SaleId == scene.SaleId && d.Status != FulfillmentStatus.Cancelled))
+                .Should().Be(1);
+            return true;
+        });
     }
 
     // Scenario 3 (brief): two concurrent cancels of the same schedule. Which guard fires (the post-lock
@@ -302,8 +255,8 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
     [Fact]
     public async Task Two_concurrent_cancels_of_the_same_schedule_only_one_succeeds()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 4m);
-        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", FullyClaimingRequest(scene, 4m));
+        var scene = await ArrangeSaleAsync();
+        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", DeliveryReq());
         var dr = (await created.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         HttpRequestMessage CancelRequest() => AuthorizedRequest(
@@ -328,8 +281,8 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
     [Fact]
     public async Task Retrying_the_same_cancel_with_conversion_does_not_double_apply()
     {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 4m);
-        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", FullyClaimingRequest(scene, 4m));
+        var scene = await ArrangeSaleAsync();
+        var created = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/delivery-receipts", DeliveryReq());
         var dr = (await created.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
         var cancelRequest = new CancelDeliveryRequest("Address changed", CancellationDisposition.ConvertToPickup,
@@ -349,126 +302,35 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
             var saleItem = await db.SaleItems.AsNoTracking().SingleAsync(i => i.Id == scene.SaleItemId);
             saleItem.DeliveryRequiredQuantity.Should().Be(0m); // moved exactly once
-            saleItem.PickupRequiredQuantity.Should().Be(4m);
+            saleItem.PickupRequiredQuantity.Should().Be(scene.Quantity);
             return true;
         });
     }
 
-    // Scenario 5 (brief): pickup batch idempotency — same BatchRequestId twice creates the schedules
-    // once and reports WasExistingBatch == true the second time.
+    // Scenario 9 (brief): N concurrent create-pickup requests against one sale must never surface an
+    // unhandled 500, and — since a sale now has at most one active schedule of either method — exactly
+    // one of them succeeds, with sequence number 1; every other request is cleanly rejected.
     [Fact]
-    public async Task Posting_the_same_pickup_batch_twice_creates_the_schedules_once()
-    {
-        var scene = await ArrangeSaleAsync(qty: 10m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 4m);
-        var batchId = Guid.NewGuid();
-        var batchRequest = new CreatePickupBatchRequest(batchId, new[] { FullyClaimingPickupRequest(scene, 4m) });
-
-        var first = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups/batch", batchRequest);
-        first.StatusCode.Should().Be(HttpStatusCode.Created);
-        var firstBody = (await first.Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options))!;
-        firstBody.WasExistingBatch.Should().BeFalse();
-
-        var second = await Client.PostAsJsonAsync($"/api/sales/{scene.SaleId}/pickups/batch", batchRequest);
-        second.StatusCode.Should().Be(HttpStatusCode.Created);
-        var secondBody = (await second.Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options))!;
-        secondBody.WasExistingBatch.Should().BeTrue();
-        secondBody.Created.Single().Id.Should().Be(firstBody.Created.Single().Id);
-
-        await InScopeAsync(async db =>
-        {
-            (await db.DeliveryReceipts.CountAsync(d => d.SaleId == scene.SaleId && d.Method == FulfillmentMethod.Pickup)).Should().Be(1);
-            return true;
-        });
-    }
-
-    // Scenario 6 (brief): batch idempotency is scoped to the sale — the same BatchRequestId against a
-    // DIFFERENT sale must create new schedules, never return the first sale's rows.
-    [Fact]
-    public async Task The_same_BatchRequestId_against_a_different_sale_creates_new_schedules()
-    {
-        var owner = await RegisterLoginAndAuthorizeAsync();
-        var branchId = await GetMainBranchIdAsync(owner);
-        var register = await CreateRegisterAsync(branchId);
-        var session = await OpenSessionAsync(register.Id);
-        var category = await CreateCategoryAsync();
-        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 100m);
-
-        async Task<(Guid SaleId, Guid SaleItemId)> CheckoutWithPickupIntentAsync()
-        {
-            var sale = await CheckoutOkAsync(new CheckoutRequest(
-                branchId, session.Id, Guid.NewGuid(),
-                new[] { new CheckoutItemInput(variantId, 10m, null) },
-                new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) }));
-            var saleItemId = sale.Items[0].SaleItemId;
-            await SetFulfillmentIntentAsync(saleItemId, 0m, 4m);
-            return (sale.SaleId, saleItemId);
-        }
-
-        var (saleAId, saleItemAId) = await CheckoutWithPickupIntentAsync();
-        var (saleBId, saleItemBId) = await CheckoutWithPickupIntentAsync();
-
-        var batchId = Guid.NewGuid();
-        var reqA = new CreatePickupBatchRequest(batchId, new[]
-        {
-            new CreatePickupRequest(Today, "Juan Dela Cruz", null, null, new[] { new FulfillmentItemInput(saleItemAId, 4m) })
-        });
-        var reqB = new CreatePickupBatchRequest(batchId, new[]
-        {
-            new CreatePickupRequest(Today, "Juan Dela Cruz", null, null, new[] { new FulfillmentItemInput(saleItemBId, 4m) })
-        });
-
-        var respA = await Client.PostAsJsonAsync($"/api/sales/{saleAId}/pickups/batch", reqA);
-        respA.StatusCode.Should().Be(HttpStatusCode.Created);
-        var bodyA = (await respA.Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options))!;
-        bodyA.WasExistingBatch.Should().BeFalse();
-
-        var respB = await Client.PostAsJsonAsync($"/api/sales/{saleBId}/pickups/batch", reqB);
-        respB.StatusCode.Should().Be(HttpStatusCode.Created);
-        var bodyB = (await respB.Content.ReadFromJsonAsync<FulfillmentBatchResultDto>(TestJson.Options))!;
-        bodyB.WasExistingBatch.Should().BeFalse(); // NOT sale A's already-applied result
-        bodyB.Created.Single().Id.Should().NotBe(bodyA.Created.Single().Id);
-        bodyB.Created.Single().SaleId.Should().Be(saleBId);
-
-        await InScopeAsync(async db =>
-        {
-            (await db.DeliveryReceipts.CountAsync(d => d.BatchRequestId == batchId)).Should().Be(2);
-            return true;
-        });
-    }
-
-    // Scenario 9 (brief): N concurrent create-pickup requests against one sale must never collide on
-    // SequenceNumber, and a genuine (SaleId, Method, SequenceNumber) race must never surface as an
-    // unhandled 500 — it has to be mapped to a clean conflict/business error.
-    [Fact]
-    public async Task N_concurrent_pickup_creates_never_collide_on_sequence_number()
+    public async Task N_concurrent_pickup_creates_on_the_same_sale_only_one_ever_succeeds_and_never_surfaces_a_500()
     {
         const int concurrency = 8;
-        // qty stays well within ArrangeSaleAsync's fixed 2000m tendered-cash amount (sellingPrice 100m x
-        // qty 20m = 2000m) while still comfortably covering `concurrency` requests of 1 unit each.
-        var scene = await ArrangeSaleAsync(qty: 20m, deliveryRequiredQuantity: 0m, pickupRequiredQuantity: 20m);
+        var scene = await ArrangeSaleAsync(qty: 20m, method: FulfillmentMethod.Pickup);
 
         HttpRequestMessage CreateRequest() => AuthorizedRequest(
-            HttpMethod.Post, $"/api/sales/{scene.SaleId}/pickups", scene.Token, FullyClaimingPickupRequest(scene, 1m));
+            HttpMethod.Post, $"/api/sales/{scene.SaleId}/pickups", scene.Token, PickupReq());
 
         var results = await Task.WhenAll(Enumerable.Range(0, concurrency).Select(_ => Client.SendAsync(CreateRequest())));
 
         results.Should().NotContain(r => (int)r.StatusCode >= 500);
+        results.Count(r => r.StatusCode == HttpStatusCode.Created).Should().Be(1);
 
-        var createdDtos = new List<FulfillmentScheduleDto>();
-        foreach (var r in results.Where(r => r.StatusCode == HttpStatusCode.Created))
-        {
-            createdDtos.Add((await r.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!);
-        }
+        var winner = results.Single(r => r.StatusCode == HttpStatusCode.Created);
+        var createdDto = (await winner.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
+        createdDto.SequenceNumber.Should().Be(1);
 
-        createdDtos.Select(d => d.SequenceNumber).Should().OnlyHaveUniqueItems();
-
-        var persistedSequenceNumbers = await InScopeAsync(async db =>
-            await db.DeliveryReceipts
-                .Where(d => d.SaleId == scene.SaleId && d.Method == FulfillmentMethod.Pickup)
-                .Select(d => d.SequenceNumber)
-                .ToListAsync());
-        persistedSequenceNumbers.Should().OnlyHaveUniqueItems();
-        persistedSequenceNumbers.Count.Should().Be(createdDtos.Count);
+        var persistedCount = await InScopeAsync(db =>
+            db.DeliveryReceipts.CountAsync(d => d.SaleId == scene.SaleId && d.Method == FulfillmentMethod.Pickup));
+        persistedCount.Should().Be(1);
     }
 
     // Scenario 10 (brief): cross-tenant items are rejected as 404 (not 403, not 500), and nothing is
@@ -486,18 +348,14 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         var saleA = await CheckoutOkAsync(new CheckoutRequest(
             branchIdA, sessionA.Id, Guid.NewGuid(),
             new[] { new CheckoutItemInput(variantIdA, 10m, null) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) }));
-        var saleItemIdA = saleA.Items[0].SaleItemId;
-        await SetFulfillmentIntentAsync(saleItemIdA, 0m, 4m);
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) },
+            Method: FulfillmentMethod.Pickup));
 
         var tenantB = await RegisterLoginAndAuthorizeAsync(NewRegisterRequest(
             businessName: "Tenant B Co", email: "tenant-b@example.com", branchCode: "TB"));
 
-        var request = new CreatePickupRequest(Today, "Juan Dela Cruz", null, null,
-            new[] { new FulfillmentItemInput(saleItemIdA, 4m) });
-
         var response = await Client.SendAsync(AuthorizedRequest(
-            HttpMethod.Post, $"/api/sales/{saleA.SaleId}/pickups", tenantB.AccessToken, request));
+            HttpMethod.Post, $"/api/sales/{saleA.SaleId}/pickups", tenantB.AccessToken, PickupReq()));
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
         var error = await response.Content.ReadFromJsonAsync<ApiErrorBody>();
@@ -512,7 +370,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
     // Scenario 11 (brief) — "the single most important test in this task": a failed replacement rolls
     // back the whole cancellation. The API itself can never produce a schedule item pointing at a
-    // SaleItem outside its own sale (ValidateAndResolveLines already rejects that at create time), so
+    // SaleItem outside its own sale (only the sale's own locked rows are ever used to build one), so
     // this forces the corruption via a direct, test-only raw-SQL rewrite of the schedule's OWN item row
     // — simulating the exact shape of failure the brief specifies: a replacement item referencing a sale
     // item that does not belong to the sale. `foreignSaleItemId` is a genuine SaleItems row in this same
@@ -537,7 +395,6 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
             new[] { new CheckoutItemInput(variantId, 10m, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) },
             Method: FulfillmentMethod.Delivery));
-        var saleItem1Id = sale1.Items[0].SaleItemId;
 
         // A second, unrelated sale purely to supply a genuine (FK-satisfying) but foreign SaleItemId.
         var sale2 = await CheckoutOkAsync(new CheckoutRequest(
@@ -546,9 +403,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1000m) }));
         var foreignSaleItemId = sale2.Items[0].SaleItemId;
 
-        var created = await Client.PostAsJsonAsync($"/api/sales/{sale1.SaleId}/delivery-receipts",
-            new CreateDeliveryReceiptRequest(Today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null,
-                new[] { new FulfillmentItemInput(saleItem1Id, 4m) }));
+        var created = await Client.PostAsJsonAsync($"/api/sales/{sale1.SaleId}/delivery-receipts", DeliveryReq());
         created.StatusCode.Should().Be(HttpStatusCode.Created);
         var dr = (await created.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
 
