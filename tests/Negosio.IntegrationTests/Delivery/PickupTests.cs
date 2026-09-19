@@ -36,9 +36,12 @@ public class PickupTests : IntegrationTest
         var category = await CreateCategoryAsync();
         var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: price, openingStock: qty + 10m);
 
+        // The checkout call below only creates the SaleItem — its own Method/quantities are irrelevant
+        // because SetFulfillmentIntentAsync overwrites the item's actual delivery/pickup intent
+        // directly afterward (a test-only backdoor; see its doc comment in IntegrationTest.cs).
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, qty, null, deliveryRequiredQuantity) },
+            new[] { new CheckoutItemInput(variantId, qty, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + 500m) }));
 
         var saleItemId = sale.Items[0].SaleItemId;

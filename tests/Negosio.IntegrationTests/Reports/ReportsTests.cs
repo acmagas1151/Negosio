@@ -293,8 +293,9 @@ public class ReportsTests : IntegrationTest
 
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, 10m, null, 6m) },
+            new[] { new CheckoutItemInput(variantId, 10m, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1160m) },
+            Method: FulfillmentMethod.Delivery,
             DeliveryCharge: 60m));
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
@@ -327,8 +328,9 @@ public class ReportsTests : IntegrationTest
 
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, 10m, null, 6m) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1100m) }));
+            new[] { new CheckoutItemInput(variantId, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1100m) },
+            Method: FulfillmentMethod.Delivery));
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
         var drResp = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
@@ -358,8 +360,9 @@ public class ReportsTests : IntegrationTest
 
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, 10m, null, 6m) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1000m) }));
+            new[] { new CheckoutItemInput(variantId, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1000m) },
+            Method: FulfillmentMethod.Delivery));
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
         await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
@@ -389,7 +392,7 @@ public class ReportsTests : IntegrationTest
 
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, 10m, null, 0m) }, // nothing for delivery
+            new[] { new CheckoutItemInput(variantId, 10m, null) }, // nothing for delivery (Method defaults to TakeNow)
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1000m) }));
 
         var report = await Client.GetFromJsonAsync<DeliveryFulfillmentReportResultDto>(

@@ -41,10 +41,15 @@ public class FulfillmentConversionTests : IntegrationTest
         var category = await CreateCategoryAsync();
         var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: price, openingStock: qty + 10m);
 
+        // The checkout call below only creates the SaleItem — its own Method/quantities are irrelevant
+        // because SetFulfillmentIntentAsync overwrites the item's actual delivery/pickup intent
+        // directly afterward. Method is still set to Delivery whenever a delivery charge is requested,
+        // since the checkout validator now rejects a non-zero charge for any other method.
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, qty, null, deliveryRequiredQuantity) },
+            new[] { new CheckoutItemInput(variantId, qty, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + deliveryCharge + 500m) },
+            Method: deliveryCharge > 0m ? FulfillmentMethod.Delivery : FulfillmentMethod.TakeNow,
             DeliveryCharge: deliveryCharge));
 
         var saleItemId = sale.Items[0].SaleItemId;

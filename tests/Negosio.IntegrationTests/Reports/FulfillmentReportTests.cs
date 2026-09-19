@@ -45,10 +45,21 @@ public class FulfillmentReportTests : IntegrationTest
         decimal deliveryRequiredQuantity = 0m, decimal pickupRequiredQuantity = 0m,
         decimal price = 100m, decimal deliveryCharge = 0m)
     {
+        // NOTE (Task 1 of the whole-sale fulfillment simplification): CheckoutItemInput no longer
+        // carries per-item delivery/pickup quantities — Method now applies to the whole sale. This
+        // helper's deliveryRequiredQuantity/pickupRequiredQuantity parameters can no longer express
+        // "some of each on one line"; mapped to the closest whole-sale equivalent below. This whole
+        // file exercises the combined per-allocation report, which Task 4 of that plan deletes — full
+        // rework of this file's scenarios (and its use of FulfillmentItemInput's partial quantities
+        // below) is that task's job, not this one's.
+        var method = deliveryRequiredQuantity > 0m ? FulfillmentMethod.Delivery
+            : pickupRequiredQuantity > 0m ? FulfillmentMethod.Pickup
+            : FulfillmentMethod.TakeNow;
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, sessionId, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, qty, null, deliveryRequiredQuantity, pickupRequiredQuantity) },
+            new[] { new CheckoutItemInput(variantId, qty, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + deliveryCharge + 1000m) },
+            Method: method,
             DeliveryCharge: deliveryCharge));
 
         return new Scene(sale.SaleId, branchId, sale.Items[0].SaleItemId);
@@ -351,8 +362,9 @@ public class FulfillmentReportTests : IntegrationTest
         var (_, mainVariantId) = await SeedStockedProductAsync(mainId, category.Id, sku: "MAIN-SKU", sellingPrice: 100m, openingStock: 30m);
         var mainSale = await CheckoutOkAsync(new CheckoutRequest(
             mainId, mainSession.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(mainVariantId, 10m, null, 4m, 4m) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) }));
+            new[] { new CheckoutItemInput(mainVariantId, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) },
+            Method: FulfillmentMethod.Delivery));
         var mainScene = new Scene(mainSale.SaleId, mainId, mainSale.Items[0].SaleItemId);
         await CreateDeliveryAsync(mainScene, 4m);
         await CreatePickupAsync(mainScene, 4m);
@@ -365,8 +377,9 @@ public class FulfillmentReportTests : IntegrationTest
         var (_, bgcVariantId) = await SeedStockedProductAsync(bgc.Id, category.Id, sku: "BGC-SKU", sellingPrice: 150m, openingStock: 30m);
         var bgcSale = await CheckoutOkAsync(new CheckoutRequest(
             bgc.Id, bgcSession.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(bgcVariantId, 10m, null, 4m, 4m) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) }));
+            new[] { new CheckoutItemInput(bgcVariantId, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) },
+            Method: FulfillmentMethod.Delivery));
         var bgcScene = new Scene(bgcSale.SaleId, bgc.Id, bgcSale.Items[0].SaleItemId);
         await CreateDeliveryAsync(bgcScene, 4m);
         await CreatePickupAsync(bgcScene, 4m);
@@ -404,8 +417,9 @@ public class FulfillmentReportTests : IntegrationTest
         var (_, variant1) = await SeedStockedProductAsync(branch1, category1.Id, sku: "T1-SKU", sellingPrice: 100m, openingStock: 20m);
         var sale1 = await CheckoutOkAsync(new CheckoutRequest(
             branch1, session1.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variant1, 10m, null, 4m, 4m) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) }));
+            new[] { new CheckoutItemInput(variant1, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) },
+            Method: FulfillmentMethod.Delivery));
         var scene1 = new Scene(sale1.SaleId, branch1, sale1.Items[0].SaleItemId);
         await CreateDeliveryAsync(scene1, 4m);
         await CreatePickupAsync(scene1, 4m);
@@ -420,8 +434,9 @@ public class FulfillmentReportTests : IntegrationTest
         var (_, variant2) = await SeedStockedProductAsync(branch2, category2.Id, sku: "T2-SKU", sellingPrice: 100m, openingStock: 20m);
         var sale2 = await CheckoutOkAsync(new CheckoutRequest(
             branch2, session2.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variant2, 10m, null, 4m, 4m) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) }));
+            new[] { new CheckoutItemInput(variant2, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) },
+            Method: FulfillmentMethod.Delivery));
         var scene2 = new Scene(sale2.SaleId, branch2, sale2.Items[0].SaleItemId);
         await CreateDeliveryAsync(scene2, 4m);
         await CreatePickupAsync(scene2, 4m);

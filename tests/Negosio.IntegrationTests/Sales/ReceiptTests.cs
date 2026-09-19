@@ -120,6 +120,7 @@ public class ReceiptTests : IntegrationTest
             branchId, session.Id, Guid.NewGuid(),
             new[] { new CheckoutItemInput(variantId, 1m, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 200m) },
+            Method: FulfillmentMethod.Delivery,
             DeliveryCharge: 60m));
 
         var receipt = await Client.GetFromJsonAsync<ReceiptDto>($"/api/sales/{sale.SaleId}/receipt", TestJson.Options);

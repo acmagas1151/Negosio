@@ -8,17 +8,7 @@ public sealed record CheckoutDiscountInput(DiscountType Type = DiscountType.None
 public sealed record CheckoutItemInput(
     Guid ProductVariantId,
     decimal Quantity,
-    CheckoutDiscountInput? Discount,
-    /// <summary>How much of this line is not taken at the counter today. Defaults to 0 — the whole
-    /// line is Take-now unless the cashier explicitly marks part of it for delivery. Never negative,
-    /// never more than <see cref="Quantity"/> (validated below and, as a backstop, by
-    /// <c>Sale.AddItem</c>).</summary>
-    decimal DeliveryRequiredQuantity = 0m,
-    /// <summary>How much of this line is not taken at the counter today because it is earmarked for
-    /// later pickup. Defaults to 0 so an older POS client that never sends this field keeps working
-    /// unchanged. Never negative; <see cref="DeliveryRequiredQuantity"/> plus this cannot exceed
-    /// <see cref="Quantity"/> (validated below and, as a backstop, by <c>Sale.AddItem</c>).</summary>
-    decimal PickupRequiredQuantity = 0m);
+    CheckoutDiscountInput? Discount);
 
 public sealed record CheckoutPaymentInput(
     PaymentMethod Method,
@@ -32,9 +22,11 @@ public sealed record CheckoutRequest(
     Guid ClientRequestId,
     IReadOnlyList<CheckoutItemInput> Items,
     IReadOnlyList<CheckoutPaymentInput> Payments,
-    /// <summary>The delivery fee for a "for delivery" sale, 0 for a normal sale. Added to the
-    /// server-computed sale total to form <see cref="SaleResultDto.GrandTotal"/> — the client never
-    /// sends a total, only this raw fee.</summary>
+    /// <summary>Whole-sale fulfillment choice — applies to every item at its full quantity.
+    /// Defaults to TakeNow so an older client that never sends this field keeps working.</summary>
+    FulfillmentMethod Method = FulfillmentMethod.TakeNow,
+    /// <summary>The delivery fee — must be 0 unless <see cref="Method"/> is Delivery (validated,
+    /// never silently coerced server-side).</summary>
     decimal DeliveryCharge = 0m,
     /// <summary>Manager/Admin/Owner approval — only used when a Cashier without the DiscountApply
     /// grant submits a sale that carries any line discount. Reuses Void's approval shape.</summary>

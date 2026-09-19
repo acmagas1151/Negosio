@@ -32,6 +32,10 @@ public class CheckoutDeliveryChargeTests : IntegrationTest
         s.BranchId, s.SessionId, Guid.NewGuid(),
         new[] { new CheckoutItemInput(s.VariantId, quantity, null) },
         new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: cashReceived) },
+        // Method is always Delivery here so a non-zero deliveryCharge stays valid under the
+        // "charge must be 0 unless Method is Delivery" rule — these tests are about the charge
+        // math itself, not about which method was chosen.
+        Method: FulfillmentMethod.Delivery,
         DeliveryCharge: deliveryCharge);
 
     [Fact]
@@ -100,6 +104,34 @@ public class CheckoutDeliveryChargeTests : IntegrationTest
         var response = await CheckoutAsync(DeliverySale(scene, 1m, 200m, deliveryCharge: 10.005m));
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Delivery_charge_above_zero_is_rejected_when_method_is_not_delivery()
+    {
+        var scene = await ArrangeAsync();
+
+        // Backend must not trust only the frontend's fulfillment-method selection: a request that
+        // claims TakeNow but still carries a positive delivery charge is rejected by the validator
+        // itself, not merely by a client-side guard.
+        var request = new CheckoutRequest(
+            scene.BranchId, scene.SessionId, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(scene.VariantId, 1m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 200m) },
+            Method: FulfillmentMethod.TakeNow,
+            DeliveryCharge: 50m);
+
+        var response = await CheckoutAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("Delivery charge must be 0 unless the fulfillment method is Delivery.");
+
+        await InScopeAsync(async db =>
+        {
+            (await db.Sales.CountAsync()).Should().Be(0);
+            return true;
+        });
     }
 
     [Fact]

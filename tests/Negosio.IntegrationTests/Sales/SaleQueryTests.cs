@@ -83,6 +83,7 @@ public class SaleQueryTests : IntegrationTest
             branchId, sessionId, Guid.NewGuid(),
             new[] { new CheckoutItemInput(variantId, 1m, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 100m) },
+            Method: FulfillmentMethod.Delivery,
             DeliveryCharge: 20m));
 
         var detail = await Client.GetFromJsonAsync<SaleDetailDto>($"/api/sales/{sale.SaleId}", TestJson.Options);

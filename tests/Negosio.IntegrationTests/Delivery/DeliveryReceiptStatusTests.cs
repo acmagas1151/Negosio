@@ -28,8 +28,9 @@ public class DeliveryReceiptStatusTests : IntegrationTest
 
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, qty, null, deliveryRequiredQuantity) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + 500m) }));
+            new[] { new CheckoutItemInput(variantId, qty, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + 500m) },
+            Method: deliveryRequiredQuantity > 0m ? FulfillmentMethod.Delivery : FulfillmentMethod.TakeNow));
 
         return new Scene(sale.SaleId, branchId, sale.Items[0].SaleItemId);
     }

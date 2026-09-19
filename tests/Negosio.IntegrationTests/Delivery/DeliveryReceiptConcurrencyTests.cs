@@ -49,8 +49,9 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, qty, null, deliveryRequiredQuantity) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) }));
+            new[] { new CheckoutItemInput(variantId, qty, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) },
+            Method: deliveryRequiredQuantity > 0m ? FulfillmentMethod.Delivery : FulfillmentMethod.TakeNow));
 
         var saleItemId = sale.Items[0].SaleItemId;
         if (pickupRequiredQuantity > 0m)
@@ -396,7 +397,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         {
             var sale = await CheckoutOkAsync(new CheckoutRequest(
                 branchId, session.Id, Guid.NewGuid(),
-                new[] { new CheckoutItemInput(variantId, 10m, null, 0m) },
+                new[] { new CheckoutItemInput(variantId, 10m, null) },
                 new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) }));
             var saleItemId = sale.Items[0].SaleItemId;
             await SetFulfillmentIntentAsync(saleItemId, 0m, 4m);
@@ -484,7 +485,7 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         var (_, variantIdA) = await SeedStockedProductAsync(branchIdA, categoryA.Id, sellingPrice: 100m, openingStock: 20m);
         var saleA = await CheckoutOkAsync(new CheckoutRequest(
             branchIdA, sessionA.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantIdA, 10m, null, 0m) },
+            new[] { new CheckoutItemInput(variantIdA, 10m, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) }));
         var saleItemIdA = saleA.Items[0].SaleItemId;
         await SetFulfillmentIntentAsync(saleItemIdA, 0m, 4m);
@@ -533,14 +534,15 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
 
         var sale1 = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, 10m, null, 4m) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) }));
+            new[] { new CheckoutItemInput(variantId, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) },
+            Method: FulfillmentMethod.Delivery));
         var saleItem1Id = sale1.Items[0].SaleItemId;
 
         // A second, unrelated sale purely to supply a genuine (FK-satisfying) but foreign SaleItemId.
         var sale2 = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, 5m, null, 0m) },
+            new[] { new CheckoutItemInput(variantId, 5m, null) },
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1000m) }));
         var foreignSaleItemId = sale2.Items[0].SaleItemId;
 

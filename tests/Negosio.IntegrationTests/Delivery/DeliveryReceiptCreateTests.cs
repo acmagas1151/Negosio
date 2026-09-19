@@ -32,8 +32,9 @@ public class DeliveryReceiptCreateTests : IntegrationTest
 
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, qty, null, deliveryRequiredQuantity) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + 500m) }));
+            new[] { new CheckoutItemInput(variantId, qty, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: (price * qty) + 500m) },
+            Method: deliveryRequiredQuantity > 0m ? FulfillmentMethod.Delivery : FulfillmentMethod.TakeNow));
 
         return new Scene(sale.SaleId, sale.SaleNumber, sale.Items[0].SaleItemId, deliveryRequiredQuantity);
     }
@@ -198,8 +199,9 @@ public class DeliveryReceiptCreateTests : IntegrationTest
 
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             mainId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, 10m, null, 6m) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) }));
+            new[] { new CheckoutItemInput(variantId, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) },
+            Method: FulfillmentMethod.Delivery));
 
         var batchId = Guid.NewGuid();
         var request = new CreateDeliveryReceiptBatchRequest(batchId, new[]

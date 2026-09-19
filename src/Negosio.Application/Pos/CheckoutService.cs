@@ -109,7 +109,7 @@ public sealed class CheckoutService : ICheckoutService
             {
                 var discount = g.Select(x => x.Discount).FirstOrDefault(d => d is { Type: not DiscountType.None })
                                ?? new CheckoutDiscountInput();
-                return new CheckoutItemInput(g.Key, g.Sum(x => x.Quantity), discount, g.Sum(x => x.DeliveryRequiredQuantity), g.Sum(x => x.PickupRequiredQuantity));
+                return new CheckoutItemInput(g.Key, g.Sum(x => x.Quantity), discount);
             })
             .ToList();
 
@@ -145,8 +145,11 @@ public sealed class CheckoutService : ICheckoutService
                 variant.SellingPrice, item.Quantity, discount.Type, discount.Value,
                 tenant.TaxRatePercent, tenant.PricesIncludeTax);
 
+            var deliveryRequiredQuantity = request.Method == FulfillmentMethod.Delivery ? item.Quantity : 0m;
+            var pickupRequiredQuantity = request.Method == FulfillmentMethod.Pickup ? item.Quantity : 0m;
+
             lines.Add(new ResolvedLine(
-                variant.Id, item.Quantity, item.DeliveryRequiredQuantity, item.PickupRequiredQuantity, discount.Type, discount.Value,
+                variant.Id, item.Quantity, deliveryRequiredQuantity, pickupRequiredQuantity, discount.Type, discount.Value,
                 product.Name, variant.IsDefault ? null : variant.Name, variant.Sku, variant.Barcode,
                 variant.SellingPrice, variant.CostPrice, product.TrackInventory, amounts));
         }

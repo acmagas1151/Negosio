@@ -78,8 +78,9 @@ public class TenantMigrationTests : IntegrationTest
 
         var sale = await CheckoutOkAsync(new CheckoutRequest(
             branchId, session.Id, Guid.NewGuid(),
-            new[] { new CheckoutItemInput(variantId, 10m, null, 6m) },
-            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) }));
+            new[] { new CheckoutItemInput(variantId, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1500m) },
+            Method: FulfillmentMethod.Delivery));
         var saleItemId = sale.Items[0].SaleItemId;
 
         var created = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",

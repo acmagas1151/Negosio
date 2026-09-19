@@ -1,4 +1,5 @@
 using FluentValidation;
+using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Pos;
 
@@ -14,20 +15,18 @@ public sealed class CheckoutRequestValidator : AbstractValidator<CheckoutRequest
         {
             item.RuleFor(i => i.ProductVariantId).NotEmpty().WithMessage("Each item needs a product variant.");
             item.RuleFor(i => i.Quantity).GreaterThan(0).WithMessage("Item quantity must be greater than zero.");
-            item.RuleFor(i => i.DeliveryRequiredQuantity)
-                .GreaterThanOrEqualTo(0m).WithMessage("Delivery-required quantity cannot be negative.")
-                .Must((i, deliveryQty) => deliveryQty <= i.Quantity)
-                .WithMessage("Delivery-required quantity cannot exceed the item quantity.");
-            item.RuleFor(i => i.PickupRequiredQuantity)
-                .GreaterThanOrEqualTo(0m).WithMessage("Pickup-required quantity cannot be negative.");
-            item.RuleFor(i => i)
-                .Must(i => i.DeliveryRequiredQuantity + i.PickupRequiredQuantity <= i.Quantity)
-                .WithMessage("Delivery and pickup quantities together cannot exceed the item quantity.");
         });
         RuleFor(x => x.Payments).NotEmpty().WithMessage("At least one payment is required.");
+        RuleFor(x => x.Method).IsInEnum().WithMessage("Fulfillment method must be TakeNow, Delivery, or Pickup.");
         RuleFor(x => x.DeliveryCharge)
             .GreaterThanOrEqualTo(0m).WithMessage("Delivery charge cannot be negative.")
             .Must(v => v == Math.Round(v, 2, MidpointRounding.AwayFromZero))
-            .WithMessage("Delivery charge can have at most 2 decimal places.");
+            .WithMessage("Delivery charge can have at most 2 decimal places.")
+            // ApplyConditionTo.CurrentValidator: FluentValidation's default When() behavior applies the
+            // condition to every validator earlier in this same RuleFor chain too, which would silently
+            // skip the GreaterThanOrEqualTo/Must checks above whenever Method == Delivery. Scoping the
+            // condition to just this validator keeps those two checks unconditional.
+            .Equal(0m).WithMessage("Delivery charge must be 0 unless the fulfillment method is Delivery.")
+                .When(x => x.Method != FulfillmentMethod.Delivery, ApplyConditionTo.CurrentValidator);
     }
 }
