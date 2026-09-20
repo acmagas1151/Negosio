@@ -655,7 +655,6 @@ export function PosTerminal({
         submitting={status === 'submitting'}
         error={payError}
         onConfirm={(payment) => mutation.mutate({ payment })}
-        cartLines={cart.lines}
         fulfillmentMethod={fulfillmentMethod}
         onFulfillmentMethodChange={onFulfillmentMethodChange}
         deliveryFields={deliveryFields}

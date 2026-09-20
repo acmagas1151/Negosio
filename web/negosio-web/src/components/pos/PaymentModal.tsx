@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { CheckoutPaymentInput, PaymentMethod } from '../../api/types'
+import type { CheckoutPaymentInput, FulfillmentMethod, PaymentMethod } from '../../api/types'
 import {
   POS_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -7,25 +7,13 @@ import {
   isValidDeliveryChargeInput,
   parseDeliveryCharge,
   suggestCashButtons,
-  type FulfillmentSchedule,
+  type FulfillmentDetails,
 } from '../../lib/pos'
 import { formatMoney } from '../../lib/format'
 import { cn } from '../../lib/cn'
 import { Button, Callout, Modal, TextField } from '../ui'
-import { FulfillmentAllocationFields } from './FulfillmentAllocationFields'
 import { FulfillmentDetailsFields } from './FulfillmentDetailsFields'
 import { PaymentMethodIcon } from './PaymentMethodIcon'
-
-/** One method's schedule list plus its editing callbacks — bundled so PaymentModal can pass a
- * whole method's worth of props in one prop instead of five, once for Delivery and once for
- * Pickup. */
-export interface FulfillmentSectionProps {
-  schedules: FulfillmentSchedule[]
-  onScheduleFieldChange: (key: string, patch: Partial<Omit<FulfillmentSchedule, 'key' | 'items'>>) => void
-  onScheduleItemChange: (key: string, variantId: string, quantity: number) => void
-  onAddSchedule: () => void
-  onRemoveSchedule: (key: string) => void
-}
 
 interface Props {
   open: boolean
@@ -34,25 +22,16 @@ interface Props {
   submitting: boolean
   error: string | null
   onConfirm: (payment: CheckoutPaymentInput) => void
-  cartLines: {
-    variantId: string
-    name: string
-    variantName: string | null
-    quantity: number
-    deliveryRequiredQuantity: number
-    pickupRequiredQuantity: number
-  }[]
-  delivery: FulfillmentSectionProps
-  pickup: FulfillmentSectionProps
-  /** The typed delivery-charge string, owned by the parent for the same reason schedules is —
-   * it must survive the modal closing and reopening after a failed-payment retry. */
+  fulfillmentMethod: FulfillmentMethod
+  onFulfillmentMethodChange: (method: FulfillmentMethod) => void
+  deliveryFields: FulfillmentDetails
+  onDeliveryFieldsChange: (patch: Partial<FulfillmentDetails>) => void
+  pickupFields: FulfillmentDetails
+  onPickupFieldsChange: (patch: Partial<FulfillmentDetails>) => void
+  /** The typed delivery-charge string, owned by the parent for the same reason the schedule
+   * fields are — it must survive the modal closing and reopening after a failed-payment retry. */
   deliveryCharge: string
   onDeliveryChargeChange: (value: string) => void
-  /** Editing callbacks for the Take now / Delivery / Pickup allocation table below — the same
-   * `PosTerminal` callbacks CartItem used to call directly before this allocation UI moved here.
-   * The underlying state (`usePosCart`'s cart lines) is unchanged; only who calls these moved. */
-  onSetDeliveryRequired: (variantId: string, quantity: number) => void
-  onSetPickupRequired: (variantId: string, quantity: number) => void
 }
 
 export function PaymentModal({
@@ -62,13 +41,14 @@ export function PaymentModal({
   submitting,
   error,
   onConfirm,
-  cartLines,
-  delivery,
-  pickup,
+  fulfillmentMethod,
+  onFulfillmentMethodChange,
+  deliveryFields,
+  onDeliveryFieldsChange,
+  pickupFields,
+  onPickupFieldsChange,
   deliveryCharge,
   onDeliveryChargeChange,
-  onSetDeliveryRequired,
-  onSetPickupRequired,
 }: Props) {
   const [method, setMethod] = useState<PaymentMethod>('Cash')
   const [received, setReceived] = useState('')
@@ -85,46 +65,38 @@ export function PaymentModal({
     setFulfillmentAttempted(false)
   }, [open])
 
-  // Whether this sale involves each method at all — derived straight from the cart lines (set via
-  // the Fulfillment allocation table below) rather than a manual toggle, so there's no way for the
-  // schedule section's visibility to drift from what's actually on the cart.
-  const anyDelivery = cartLines.some((l) => l.deliveryRequiredQuantity > 0)
-  const anyPickup = cartLines.some((l) => l.pickupRequiredQuantity > 0)
-  const deliveryLines = cartLines
-    .filter((l) => l.deliveryRequiredQuantity > 0)
-    .map((l) => ({
-      variantId: l.variantId,
-      name: l.name,
-      variantName: l.variantName,
-      requiredQuantity: l.deliveryRequiredQuantity,
-    }))
-  const pickupLines = cartLines
-    .filter((l) => l.pickupRequiredQuantity > 0)
-    .map((l) => ({
-      variantId: l.variantId,
-      name: l.name,
-      variantName: l.variantName,
-      requiredQuantity: l.pickupRequiredQuantity,
-    }))
-
   const receivedNum = Number(received)
-  const deliveryChargeValid = !anyDelivery || isValidDeliveryChargeInput(deliveryCharge)
-  const effectiveAmountDue = amountDue + parseDeliveryCharge(anyDelivery, deliveryCharge)
+  // deliveryCharge's raw string stays in state untouched regardless of the selected method — only
+  // its EFFECT on the running total is gated on `fulfillmentMethod === 'Delivery'` here, so
+  // switching away from Delivery and back preserves whatever the cashier had already typed.
+  const deliveryChargeValid = fulfillmentMethod !== 'Delivery' || isValidDeliveryChargeInput(deliveryCharge)
+  const effectiveAmountDue = amountDue + parseDeliveryCharge(fulfillmentMethod === 'Delivery', deliveryCharge)
   const change = method === 'Cash' ? Math.max(0, receivedNum - effectiveAmountDue) : 0
 
-  const activeDeliverySchedules = delivery.schedules.filter((s) => s.items.some((i) => i.quantity > 0))
-  const deliveryComplete =
-    !anyDelivery ||
-    (deliveryChargeValid &&
-      activeDeliverySchedules.every((s) => s.scheduledDate && s.recipientName.trim() && s.deliveryAddress.trim()))
-  const activePickupSchedules = pickup.schedules.filter((s) => s.items.some((i) => i.quantity > 0))
-  const pickupComplete =
-    !anyPickup || activePickupSchedules.every((s) => s.scheduledDate && s.recipientName.trim())
-  const fulfillmentComplete = deliveryComplete && pickupComplete
-  const deliveryErrors =
-    anyDelivery && fulfillmentAttempted
-      ? { deliveryCharge: deliveryChargeValid ? undefined : 'Enter a valid amount (0 or more, up to 2 decimal places).' }
-      : {}
+  const fulfillmentComplete =
+    fulfillmentMethod === 'TakeNow' ||
+    (fulfillmentMethod === 'Delivery'
+      ? deliveryChargeValid &&
+        !!deliveryFields.scheduledDate &&
+        !!deliveryFields.recipientName.trim() &&
+        !!deliveryFields.deliveryAddress.trim()
+      : !!pickupFields.scheduledDate && !!pickupFields.recipientName.trim())
+
+  // Plain validation messages, independent of `fulfillmentAttempted` — FulfillmentDetailsFields
+  // itself gates whether these are actually shown on its own `attempted` prop, mirroring the
+  // per-schedule `showErrors` gate this file used before the allocation model was flattened.
+  const deliveryErrors = {
+    scheduledDate: deliveryFields.scheduledDate ? undefined : 'A delivery date is required.',
+    recipientName: deliveryFields.recipientName.trim() ? undefined : 'Recipient name is required.',
+    deliveryAddress: deliveryFields.deliveryAddress.trim() ? undefined : 'Recipient address is required.',
+    deliveryCharge: deliveryChargeValid
+      ? undefined
+      : 'Enter a valid amount (0 or more, up to 2 decimal places).',
+  }
+  const pickupErrors = {
+    scheduledDate: pickupFields.scheduledDate ? undefined : 'A pickup date is required.',
+    recipientName: pickupFields.recipientName.trim() ? undefined : 'Recipient name is required.',
+  }
 
   const paymentComplete =
     method !== 'Cash' || (received.trim() !== '' && receivedNum >= effectiveAmountDue)
@@ -171,22 +143,52 @@ export function PaymentModal({
           <p className="text-2xl font-bold text-text-primary">{formatMoney(effectiveAmountDue)}</p>
         </div>
 
-        {/* Allocation happens before payment method: how much of the sale is taken now vs. set
-            aside for delivery/pickup determines whether the Delivery/Pickup schedule sections
-            below even appear, so the cashier settles it first rather than discovering it after
+        {/* How the customer receives the whole sale — chosen once, applying to every item — comes
+            before payment method, so the cashier settles it first rather than discovering it after
             already picking how they're being paid. */}
         <div className="mb-4 rounded-lg border border-border-strong px-4 py-3.5">
-          <p className="text-sm font-semibold text-text-secondary">Fulfillment</p>
-          <div className="mt-3">
-            <FulfillmentAllocationFields
-              cartLines={cartLines}
-              deliverySchedules={delivery.schedules}
-              pickupSchedules={pickup.schedules}
-              onSetDeliveryRequired={onSetDeliveryRequired}
-              onSetPickupRequired={onSetPickupRequired}
+          <p className="text-sm font-semibold text-text-secondary">How will the customer receive the order?</p>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {(['TakeNow', 'Delivery', 'Pickup'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                aria-pressed={fulfillmentMethod === m}
+                onClick={() => onFulfillmentMethodChange(m)}
+                className={cn(
+                  'rounded-lg border px-3 py-2 text-[13px] font-semibold transition-all',
+                  fulfillmentMethod === m
+                    ? 'border-primary-500 bg-primary-50 text-primary-700 shadow-sm'
+                    : 'border-border-strong text-text-secondary hover:border-primary-200 hover:bg-surface-subtle',
+                )}
+              >
+                {m === 'TakeNow' ? 'Take now' : m === 'Delivery' ? 'For delivery' : 'For pickup'}
+              </button>
+            ))}
+          </div>
+
+          {fulfillmentMethod === 'Delivery' && (
+            <FulfillmentDetailsFields
+              method="Delivery"
+              values={deliveryFields}
+              onChange={onDeliveryFieldsChange}
+              deliveryCharge={deliveryCharge}
+              onDeliveryChargeChange={onDeliveryChargeChange}
+              errors={deliveryErrors}
+              attempted={fulfillmentAttempted}
               disabled={submitting}
             />
-          </div>
+          )}
+          {fulfillmentMethod === 'Pickup' && (
+            <FulfillmentDetailsFields
+              method="Pickup"
+              values={pickupFields}
+              onChange={onPickupFieldsChange}
+              errors={pickupErrors}
+              attempted={fulfillmentAttempted}
+              disabled={submitting}
+            />
+          )}
         </div>
 
         <div className="mb-4 grid grid-cols-5 gap-2">
@@ -257,47 +259,6 @@ export function PaymentModal({
             onChange={(e) => setReference(e.target.value)}
             autoFocus
           />
-        )}
-
-        {/* Whether this sale involves delivery and/or pickup is decided by the Fulfillment
-            allocation table above (Take now / Delivery / Pickup, per line) — there's no separate
-            toggle here to drift out of sync with it. Each method gets its own section, its own
-            schedule list, and its own "attempted" gating, but they share one Confirm-payment gate. */}
-        {anyDelivery && (
-          <div className="mt-4 rounded-lg border border-border-strong px-4 py-3.5">
-            <p className="text-sm font-semibold text-text-secondary">Delivery</p>
-            <FulfillmentDetailsFields
-              method="Delivery"
-              cartLines={deliveryLines}
-              deliveryCharge={deliveryCharge}
-              onDeliveryChargeChange={onDeliveryChargeChange}
-              schedules={delivery.schedules}
-              onScheduleFieldChange={delivery.onScheduleFieldChange}
-              onScheduleItemChange={delivery.onScheduleItemChange}
-              onAddSchedule={delivery.onAddSchedule}
-              onRemoveSchedule={delivery.onRemoveSchedule}
-              errors={deliveryErrors}
-              attempted={fulfillmentAttempted}
-              disabled={submitting}
-            />
-          </div>
-        )}
-        {anyPickup && (
-          <div className="mt-4 rounded-lg border border-border-strong px-4 py-3.5">
-            <p className="text-sm font-semibold text-text-secondary">Pickup</p>
-            <FulfillmentDetailsFields
-              method="Pickup"
-              cartLines={pickupLines}
-              schedules={pickup.schedules}
-              onScheduleFieldChange={pickup.onScheduleFieldChange}
-              onScheduleItemChange={pickup.onScheduleItemChange}
-              onAddSchedule={pickup.onAddSchedule}
-              onRemoveSchedule={pickup.onRemoveSchedule}
-              errors={{}}
-              attempted={fulfillmentAttempted}
-              disabled={submitting}
-            />
-          </div>
         )}
       </div>
     </Modal>
