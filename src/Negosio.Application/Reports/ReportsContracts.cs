@@ -139,7 +139,9 @@ public sealed record DeliveryReportQuery(
 /// <summary>One delivery schedule row. <see cref="DeliveryCharge"/> and <see cref="SaleGrandTotal"/>
 /// are read live from the linked Sale — never a per-schedule copy (see the plan's Global
 /// Constraints) — so the SAME sale's charge appears identically on every one of its schedule rows;
-/// <see cref="DeliveryReportTotalsDto"/> is what avoids double-counting it in the summary.</summary>
+/// <see cref="DeliveryReportTotalsDto"/> is what avoids double-counting it in the summary.
+/// <see cref="CancellationDisposition"/> is null for every non-cancelled row — the spec's "cancellation
+/// reason and disposition" requirement, alongside <see cref="CancellationReason"/>.</summary>
 public sealed record DeliveryReportRowDto(
     Guid DeliveryReceiptId,
     Guid SaleId,
@@ -159,7 +161,8 @@ public sealed record DeliveryReportRowDto(
     string PreparedByName,
     DateTime? DeliveredAtUtc,
     DateTime? CancelledAtUtc,
-    string? CancellationReason);
+    string? CancellationReason,
+    CancellationDisposition? CancellationDisposition);
 
 /// <summary>Aggregates over the FULL filtered set, not just the current page. <see cref="TotalSchedules"/>
 /// counts DeliveryReceipt rows (how many schedules matched); every charge-related figure is computed
@@ -208,7 +211,9 @@ public sealed record PickupReportQuery(
 /// <summary>One pickup schedule row. No address column (a pickup transports nothing) and
 /// <see cref="DeliveryCharge"/> is always 0 — a pickup never carries one, regardless of what the
 /// underlying Sale's own DeliveryCharge is (that charge, if any, belongs to the sale's delivery side).
-/// <see cref="SaleGrandTotal"/> is read live from the linked Sale, same as the delivery report.</summary>
+/// <see cref="SaleGrandTotal"/> is read live from the linked Sale, same as the delivery report.
+/// <see cref="CancellationDisposition"/> is null for every non-cancelled row — the spec's "cancellation
+/// reason and disposition" requirement, alongside <see cref="CancellationReason"/>.</summary>
 public sealed record PickupReportRowDto(
     Guid DeliveryReceiptId,
     Guid SaleId,
@@ -227,91 +232,14 @@ public sealed record PickupReportRowDto(
     string PreparedByName,
     DateTime? CompletedAtUtc,
     DateTime? CancelledAtUtc,
-    string? CancellationReason);
+    string? CancellationReason,
+    CancellationDisposition? CancellationDisposition);
 
 /// <summary>Deliberately no charge-related figures here (unlike <see cref="DeliveryReportTotalsDto"/>) —
 /// a pickup never carries a delivery charge, so a charge total would always read zero and add nothing.</summary>
 public sealed record PickupReportTotalsDto(int TotalSchedules, int DistinctSalesCount);
 
 public sealed record PickupReportResultDto(PagedResult<PickupReportRowDto> Page, PickupReportTotalsDto Totals);
-
-// ---- Combined fulfillment view (one row per sale-item-per-method allocation) ----
-
-/// <summary>Optional row-level narrowing on top of the same branch/search scoping the other two report
-/// endpoints use. <see cref="Method"/>/<see cref="Status"/> filter the ALLOCATION rows themselves (e.g.
-/// "show only pending pickups"), not which sales qualify — narrowing happens after allocation rows are
-/// built, so it can select a status/method combination that appears on some but not all of a sale's
-/// lines without hiding the rest of that sale's other rows.</summary>
-public sealed record FulfillmentReportQuery(
-    Guid? BranchId = null,
-    FulfillmentMethod? Method = null,
-    FulfillmentStatus? Status = null,
-    string? Search = null,
-    int Page = 1,
-    int PageSize = PagedResult<FulfillmentReportRowDto>.DefaultPageSize);
-
-/// <summary>
-/// One ALLOCATION — a specific quantity of one sale item sitting in one method/status bucket, never a
-/// whole sale. A sale item split across take-now, a completed delivery, a still-pending delivery and an
-/// unscheduled pickup produces four of these. <see cref="Status"/> is the only place in the codebase
-/// where <see cref="FulfillmentStatus.Unscheduled"/> legitimately appears — synthesized for intent that
-/// has no matching schedule yet, never a stored row.
-/// <para>A cancelled schedule IS its own row (<see cref="Status"/> = <see cref="FulfillmentStatus.Cancelled"/>),
-/// carrying its cancelled quantity, its own id as <see cref="SourceScheduleId"/>, and — when the
-/// cancellation created one — the schedule it became as <see cref="ReplacementScheduleId"/> (looked up
-/// from <see cref="Negosio.Domain.Entities.FulfillmentConversion.SourceRecordId"/>/
-/// <c>ReplacementRecordId</c>; null for a plain release such as DeliverLater/PickupLater, which creates no
-/// replacement). This is what the report's cancellation/conversion history requirement means: the cancelled
-/// row is history, never re-added to any quantity total — the summary's seven quantity totals are computed
-/// exclusively from non-cancelled schedules, exactly as if this row did not exist for that purpose.</para>
-/// <para><see cref="ScheduledDate"/>/<see cref="CompletedAtUtc"/>/<see cref="RecipientName"/>/
-/// <see cref="SourceScheduleId"/>/<see cref="ReplacementScheduleId"/> are all null for a synthesized
-/// (TakeNow or Unscheduled) row — there is no schedule to read them from.</para>
-/// </summary>
-public sealed record FulfillmentReportRowDto(
-    Guid SaleId,
-    string SaleNumber,
-    Guid SaleItemId,
-    string ProductName,
-    string? VariantName,
-    decimal Quantity,
-    FulfillmentMethod Method,
-    FulfillmentStatus Status,
-    DateOnly? ScheduledDate,
-    DateTime? CompletedAtUtc,
-    string? RecipientName,
-    Guid? SourceScheduleId,
-    Guid? ReplacementScheduleId);
-
-/// <summary>
-/// The ten totals the spec names, aggregated over the FULL filtered set (every qualifying sale, not just
-/// the current page) — same "aggregate over everything, not the page" contract as
-/// <see cref="DeliveryReportTotalsDto"/>. The first seven are quantity sums; <see cref="TotalCancelledSchedules"/>
-/// counts schedule RECORDS (not units). <see cref="FullyFulfilledSalesCount"/> and
-/// <see cref="SalesNeedingAttentionCount"/> are sale counts derived by running
-/// <see cref="Negosio.Application.Delivery.SaleFulfillmentCalculator.Derive"/> once per qualifying sale —
-/// never a separate ad-hoc computation — so this report and the Sale-detail page can never disagree about
-/// a sale's status. <see cref="TotalDeliveryCharges"/> is not one of the spec's ten named totals but is
-/// included for the same reason <see cref="DeliveryReportTotalsDto.TotalDeliveryCharges"/> exists: it is
-/// summed over each qualifying sale's DeliveryCharge counted exactly ONCE (see
-/// <c>ReportsService.GetFulfillmentAsync</c>'s doc comment for why this can never be multiplied by however
-/// many delivery/pickup schedules that sale has).
-/// </summary>
-public sealed record FulfillmentReportSummaryDto(
-    decimal TotalTakeNowQuantity,
-    decimal TotalDeliveryUnscheduledQuantity,
-    decimal TotalDeliveryPendingQuantity,
-    decimal TotalDeliveredQuantity,
-    decimal TotalPickupUnscheduledQuantity,
-    decimal TotalPickupPendingQuantity,
-    decimal TotalClaimedQuantity,
-    int TotalCancelledSchedules,
-    int FullyFulfilledSalesCount,
-    int SalesNeedingAttentionCount,
-    decimal TotalDeliveryCharges);
-
-public sealed record FulfillmentReportResultDto(
-    PagedResult<FulfillmentReportRowDto> Page, FulfillmentReportSummaryDto Summary);
 
 // ---- Sale fulfillment view ----
 
@@ -352,6 +280,4 @@ public interface IReportsService
     Task<DeliveryFulfillmentReportResultDto> GetDeliveryFulfillmentAsync(DeliveryFulfillmentReportQuery query, CancellationToken cancellationToken = default);
 
     Task<PickupReportResultDto> GetPickupsAsync(PickupReportQuery query, CancellationToken cancellationToken = default);
-
-    Task<FulfillmentReportResultDto> GetFulfillmentAsync(FulfillmentReportQuery query, CancellationToken cancellationToken = default);
 }

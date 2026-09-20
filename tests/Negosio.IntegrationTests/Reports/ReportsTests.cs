@@ -302,14 +302,16 @@ public class ReportsTests : IntegrationTest
 
         // A sale now has at most one ACTIVE schedule at a time, so "two schedule rows on one sale" means
         // the first was cancelled and a second created afterward — still two historical DeliveryReceipt
-        // rows for the report to total, exactly as a genuine reschedule would produce.
+        // rows for the report to total, exactly as a genuine reschedule would produce. Cancelling with
+        // DeliverLater atomically creates its own replacement schedule (Task 3B), so the second row comes
+        // from the cancel itself, not a separate manual create.
         var firstResp = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
             new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null));
         var first = (await firstResp.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
-        await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel",
-            new CancelDeliveryRequest("Reschedule", CancellationDisposition.DeliverLater, null));
-        await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
-            new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null));
+        var cancelResp = await Client.PostAsJsonAsync($"/api/delivery-receipts/{first.Id}/cancel",
+            new CancelDeliveryRequest("Reschedule", CancellationDisposition.DeliverLater, null,
+                new DeliveryReplacementInput(today, "Juan", "123 Ayala Ave", null, null)));
+        cancelResp.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var report = await Client.GetFromJsonAsync<DeliveryReportResultDto>("/api/reports/deliveries", TestJson.Options);
 
@@ -375,7 +377,7 @@ public class ReportsTests : IntegrationTest
             "/api/reports/delivery-fulfillment", TestJson.Options);
 
         var row = report!.Page.Items.Should().ContainSingle(r => r.SaleId == sale.SaleId).Subject;
-        row.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.AwaitingDelivery);
+        row.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PendingDelivery);
         row.TotalDeliveryRequiredQuantity.Should().Be(10m); // whole-sale intent, per Task 1
         row.TotalPendingQuantity.Should().Be(10m);
         row.TotalUnscheduledQuantity.Should().Be(0m); // a create now schedules 100% in one shot
