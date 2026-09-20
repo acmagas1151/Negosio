@@ -92,22 +92,26 @@ export const CANCELLATION_DISPOSITION_LABELS: Record<CancellationDisposition, st
 }
 
 export const SALE_FULFILLMENT_STATUS_LABELS: Record<SaleFulfillmentStatus, string> = {
-  NotApplicable: 'No fulfillment needed',
-  Fulfilled: 'Fulfilled',
-  PartiallyFulfilled: 'Partially fulfilled',
-  AwaitingDelivery: 'Awaiting delivery',
-  AwaitingPickup: 'Awaiting pickup',
-  AwaitingDeliveryAndPickup: 'Awaiting delivery and pickup',
-  NeedsScheduling: 'Needs scheduling',
-  NeedsAttention: 'Needs attention',
+  TakeNow: 'Take now',
+  PendingDelivery: 'Pending delivery',
+  Delivered: 'Delivered',
+  PendingPickup: 'Pending pickup',
+  Claimed: 'Claimed',
+  CancelledOrReplaced: 'Cancelled / replaced',
 }
 
 export function saleFulfillmentStatusTone(s: SaleFulfillmentStatus): 'neutral' | 'success' | 'warning' | 'danger' {
   switch (s) {
-    case 'Fulfilled': return 'success'
-    case 'NeedsAttention': return 'danger'
-    case 'NotApplicable': return 'neutral'
-    default: return 'warning'
+    case 'Delivered':
+    case 'Claimed':
+      return 'success'
+    case 'PendingDelivery':
+    case 'PendingPickup':
+      return 'warning'
+    case 'CancelledOrReplaced':
+      return 'danger'
+    case 'TakeNow':
+      return 'neutral'
   }
 }
 

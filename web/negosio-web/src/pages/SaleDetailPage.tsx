@@ -20,8 +20,6 @@ import { hasReturnableQty } from '../lib/returns'
 import { useCan } from '../lib/useCan'
 import { CancelFulfillmentModal } from '../components/sales/CancelFulfillmentModal'
 import { ConversionHistoryList } from '../components/sales/ConversionHistoryList'
-import { CreateFulfillmentScheduleModal } from '../components/sales/CreateFulfillmentScheduleModal'
-import { FulfillmentBreakdownTable } from '../components/sales/FulfillmentBreakdownTable'
 import { FulfillmentStatusBadge } from '../components/sales/FulfillmentStatusBadge'
 import { ReturnModal } from '../components/sales/ReturnModal'
 import { SaleItemsTable } from '../components/sales/SaleItemsTable'
@@ -31,17 +29,21 @@ import { VoidSaleModal } from '../components/sales/VoidSaleModal'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
 import { Badge, Button, ConfirmDialog, ErrorState, LoadingState, useToast } from '../components/ui'
 
-/** One row in the Deliveries or Pickups section. "Mark delivered" only ever appears on a Delivery
- * row and "Mark claimed" only ever appears on a Pickup row — the backend would reject the mismatch,
- * but the UI must not offer it in the first place. */
+/** One row in the sale's Delivery/Pickup schedule history. Only the sale's single *active* schedule
+ * (Pending, and matching `summary.activeSchedule`) ever shows the Mark-Delivered/Mark-Claimed/Cancel
+ * actions — every other row here is history (cancelled, or a stale read) and is display-only.
+ * "Mark delivered" only ever appears on a Delivery row and "Mark claimed" only ever appears on a
+ * Pickup row — the backend would reject the mismatch, but the UI must not offer it in the first place. */
 function ScheduleRow({
   schedule,
+  isActive,
   canCancel,
   onMarkDelivered,
   onMarkClaimed,
   onCancel,
 }: {
   schedule: FulfillmentScheduleDto
+  isActive: boolean
   canCancel: boolean
   /** Only invoked for a Delivery row — see the render guard below. */
   onMarkDelivered?: () => void
@@ -49,7 +51,7 @@ function ScheduleRow({
   onMarkClaimed?: () => void
   onCancel: () => void
 }) {
-  const isPending = schedule.status === 'Pending'
+  const showActions = isActive && schedule.status === 'Pending'
   return (
     <div className="rounded-xl border border-border bg-surface p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -68,29 +70,49 @@ function ScheduleRow({
           >
             Print
           </Button>
-          {isPending && schedule.method === 'Delivery' && (
+          {showActions && schedule.method === 'Delivery' && (
             <Button size="sm" onClick={onMarkDelivered}>
               Mark delivered
             </Button>
           )}
-          {isPending && schedule.method === 'Pickup' && (
+          {showActions && schedule.method === 'Pickup' && (
             <Button size="sm" onClick={onMarkClaimed}>
               Mark claimed
             </Button>
           )}
-          {isPending && canCancel && (
+          {showActions && canCancel && (
             <Button variant="destructive" size="sm" onClick={onCancel}>
               Cancel
             </Button>
           )}
         </div>
       </div>
-      <p className="mt-1 text-[13px] text-text-secondary">
-        {schedule.recipientName}
-        {schedule.deliveryAddress ? ` · ${schedule.deliveryAddress}` : ''}
-      </p>
+      <dl className="mt-2 space-y-1 text-[13px] text-text-secondary">
+        <div>
+          <dt className="inline font-medium text-text-primary">Recipient: </dt>
+          <dd className="inline">{schedule.recipientName}</dd>
+        </div>
+        {schedule.method === 'Delivery' && schedule.deliveryAddress && (
+          <div>
+            <dt className="inline font-medium text-text-primary">Address: </dt>
+            <dd className="inline">{schedule.deliveryAddress}</dd>
+          </div>
+        )}
+        {schedule.contactNumber && (
+          <div>
+            <dt className="inline font-medium text-text-primary">Contact: </dt>
+            <dd className="inline">{schedule.contactNumber}</dd>
+          </div>
+        )}
+      </dl>
+      {schedule.notes && (
+        <div className="mt-2 rounded-lg border border-border-light bg-surface-subtle p-2">
+          <p className="text-[12px] font-semibold text-text-primary">Notes</p>
+          <p className="text-[13px] text-text-secondary">{schedule.notes}</p>
+        </div>
+      )}
       {schedule.status === 'Cancelled' && (
-        <p className="mt-1 text-[12px] text-text-muted">
+        <p className="mt-2 text-[12px] text-text-muted">
           Cancelled: {schedule.cancellationReason} ·{' '}
           {schedule.cancellationDisposition
             ? CANCELLATION_DISPOSITION_LABELS[schedule.cancellationDisposition]
@@ -115,7 +137,6 @@ export default function SaleDetailPage() {
   const canCancelFulfillment = useCan('delivery:cancel')
   const [returnOpen, setReturnOpen] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)
-  const [createMethod, setCreateMethod] = useState<'Delivery' | 'Pickup' | null>(null)
   const [cancelTarget, setCancelTarget] = useState<FulfillmentScheduleDto | null>(null)
   const [deliverTarget, setDeliverTarget] = useState<{ id: string; sequenceNumber: number } | null>(null)
   const [claimTarget, setClaimTarget] = useState<{ id: string; sequenceNumber: number } | null>(null)
@@ -340,7 +361,7 @@ export default function SaleDetailPage() {
                   </div>
                 )}
 
-                {summary && summary.fulfillmentStatus !== 'NotApplicable' && (
+                {summary && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <h2 className="text-lg font-bold text-text-primary">Fulfillment</h2>
@@ -349,70 +370,60 @@ export default function SaleDetailPage() {
                       </Badge>
                     </div>
 
-                    <FulfillmentBreakdownTable items={summary.items} />
-
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-semibold text-text-primary">Deliveries</h3>
-                      {summary.canCreateDelivery ? (
-                        <Button variant="secondary" size="sm" onClick={() => setCreateMethod('Delivery')}>
-                          Create delivery
-                        </Button>
-                      ) : (
-                        <p className="text-[13px] text-text-muted">
-                          All delivery items have already been scheduled or delivered.
-                        </p>
-                      )}
-                      <div className="space-y-2">
-                        {summary.deliveries.map((dr) => (
-                          <ScheduleRow
-                            key={dr.id}
-                            schedule={dr}
-                            canCancel={canCancelFulfillment}
-                            onMarkDelivered={() => setDeliverTarget({ id: dr.id, sequenceNumber: dr.sequenceNumber })}
-                            onCancel={() => setCancelTarget(dr)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-semibold text-text-primary">Pickups</h3>
-                      {summary.canCreatePickup ? (
-                        <Button variant="secondary" size="sm" onClick={() => setCreateMethod('Pickup')}>
-                          Create pickup
-                        </Button>
-                      ) : (
-                        <p className="text-[13px] text-text-muted">
-                          All pickup items have already been scheduled or claimed.
-                        </p>
-                      )}
-                      <div className="space-y-2">
-                        {summary.pickups.map((pu) => (
-                          <ScheduleRow
-                            key={pu.id}
-                            schedule={pu}
-                            canCancel={canCancelFulfillment}
-                            onMarkClaimed={() => setClaimTarget({ id: pu.id, sequenceNumber: pu.sequenceNumber })}
-                            onCancel={() => setCancelTarget(pu)}
-                          />
-                        ))}
-                      </div>
-                    </div>
+                    {(summary.deliveries.length > 0 || summary.pickups.length > 0) &&
+                      (() => {
+                        // The sale's whole-sale method: read off the active schedule when there is
+                        // one, else fall back to whichever history list is non-empty (a fully
+                        // cancelled sale with no replacement — see Task 3's note, shouldn't normally
+                        // happen but the fallback keeps the section from silently disappearing).
+                        const method: 'Delivery' | 'Pickup' =
+                          summary.activeSchedule?.method === 'Pickup' || summary.activeSchedule?.method === 'Delivery'
+                            ? summary.activeSchedule.method
+                            : summary.deliveries.length > 0
+                              ? 'Delivery'
+                              : 'Pickup'
+                        const schedules = method === 'Delivery' ? summary.deliveries : summary.pickups
+                        // Active schedule first, then cancelled ones most-recent-first.
+                        const sorted = [...schedules].sort((a, b) => {
+                          const aActive = a.status !== 'Cancelled'
+                          const bActive = b.status !== 'Cancelled'
+                          if (aActive !== bActive) return aActive ? -1 : 1
+                          return b.sequenceNumber - a.sequenceNumber
+                        })
+                        return (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <h3 className="text-sm font-semibold text-text-primary">
+                                {FULFILLMENT_METHOD_LABELS[method]} history
+                              </h3>
+                              {method === 'Delivery' && summary.deliveryCharge > 0 && (
+                                <span className="text-[13px] text-text-secondary">
+                                  Delivery charge: {formatMoney(summary.deliveryCharge)}
+                                </span>
+                              )}
+                            </div>
+                            <div className="space-y-2">
+                              {sorted.map((s) => (
+                                <ScheduleRow
+                                  key={s.id}
+                                  schedule={s}
+                                  isActive={summary.activeSchedule?.id === s.id}
+                                  canCancel={canCancelFulfillment}
+                                  onMarkDelivered={() => setDeliverTarget({ id: s.id, sequenceNumber: s.sequenceNumber })}
+                                  onMarkClaimed={() => setClaimTarget({ id: s.id, sequenceNumber: s.sequenceNumber })}
+                                  onCancel={() => setCancelTarget(s)}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })()}
 
                     <ConversionHistoryList conversions={summary.conversions} />
                   </div>
                 )}
 
                 <ReturnModal open={returnOpen} onClose={() => setReturnOpen(false)} sale={d} />
-                <CreateFulfillmentScheduleModal
-                  open={createMethod != null}
-                  onClose={() => setCreateMethod(null)}
-                  saleId={d.sale.id}
-                  method={createMethod ?? 'Delivery'}
-                  availableItems={(summary?.items ?? []).filter((i) =>
-                    createMethod === 'Pickup' ? i.pickupUnscheduledQuantity > 0 : i.deliveryUnscheduledQuantity > 0,
-                  )}
-                />
                 {cancelTarget && (
                   <CancelFulfillmentModal
                     key={cancelTarget.id}
