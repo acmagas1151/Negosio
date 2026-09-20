@@ -3,35 +3,25 @@ import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
-  AlertTriangle,
   Banknote,
-  BadgeCheck,
-  CheckCircle2,
-  Clock,
   Gift,
   PackageCheck,
   PackageOpen,
   Percent,
   ShoppingBag,
   Truck,
-  XCircle,
-  Zap,
 } from 'lucide-react'
 import { branchesApi } from '../api/branches'
 import { reportsApi } from '../api/reports'
 import type {
   DeliveryReportPreset,
-  FulfillmentMethod,
-  FulfillmentStatus,
   PickupReportPreset,
   SaleFulfillmentStatus,
 } from '../api/types'
 import { usePagedQuery } from '../hooks/usePagedQuery'
 import { formatDeliveryCharge, formatMoney, formatQty } from '../lib/format'
 import {
-  FULFILLMENT_METHOD_LABELS,
   SALE_FULFILLMENT_STATUS_LABELS,
-  fulfillmentStatusLabel,
   saleFulfillmentStatusTone,
 } from '../lib/pos'
 import { FulfillmentStatusBadge } from '../components/sales/FulfillmentStatusBadge'
@@ -82,67 +72,7 @@ const PICKUP_PRESETS: { value: PickupReportPreset; label: string }[] = [
 type PickupFilters = { branchId: string | undefined; preset: PickupReportPreset | undefined }
 const PICKUP_DEFAULT_FILTERS: PickupFilters = { branchId: undefined, preset: undefined }
 
-// ---- All fulfillment tab (one row per sale-item-per-method/status allocation) ----
-
-const ALL_METHODS: FulfillmentMethod[] = ['Delivery', 'Pickup', 'TakeNow']
-const ALL_STATUSES: FulfillmentStatus[] = ['Unscheduled', 'Pending', 'Completed', 'Cancelled']
-
-type AllFulfillmentFilters = {
-  branchId: string | undefined
-  method: FulfillmentMethod | undefined
-  status: FulfillmentStatus | undefined
-}
-const ALL_FULFILLMENT_DEFAULT_FILTERS: AllFulfillmentFilters = {
-  branchId: undefined,
-  method: undefined,
-  status: undefined,
-}
-
-/** Generic status labels for when no single method is selected (the combined tab can span every
- * method at once, so there is no one method to hand `fulfillmentStatusLabel` — see task-18-report.md
- * for why). Once a specific method is chosen, options relabel through `fulfillmentStatusLabel` like
- * every other tab's status dropdown. */
-function statusOptionLabel(method: FulfillmentMethod | undefined, status: FulfillmentStatus): string {
-  if (!method) {
-    switch (status) {
-      case 'Unscheduled':
-        return 'Unscheduled'
-      case 'Pending':
-        return 'Pending'
-      case 'Completed':
-        return 'Completed'
-      case 'Cancelled':
-        return 'Cancelled'
-    }
-  }
-  return fulfillmentStatusLabel(method, status)
-}
-
-/** The row's own conversion/cancellation signal, from `sourceScheduleId`/`replacementScheduleId`.
- * `sourceScheduleId` is populated on every schedule-backed row (it's just that row's own schedule
- * id), so it isn't itself a "history" signal — only a cancelled row IS a history entry, and only
- * `replacementScheduleId` says whether that cancellation produced a new schedule (see
- * ReportsService.GetFulfillmentAsync's doc comment). */
-function historyLabel(row: { status: FulfillmentStatus; replacementScheduleId: string | null }): ReactNode {
-  if (row.status !== 'Cancelled') return <span className="text-text-muted">—</span>
-  return row.replacementScheduleId ? (
-    <Badge tone="blue">Converted</Badge>
-  ) : (
-    <span className="text-text-muted">No replacement</span>
-  )
-}
-
-/** `d` is a `DateOnly` ("yyyy-MM-dd"), never a full timestamp. Anchor to local midnight so a
- * negative-UTC-offset browser doesn't parse it as UTC midnight and roll the date back a day. */
-function formatDateOnly(d: string | null): string {
-  return d ? new Date(`${d}T00:00:00`).toLocaleDateString() : '—'
-}
-
-function formatDateTime(d: string | null): string {
-  return d ? new Date(d).toLocaleString() : '—'
-}
-
-type Tab = 'deliveries' | 'pickups' | 'all'
+type Tab = 'deliveries' | 'pickups'
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
@@ -158,7 +88,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 
 export default function FulfillmentReportsPage() {
   const [params, setParams] = useSearchParams()
-  const tab: Tab = params.get('tab') === 'pickups' ? 'pickups' : params.get('tab') === 'all' ? 'all' : 'deliveries'
+  const tab: Tab = params.get('tab') === 'pickups' ? 'pickups' : 'deliveries'
   const setTab = (next: Tab) => {
     setParams((prev) => {
       const p = new URLSearchParams(prev)
@@ -243,33 +173,6 @@ export default function FulfillmentReportsPage() {
     enabled: tab === 'pickups',
   })
 
-  // --- All fulfillment tab query ---
-
-  const all = usePagedQuery<AllFulfillmentFilters>({ defaultFilters: ALL_FULFILLMENT_DEFAULT_FILTERS })
-  const allQuery = useQuery({
-    queryKey: [
-      'reports',
-      'fulfillment',
-      {
-        page: all.page,
-        search: all.search,
-        branchId: all.filters.branchId,
-        method: all.filters.method,
-        status: all.filters.status,
-      },
-    ],
-    queryFn: () =>
-      reportsApi.fulfillment({
-        page: all.page,
-        pageSize: all.pageSize,
-        search: all.search || undefined,
-        branchId: all.filters.branchId,
-        method: all.filters.method,
-        status: all.filters.status,
-      }),
-    enabled: tab === 'all',
-  })
-
   return (
     <DashboardLayout title="Fulfillment Reports">
       <div className="space-y-5">
@@ -281,9 +184,6 @@ export default function FulfillmentReportsPage() {
             </TabButton>
             <TabButton active={tab === 'pickups'} onClick={() => setTab('pickups')}>
               Pickups
-            </TabButton>
-            <TabButton active={tab === 'all'} onClick={() => setTab('all')}>
-              All fulfillment
             </TabButton>
           </div>
         </div>
@@ -380,7 +280,7 @@ export default function FulfillmentReportsPage() {
                     <Table.Body>
                       {Array.from({ length: 6 }).map((_, i) => (
                         <Table.Row key={i}>
-                          {Array.from({ length: 7 }).map((__, j) => (
+                          {Array.from({ length: 8 }).map((__, j) => (
                             <Table.Cell key={j}>
                               <SkeletonText className={j === 0 ? 'w-24' : 'w-20'} />
                             </Table.Cell>
@@ -406,6 +306,7 @@ export default function FulfillmentReportsPage() {
                         <Table.HeaderCell>Recipient</Table.HeaderCell>
                         <Table.HeaderCell align="right">Delivery charge</Table.HeaderCell>
                         <Table.HeaderCell>Prepared by</Table.HeaderCell>
+                        <Table.HeaderCell>Notes</Table.HeaderCell>
                       </Table.Head>
                       <Table.Body>
                         {scheduleQuery.data.page.items.map((r) => (
@@ -424,6 +325,15 @@ export default function FulfillmentReportsPage() {
                             <Table.Cell>{r.recipientName}</Table.Cell>
                             <Table.Cell align="right">{formatDeliveryCharge(r.deliveryCharge)}</Table.Cell>
                             <Table.Cell>{r.preparedByName}</Table.Cell>
+                            <Table.Cell>
+                              {r.deliveryNotes ? (
+                                <span className="block max-w-[16rem] truncate" title={r.deliveryNotes}>
+                                  {r.deliveryNotes}
+                                </span>
+                              ) : (
+                                <span className="text-text-muted">—</span>
+                              )}
+                            </Table.Cell>
                           </Table.Row>
                         ))}
                       </Table.Body>
@@ -497,7 +407,6 @@ export default function FulfillmentReportsPage() {
                   >
                     <option value="">All statuses</option>
                     {(Object.keys(SALE_FULFILLMENT_STATUS_LABELS) as SaleFulfillmentStatus[])
-                      .filter((s) => s !== 'NotApplicable')
                       .map((s) => (
                         <option key={s} value={s}>
                           {SALE_FULFILLMENT_STATUS_LABELS[s]}
@@ -655,11 +564,12 @@ export default function FulfillmentReportsPage() {
                   <Table.HeaderCell>Status</Table.HeaderCell>
                   <Table.HeaderCell>Recipient</Table.HeaderCell>
                   <Table.HeaderCell>Prepared by</Table.HeaderCell>
+                  <Table.HeaderCell>Notes</Table.HeaderCell>
                 </Table.Head>
                 <Table.Body>
                   {Array.from({ length: 6 }).map((_, i) => (
                     <Table.Row key={i}>
-                      {Array.from({ length: 6 }).map((__, j) => (
+                      {Array.from({ length: 7 }).map((__, j) => (
                         <Table.Cell key={j}>
                           <SkeletonText className={j === 0 ? 'w-24' : 'w-20'} />
                         </Table.Cell>
@@ -684,6 +594,7 @@ export default function FulfillmentReportsPage() {
                     <Table.HeaderCell>Status</Table.HeaderCell>
                     <Table.HeaderCell>Recipient</Table.HeaderCell>
                     <Table.HeaderCell>Prepared by</Table.HeaderCell>
+                    <Table.HeaderCell>Notes</Table.HeaderCell>
                   </Table.Head>
                   <Table.Body>
                     {pickupQuery.data.page.items.map((r) => (
@@ -701,6 +612,15 @@ export default function FulfillmentReportsPage() {
                         </Table.Cell>
                         <Table.Cell>{r.recipientName}</Table.Cell>
                         <Table.Cell>{r.preparedByName}</Table.Cell>
+                        <Table.Cell>
+                          {r.notes ? (
+                            <span className="block max-w-[16rem] truncate" title={r.notes}>
+                              {r.notes}
+                            </span>
+                          ) : (
+                            <span className="text-text-muted">—</span>
+                          )}
+                        </Table.Cell>
                       </Table.Row>
                     ))}
                   </Table.Body>
@@ -711,210 +631,6 @@ export default function FulfillmentReportsPage() {
                   totalCount={pickupQuery.data.page.totalCount}
                   totalPages={pickupQuery.data.page.totalPages}
                   onPageChange={pickup.setPage}
-                />
-              </>
-            )}
-          </div>
-        )}
-
-        {tab === 'all' && (
-          <div className="space-y-5">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-              {allQuery.isPending ? (
-                Array.from({ length: 11 }).map((_, i) => <SkeletonCard key={i} />)
-              ) : (
-                <>
-                  <MetricCard icon={Zap} accent="purple" label="Take now" value={formatQty(allQuery.data?.summary.totalTakeNowQuantity ?? 0)} />
-                  <MetricCard
-                    icon={Truck}
-                    accent="amber"
-                    label="Delivery — unscheduled"
-                    value={formatQty(allQuery.data?.summary.totalDeliveryUnscheduledQuantity ?? 0)}
-                  />
-                  <MetricCard
-                    icon={Clock}
-                    accent="amber"
-                    label="Delivery — pending"
-                    value={formatQty(allQuery.data?.summary.totalDeliveryPendingQuantity ?? 0)}
-                  />
-                  <MetricCard
-                    icon={CheckCircle2}
-                    accent="green"
-                    label="Delivered"
-                    value={formatQty(allQuery.data?.summary.totalDeliveredQuantity ?? 0)}
-                  />
-                  <MetricCard
-                    icon={PackageOpen}
-                    accent="blue"
-                    label="Pickup — unscheduled"
-                    value={formatQty(allQuery.data?.summary.totalPickupUnscheduledQuantity ?? 0)}
-                  />
-                  <MetricCard
-                    icon={Clock}
-                    accent="blue"
-                    label="Pickup — pending"
-                    value={formatQty(allQuery.data?.summary.totalPickupPendingQuantity ?? 0)}
-                  />
-                  <MetricCard
-                    icon={PackageCheck}
-                    accent="green"
-                    label="Claimed"
-                    value={formatQty(allQuery.data?.summary.totalClaimedQuantity ?? 0)}
-                  />
-                  <MetricCard
-                    icon={XCircle}
-                    accent="red"
-                    label="Cancelled schedules"
-                    value={allQuery.data?.summary.totalCancelledSchedules ?? 0}
-                  />
-                  <MetricCard
-                    icon={BadgeCheck}
-                    accent="green"
-                    label="Fully fulfilled sales"
-                    value={allQuery.data?.summary.fullyFulfilledSalesCount ?? 0}
-                  />
-                  <MetricCard
-                    icon={AlertTriangle}
-                    accent="red"
-                    label="Sales needing attention"
-                    value={allQuery.data?.summary.salesNeedingAttentionCount ?? 0}
-                  />
-                  <MetricCard
-                    icon={Banknote}
-                    accent="amber"
-                    label="Total delivery charges"
-                    value={formatMoney(allQuery.data?.summary.totalDeliveryCharges ?? 0)}
-                  />
-                </>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-              <SearchInput
-                className="sm:max-w-xs"
-                value={all.searchInput}
-                onChange={all.setSearchInput}
-                placeholder="Search by sale #"
-              />
-              {multiBranch && (
-                <Select
-                  aria-label="Branch"
-                  className="sm:max-w-[12rem]"
-                  value={all.filters.branchId ?? ''}
-                  onChange={(e) => all.setFilter('branchId', e.target.value || undefined)}
-                >
-                  <option value="">All branches</option>
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                      {b.isActive ? '' : ' (inactive)'}
-                    </option>
-                  ))}
-                </Select>
-              )}
-              <Select
-                aria-label="Method"
-                className="sm:max-w-[10rem]"
-                value={all.filters.method ?? ''}
-                onChange={(e) => all.setFilter('method', (e.target.value as FulfillmentMethod) || undefined)}
-              >
-                <option value="">All methods</option>
-                {ALL_METHODS.map((m) => (
-                  <option key={m} value={m}>
-                    {FULFILLMENT_METHOD_LABELS[m]}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                aria-label="Fulfillment status"
-                className="sm:max-w-[14rem]"
-                value={all.filters.status ?? ''}
-                onChange={(e) => all.setFilter('status', (e.target.value as FulfillmentStatus) || undefined)}
-              >
-                <option value="">All statuses</option>
-                {ALL_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {statusOptionLabel(all.filters.method, s)}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            {allQuery.isError ? (
-              <ErrorState message={(allQuery.error as Error).message} onRetry={() => allQuery.refetch()} />
-            ) : allQuery.isPending ? (
-              <Table>
-                <Table.Head>
-                  <Table.HeaderCell>Sale #</Table.HeaderCell>
-                  <Table.HeaderCell>Item</Table.HeaderCell>
-                  <Table.HeaderCell align="right">Qty</Table.HeaderCell>
-                  <Table.HeaderCell>Status</Table.HeaderCell>
-                  <Table.HeaderCell>Scheduled</Table.HeaderCell>
-                  <Table.HeaderCell>Completed</Table.HeaderCell>
-                  <Table.HeaderCell>Recipient</Table.HeaderCell>
-                  <Table.HeaderCell>History</Table.HeaderCell>
-                </Table.Head>
-                <Table.Body>
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <Table.Row key={i}>
-                      {Array.from({ length: 8 }).map((__, j) => (
-                        <Table.Cell key={j}>
-                          <SkeletonText className={j === 0 ? 'w-24' : 'w-16'} />
-                        </Table.Cell>
-                      ))}
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table>
-            ) : allQuery.data.page.items.length === 0 ? (
-              <EmptyState
-                icon={PackageCheck}
-                title="No fulfillment rows match these filters"
-                description="Try clearing the search, branch, method, or status filter."
-              />
-            ) : (
-              <>
-                <Table>
-                  <Table.Head>
-                    <Table.HeaderCell>Sale #</Table.HeaderCell>
-                    <Table.HeaderCell>Item</Table.HeaderCell>
-                    <Table.HeaderCell align="right">Qty</Table.HeaderCell>
-                    <Table.HeaderCell>Status</Table.HeaderCell>
-                    <Table.HeaderCell>Scheduled</Table.HeaderCell>
-                    <Table.HeaderCell>Completed</Table.HeaderCell>
-                    <Table.HeaderCell>Recipient</Table.HeaderCell>
-                    <Table.HeaderCell>History</Table.HeaderCell>
-                  </Table.Head>
-                  <Table.Body>
-                    {allQuery.data.page.items.map((r) => (
-                      <Table.Row key={`${r.saleItemId}-${r.method}-${r.status}-${r.sourceScheduleId ?? 'synthetic'}`}>
-                        <Table.Cell>
-                          <Link to={`/sales/${r.saleId}`} className="font-semibold text-primary-700 hover:underline">
-                            #{r.saleNumber}
-                          </Link>
-                        </Table.Cell>
-                        <Table.Cell>
-                          {r.productName}
-                          {r.variantName && <span className="text-text-muted"> · {r.variantName}</span>}
-                        </Table.Cell>
-                        <Table.Cell align="right">{formatQty(r.quantity)}</Table.Cell>
-                        <Table.Cell>
-                          <FulfillmentStatusBadge method={r.method} status={r.status} />
-                        </Table.Cell>
-                        <Table.Cell>{formatDateOnly(r.scheduledDate)}</Table.Cell>
-                        <Table.Cell>{formatDateTime(r.completedAtUtc)}</Table.Cell>
-                        <Table.Cell>{r.recipientName ?? <span className="text-text-muted">—</span>}</Table.Cell>
-                        <Table.Cell>{historyLabel(r)}</Table.Cell>
-                      </Table.Row>
-                    ))}
-                  </Table.Body>
-                </Table>
-                <Pagination
-                  page={allQuery.data.page.page}
-                  pageSize={allQuery.data.page.pageSize}
-                  totalCount={allQuery.data.page.totalCount}
-                  totalPages={allQuery.data.page.totalPages}
-                  onPageChange={all.setPage}
                 />
               </>
             )}
