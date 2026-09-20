@@ -132,8 +132,8 @@ export default function SaleDetailPage() {
   // Mirrors AuthorizationPolicies.FulfillmentCancel (Owner/Admin/Manager) on the backend. The
   // capability key itself is still named 'delivery:cancel' in useCan.ts — it predates the backend's
   // DeliveryCancel -> FulfillmentCancel rename and covers the same role set for both Delivery and
-  // Pickup cancellation. Renaming the key is out of this task's file list (useCan.ts isn't touched
-  // here); flagged for whoever next edits useCan.ts (likely Task 16, which owns the cancel modal).
+  // Pickup cancellation. Renaming the key is out of scope here (useCan.ts isn't touched in this
+  // change); flagged for whoever next edits useCan.ts.
   const canCancelFulfillment = useCan('delivery:cancel')
   const [returnOpen, setReturnOpen] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)

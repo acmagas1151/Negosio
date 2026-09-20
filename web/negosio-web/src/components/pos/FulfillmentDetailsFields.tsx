@@ -75,6 +75,7 @@ export function FulfillmentDetailsFields({
         onChange={(e) => onChange({ recipientName: e.target.value })}
         error={(attempted && errors.recipientName) || undefined}
         disabled={disabled}
+        maxLength={120}
       />
       {isDelivery && (
         <TextArea
@@ -85,6 +86,7 @@ export function FulfillmentDetailsFields({
           onChange={(e) => onChange({ deliveryAddress: e.target.value })}
           error={(attempted && errors.deliveryAddress) || undefined}
           disabled={disabled}
+          maxLength={300}
         />
       )}
       <div className="grid gap-x-3 sm:grid-cols-2">
@@ -94,6 +96,7 @@ export function FulfillmentDetailsFields({
           value={values.contactNumber}
           onChange={(e) => onChange({ contactNumber: e.target.value })}
           disabled={disabled}
+          maxLength={40}
         />
         <TextField
           label={`${methodLabel} notes (optional)`}
@@ -101,6 +104,7 @@ export function FulfillmentDetailsFields({
           value={values.notes}
           onChange={(e) => onChange({ notes: e.target.value })}
           disabled={disabled}
+          maxLength={1000}
         />
       </div>
     </div>

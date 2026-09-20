@@ -11,15 +11,16 @@ using Negosio.Domain.Enums;
 namespace Negosio.Application.Delivery;
 
 /// <summary>
-/// Schedules, tracks and reports on one or more <see cref="DeliveryReceipt"/> records per
-/// <see cref="Sale"/> — deliveries the business makes and pickups the customer collects, discriminated
-/// by <see cref="DeliveryReceipt.Method"/> on the one shared table.
-/// <para>Every sold quantity is Take-now unless checkout marked part of the line for delivery
-/// (<c>SaleItem.DeliveryRequiredQuantity</c>) or pickup (<c>SaleItem.PickupRequiredQuantity</c>). Those two
-/// intent pools are strictly separate: quantity marked for delivery can never be scheduled as a pickup
-/// without an explicit, audited conversion, and take-now quantity can never be scheduled or converted at
-/// all. See the plan's Global Constraints for the concurrency, idempotency and atomicity strategy this
-/// class implements.</para>
+/// Schedules, tracks and reports on <see cref="DeliveryReceipt"/> records per <see cref="Sale"/> —
+/// deliveries the business makes and pickups the customer collects, discriminated by
+/// <see cref="DeliveryReceipt.Method"/> on the one shared table.
+/// <para>Fulfillment is chosen once per whole sale at checkout — Take now, Delivery or Pickup — and covers
+/// every item on the sale at its full quantity; there is no per-line or partial allocation. A Delivery or
+/// Pickup sale gets a schedule covering everything earmarked for that method
+/// (<c>SaleItem.DeliveryRequiredQuantity</c> / <c>SaleItem.PickupRequiredQuantity</c>), and a sale has at
+/// most one active (non-Cancelled) schedule at a time; cancelling it and choosing again — including
+/// converting between Delivery and Pickup — always creates a brand-new row. See the plan's Global
+/// Constraints for the concurrency, idempotency and atomicity strategy this class implements.</para>
 /// </summary>
 public sealed class DeliveryReceiptService : IDeliveryReceiptService
 {
@@ -237,9 +238,14 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             (dr.Method == FulfillmentMethod.Pickup ? pickups : deliveries).Add(dto);
         }
 
-        // At most one non-Cancelled schedule exists across both lists at any time — Task 2's
-        // CreateScheduleAsync guarantee — so there is never more than one to find here.
-        var activeSchedule = deliveries.Concat(pickups).SingleOrDefault(d => d.Status != FulfillmentStatus.Cancelled);
+        // Task 2's CreateScheduleAsync guarantees at most one non-Cancelled schedule going forward, but a
+        // sale created under the old per-item allocation model (before this simplification, never
+        // backfilled) may still legitimately carry several. Pick the most recently created one rather
+        // than assuming uniqueness, so a pre-existing multi-schedule sale doesn't 500 this read.
+        var activeSchedule = deliveries.Concat(pickups)
+            .Where(d => d.Status != FulfillmentStatus.Cancelled)
+            .OrderByDescending(d => d.CreatedAtUtc)
+            .FirstOrDefault();
 
         var conversions = await LoadConversionsAsync(tenantId, sale, ct);
 
@@ -434,7 +440,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         CancellationDisposition disposition,
         FulfillmentMethod convertToMethod,      // == expectedMethod when the quantities just go back to unscheduled
         bool completeReplacementImmediately,    // true only for CustomerPickedUpInstead
-        ReplacementFactory? buildReplacement,   // null when there is no replacement
+        ReplacementFactory? buildReplacement,   // kept nullable defensively; every current disposition (including DeliverLater/PickupLater, since Task 3B) passes one
         CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -488,9 +494,10 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         // SAME sale-status gate CreateScheduleAsync does. Without this, a sale voided while one of its
         // schedules was still Pending could gain a fresh Pending schedule through the cancel-with-conversion
         // back door — a schedule the create endpoints would have refused outright.
-        // The two release-only dispositions (DeliverLater / PickupLater) are deliberately NOT gated: they
-        // create nothing, and the quantity they release back to unscheduled can never actually be used,
-        // because creating a schedule against a voided sale is already blocked.
+        // Since Task 3B, every disposition — including DeliverLater / PickupLater — builds an immediate
+        // same-method replacement schedule rather than releasing quantity back to "unscheduled", so
+        // buildReplacement is effectively never null here; the null branch is kept only as a defensive
+        // fallback, not because any current disposition takes it.
         Sale sale;
         if (buildReplacement is not null)
         {

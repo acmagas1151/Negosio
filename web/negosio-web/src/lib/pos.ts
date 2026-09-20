@@ -49,23 +49,26 @@ export function saleStatusTone(s: SaleStatus): 'neutral' | 'success' | 'warning'
 }
 
 /** The spec's label table. A status never renders on its own — it always renders through its
- * method, because "Completed" means "Delivered" for a delivery and "Claimed" for a pickup. */
+ * method, because "Completed" means "Delivered" for a delivery and "Claimed" for a pickup.
+ * <p>Only called with a schedule's own method/status (a `FulfillmentScheduleDto`, or the literal
+ * 'Delivery'/'Pickup'), which per {@link DeliveryReceipt.Method}/{@link DeliveryReceipt.Status} on the
+ * backend is never TakeNow and never Unscheduled — those two only ever describe a sale's aggregate
+ * fulfillment state (`SaleFulfillmentStatus`), not a schedule row, so this function doesn't handle
+ * them. */
 export function fulfillmentStatusLabel(method: FulfillmentMethod, status: FulfillmentStatus): string {
-  if (method === 'TakeNow') return status === 'Completed' ? 'Taken now' : 'Take now'
   if (method === 'Delivery') {
     switch (status) {
-      case 'Unscheduled': return 'Deliver later'
       case 'Pending': return 'Pending delivery'
       case 'Completed': return 'Delivered'
       case 'Cancelled': return 'Cancelled delivery'
     }
   }
   switch (status) {
-    case 'Unscheduled': return 'Pickup not scheduled'
     case 'Pending': return 'Pending pickup'
     case 'Completed': return 'Claimed'
     case 'Cancelled': return 'Cancelled pickup'
   }
+  return status
 }
 
 export function fulfillmentStatusTone(status: FulfillmentStatus): 'neutral' | 'success' | 'warning' | 'danger' {

@@ -266,13 +266,20 @@ export function PosTerminal({
   // client-side idempotency key of its own, because the backend's one-active-schedule-per-sale guard
   // already makes a duplicate submission a no-op/rejection rather than a double-schedule.
   const createDeliveryMutation = useMutation({
-    mutationFn: ({ saleId }: { saleId: string; saleNumber: string }) =>
+    mutationFn: ({
+      saleId,
+      fields,
+    }: {
+      saleId: string
+      saleNumber: string
+      fields: FulfillmentDetails
+    }) =>
       fulfillmentApi.createDelivery(saleId, {
-        scheduledDate: deliveryFields.scheduledDate,
-        recipientName: deliveryFields.recipientName.trim(),
-        deliveryAddress: deliveryFields.deliveryAddress.trim(),
-        contactNumber: deliveryFields.contactNumber.trim() || null,
-        notes: deliveryFields.notes.trim() || null,
+        scheduledDate: fields.scheduledDate,
+        recipientName: fields.recipientName.trim(),
+        deliveryAddress: fields.deliveryAddress.trim(),
+        contactNumber: fields.contactNumber.trim() || null,
+        notes: fields.notes.trim() || null,
       }),
     onSuccess: () => setSuccessDeliveryCount(1),
     onError: (_err, variables) => {
@@ -286,12 +293,19 @@ export function PosTerminal({
   })
 
   const createPickupMutation = useMutation({
-    mutationFn: ({ saleId }: { saleId: string; saleNumber: string }) =>
+    mutationFn: ({
+      saleId,
+      fields,
+    }: {
+      saleId: string
+      saleNumber: string
+      fields: FulfillmentDetails
+    }) =>
       fulfillmentApi.createPickup(saleId, {
-        scheduledDate: pickupFields.scheduledDate,
-        recipientName: pickupFields.recipientName.trim(),
-        contactNumber: pickupFields.contactNumber.trim() || null,
-        notes: pickupFields.notes.trim() || null,
+        scheduledDate: fields.scheduledDate,
+        recipientName: fields.recipientName.trim(),
+        contactNumber: fields.contactNumber.trim() || null,
+        notes: fields.notes.trim() || null,
       }),
     onSuccess: () => setSuccessPickupCount(1),
     onError: (_err, variables) => {
@@ -475,11 +489,26 @@ export function PosTerminal({
 
       // The sale exists now, so submit the single schedule the chosen method needs, if any. A
       // failure here only surfaces a toast; it never touches the sale, which has already succeeded
-      // by this point.
+      // by this point. On an idempotent replay (result.wasExistingRequest), the sale — and any
+      // schedule it needed — was already created the first time this clientRequestId went through,
+      // so re-firing the schedule POST here would only collide with the backend's one-active-
+      // schedule guard and show a false "could not be scheduled" error.
       if (fulfillmentMethod === 'Delivery') {
-        createDeliveryMutation.mutate({ saleId: result.saleId, saleNumber: result.saleNumber })
+        if (!result.wasExistingRequest) {
+          createDeliveryMutation.mutate({
+            saleId: result.saleId,
+            saleNumber: result.saleNumber,
+            fields: deliveryFields,
+          })
+        }
       } else if (fulfillmentMethod === 'Pickup') {
-        createPickupMutation.mutate({ saleId: result.saleId, saleNumber: result.saleNumber })
+        if (!result.wasExistingRequest) {
+          createPickupMutation.mutate({
+            saleId: result.saleId,
+            saleNumber: result.saleNumber,
+            fields: pickupFields,
+          })
+        }
       } else {
         setSuccessDeliveryCount(0)
         setSuccessPickupCount(0)

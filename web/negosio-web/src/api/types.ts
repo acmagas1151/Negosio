@@ -513,8 +513,10 @@ export interface SaleResultDto {
   amountPaid: number
   changeDue: number
   wasExistingRequest: boolean
-  /** The SaleItems this checkout just created — needed to submit the follow-up delivery-schedule
-   * batch for any line with deliveryRequiredQuantity > 0. */
+  /** The SaleItems this checkout just created. Informational only — the batch delivery-schedule
+   * endpoint these ids were originally added for has been removed; fulfillment is now scheduled with
+   * a single createDelivery/createPickup call keyed off the sale, and no frontend code reads this
+   * field. */
   items: SaleResultItemDto[]
 }
 

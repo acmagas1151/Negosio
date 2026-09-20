@@ -7,8 +7,10 @@ namespace Negosio.Application.Delivery;
 /// Delivery report's sale-level view so the two can never disagree.</summary>
 public static class SaleFulfillmentCalculator
 {
-    /// <param name="latestSchedule">The sale's most recent Delivery-or-Pickup schedule (by
-    /// CreatedAtUtc), across both methods — or null if the sale never had one (pure Take-now).</param>
+    /// <param name="method">The sale's active (or most recent) schedule's method — or null if the sale
+    /// never had one (pure Take-now).</param>
+    /// <param name="status">That same schedule's status — null exactly when <paramref name="method"/>
+    /// is null.</param>
     public static SaleFulfillmentStatus Derive(FulfillmentMethod? method, FulfillmentStatus? status)
     {
         if (method is null) return SaleFulfillmentStatus.TakeNow;

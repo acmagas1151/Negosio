@@ -107,7 +107,6 @@ public static class ErrorCodes
     public const string DeliveryScheduleDateInPast = "DELIVERY_SCHEDULE_DATE_IN_PAST";
     public const string DeliveryQuantityExceedsAvailable = "DELIVERY_QUANTITY_EXCEEDS_AVAILABLE";
     public const string DeliveryDuplicateSaleItem = "DELIVERY_DUPLICATE_SALE_ITEM";
-    public const string DeliveryNoUnscheduledQuantity = "DELIVERY_NO_UNSCHEDULED_QUANTITY";
     public const string DeliveryReceiptNotPending = "DELIVERY_RECEIPT_NOT_PENDING";
     public const string DeliveryCancellationReasonRequired = "DELIVERY_CANCELLATION_REASON_REQUIRED";
     public const string DeliveryReceiptConcurrencyConflict = "DELIVERY_RECEIPT_CONCURRENCY_CONFLICT";

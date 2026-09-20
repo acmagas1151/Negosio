@@ -7,6 +7,7 @@ import {
   isValidDeliveryChargeInput,
   parseDeliveryCharge,
   suggestCashButtons,
+  todayLocalDateInput,
   type FulfillmentDetails,
 } from '../../lib/pos'
 import { formatMoney } from '../../lib/format'
@@ -73,20 +74,33 @@ export function PaymentModal({
   const effectiveAmountDue = amountDue + parseDeliveryCharge(fulfillmentMethod === 'Delivery', deliveryCharge)
   const change = method === 'Cash' ? Math.max(0, receivedNum - effectiveAmountDue) : 0
 
+  // Same "today" comparison PaymentModal's date <input> can't enforce on its own — there's no
+  // <form> here (Confirm is a plain onClick), so the `min` attribute on that input never triggers
+  // native constraint validation. Mirrors CancelFulfillmentModal's requiresFutureDate check: a plain
+  // string compare works because the input's value is always yyyy-MM-dd, which sorts the same as
+  // date order.
+  const today = todayLocalDateInput()
+  const deliveryDateValid = !!deliveryFields.scheduledDate && deliveryFields.scheduledDate >= today
+  const pickupDateValid = !!pickupFields.scheduledDate && pickupFields.scheduledDate >= today
+
   const fulfillmentComplete =
     fulfillmentMethod === 'TakeNow' ||
     (fulfillmentMethod === 'Delivery'
       ? deliveryChargeValid &&
-        !!deliveryFields.scheduledDate &&
+        deliveryDateValid &&
         !!deliveryFields.recipientName.trim() &&
         !!deliveryFields.deliveryAddress.trim()
-      : !!pickupFields.scheduledDate && !!pickupFields.recipientName.trim())
+      : pickupDateValid && !!pickupFields.recipientName.trim())
 
   // Plain validation messages, independent of `fulfillmentAttempted` — FulfillmentDetailsFields
   // itself gates whether these are actually shown on its own `attempted` prop, mirroring the
   // per-schedule `showErrors` gate this file used before the allocation model was flattened.
   const deliveryErrors = {
-    scheduledDate: deliveryFields.scheduledDate ? undefined : 'A delivery date is required.',
+    scheduledDate: !deliveryFields.scheduledDate
+      ? 'A delivery date is required.'
+      : deliveryDateValid
+        ? undefined
+        : 'The scheduled delivery date cannot be in the past.',
     recipientName: deliveryFields.recipientName.trim() ? undefined : 'Recipient name is required.',
     deliveryAddress: deliveryFields.deliveryAddress.trim() ? undefined : 'Recipient address is required.',
     deliveryCharge: deliveryChargeValid
@@ -94,7 +108,11 @@ export function PaymentModal({
       : 'Enter a valid amount (0 or more, up to 2 decimal places).',
   }
   const pickupErrors = {
-    scheduledDate: pickupFields.scheduledDate ? undefined : 'A pickup date is required.',
+    scheduledDate: !pickupFields.scheduledDate
+      ? 'A pickup date is required.'
+      : pickupDateValid
+        ? undefined
+        : 'The scheduled pickup date cannot be in the past.',
     recipientName: pickupFields.recipientName.trim() ? undefined : 'Recipient name is required.',
   }
 

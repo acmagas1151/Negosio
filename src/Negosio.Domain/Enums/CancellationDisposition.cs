@@ -12,10 +12,14 @@ namespace Negosio.Domain.Enums;
 /// </summary>
 public enum CancellationDisposition
 {
-    /// <summary>Delivery only. Quantities return to Delivery-unscheduled for a later delivery.</summary>
+    /// <summary>Delivery only. Quantities move to a brand-new, immediately-Pending Delivery scheduled for
+    /// a later date — the same method, just rescheduled — created in the same transaction as the
+    /// cancellation.</summary>
     DeliverLater = 1,
 
-    /// <summary>Pickup only. Quantities return to Pickup-unscheduled for a later pickup.</summary>
+    /// <summary>Pickup only. Quantities move to a brand-new, immediately-Pending Pickup scheduled for a
+    /// later date — the same method, just rescheduled — created in the same transaction as the
+    /// cancellation.</summary>
     PickupLater = 2,
 
     /// <summary>Pickup only. Quantities move to Delivery intent and a new Pending Delivery is created.</summary>

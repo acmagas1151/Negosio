@@ -53,8 +53,9 @@ public sealed record SaleResultDto(
     decimal ChangeDue,
     bool WasExistingRequest,
     /// <summary>The SaleItems this checkout created (or, on an idempotent replay, the SaleItems the
-    /// original request created) — the frontend needs these ids to submit the follow-up delivery
-    /// schedule batch for any line that carries a DeliveryRequiredQuantity > 0.</summary>
+    /// original request created). Informational only — the batch delivery-schedule endpoint these ids
+    /// were originally added for has been removed; fulfillment is now scheduled with a single
+    /// POST /deliveries or /pickups call keyed off the sale, not per-item ids from this response.</summary>
     IReadOnlyList<SaleResultItemDto> Items);
 
 public interface ICheckoutService
