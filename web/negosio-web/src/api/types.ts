@@ -467,13 +467,6 @@ export interface CheckoutItemInput {
   productVariantId: string
   quantity: number
   discount: CheckoutDiscountInput | null
-  /** How much of this line is not taken at the counter today — defaults to 0 (all Take-now) when
-   * omitted. Never negative, never more than `quantity`. */
-  deliveryRequiredQuantity: number
-  /** How much of this line is set aside for pickup rather than taken at the counter today —
-   * defaults to 0 when omitted. Never negative, and `deliveryRequiredQuantity +
-   * pickupRequiredQuantity` never exceeds `quantity`. */
-  pickupRequiredQuantity: number
 }
 
 export interface CheckoutPaymentInput {
@@ -489,6 +482,9 @@ export interface CheckoutRequest {
   clientRequestId: string
   items: CheckoutItemInput[]
   payments: CheckoutPaymentInput[]
+  /** Whole-sale fulfillment choice — applies to every item at its full quantity. Defaults to
+   * TakeNow server-side when omitted. */
+  method: FulfillmentMethod
   /** The delivery fee for a "for delivery" sale, 0 for a normal sale. */
   deliveryCharge: number
   /** Manager/Admin/Owner approval — only sent when retrying after a DISCOUNT_APPROVAL_REQUIRED
@@ -710,9 +706,7 @@ export interface ReceiptDto {
 // ---- Fulfillment ----
 // Backend contract (SalesController / DeliveryReceiptsController):
 //   POST /api/sales/{saleId}/delivery-receipts        -> 201, FulfillmentScheduleDto
-//   POST /api/sales/{saleId}/delivery-receipts/batch  -> 201, FulfillmentBatchResultDto
 //   POST /api/sales/{saleId}/pickups                  -> 201, FulfillmentScheduleDto
-//   POST /api/sales/{saleId}/pickups/batch            -> 201, FulfillmentBatchResultDto
 //   GET  /api/sales/{saleId}/delivery-receipts        -> 200, FulfillmentScheduleDto[]  (both methods)
 //   GET  /api/sales/{saleId}/fulfillment              -> 200, SaleFulfillmentSummaryDto
 //   GET  /api/delivery-receipts/{id}                  -> 200 | 404  (serves pickups too)
@@ -730,11 +724,6 @@ export type CancellationDisposition =
   | 'ConvertToDelivery'
   | 'ConvertToPickup'
   | 'CustomerPickedUpInstead'
-
-export interface FulfillmentItemInput {
-  saleItemId: string
-  quantity: number
-}
 
 export interface FulfillmentItemDto {
   saleItemId: string
@@ -788,7 +777,6 @@ export interface CreateDeliveryReceiptRequest {
   deliveryAddress: string
   contactNumber: string | null
   notes: string | null
-  items: FulfillmentItemInput[]
 }
 
 export interface CreatePickupRequest {
@@ -796,22 +784,6 @@ export interface CreatePickupRequest {
   recipientName: string
   contactNumber: string | null
   notes: string | null
-  items: FulfillmentItemInput[]
-}
-
-export interface CreateDeliveryReceiptBatchRequest {
-  batchRequestId: string
-  schedules: CreateDeliveryReceiptRequest[]
-}
-
-export interface CreatePickupBatchRequest {
-  batchRequestId: string
-  schedules: CreatePickupRequest[]
-}
-
-export interface FulfillmentBatchResultDto {
-  created: FulfillmentScheduleDto[]
-  wasExistingBatch: boolean
 }
 
 export interface PickupReplacementInput {
@@ -832,13 +804,21 @@ export interface DeliveryReplacementInput {
 export interface CancelDeliveryRequest {
   reason: string
   disposition: CancellationDisposition
+  /** Required for ConvertToPickup and CustomerPickedUpInstead. Null for every other disposition. */
   replacement: PickupReplacementInput | null
+  /** Required for DeliverLater — the new Delivery to create, replacing the cancelled one. Null for
+   * every other disposition. */
+  rescheduledDelivery?: DeliveryReplacementInput | null
 }
 
 export interface CancelPickupRequest {
   reason: string
   disposition: CancellationDisposition
+  /** Required for ConvertToDelivery. Null for every other disposition. */
   replacement: DeliveryReplacementInput | null
+  /** Required for PickupLater — the new Pickup to create, replacing the cancelled one. Null for
+   * every other disposition. */
+  rescheduledPickup?: PickupReplacementInput | null
 }
 
 export interface CancellationResultDto {
@@ -846,30 +826,14 @@ export interface CancellationResultDto {
   replacement: FulfillmentScheduleDto | null
 }
 
+/** Whole-sale fulfillment status — one value per sale, not per item. */
 export type SaleFulfillmentStatus =
-  | 'NotApplicable'
-  | 'Fulfilled'
-  | 'PartiallyFulfilled'
-  | 'AwaitingDelivery'
-  | 'AwaitingPickup'
-  | 'AwaitingDeliveryAndPickup'
-  | 'NeedsScheduling'
-  | 'NeedsAttention'
-
-/** The 8 buckets rendered per line on the Sale-detail page. All computed server-side. */
-export interface SaleItemFulfillmentDto {
-  saleItemId: string
-  productName: string
-  variantName: string | null
-  quantity: number
-  takeNowQuantity: number
-  deliveryUnscheduledQuantity: number
-  deliveryPendingQuantity: number
-  deliveredQuantity: number
-  pickupUnscheduledQuantity: number
-  pickupPendingQuantity: number
-  claimedQuantity: number
-}
+  | 'TakeNow'
+  | 'PendingDelivery'
+  | 'Delivered'
+  | 'PendingPickup'
+  | 'Claimed'
+  | 'CancelledOrReplaced'
 
 export interface FulfillmentConversionDto {
   id: string
@@ -890,12 +854,12 @@ export interface SaleFulfillmentSummaryDto {
   saleId: string
   fulfillmentStatus: SaleFulfillmentStatus
   deliveryCharge: number
-  items: SaleItemFulfillmentDto[]
+  /** The sale's current active schedule (Pending or Completed), or null for a Take-now sale that
+   * has never had one. */
+  activeSchedule: FulfillmentScheduleDto | null
   deliveries: FulfillmentScheduleDto[]
   pickups: FulfillmentScheduleDto[]
   conversions: FulfillmentConversionDto[]
-  canCreateDelivery: boolean
-  canCreatePickup: boolean
 }
 
 // ---- Returns ----
@@ -1098,6 +1062,7 @@ export interface DeliveryReportRowDto {
   deliveredAtUtc: string | null
   cancelledAtUtc: string | null
   cancellationReason: string | null
+  cancellationDisposition: CancellationDisposition | null
 }
 
 export interface DeliveryReportTotalsDto {
@@ -1149,6 +1114,7 @@ export interface PickupReportRowDto {
   completedAtUtc: string | null
   cancelledAtUtc: string | null
   cancellationReason: string | null
+  cancellationDisposition: CancellationDisposition | null
 }
 
 export interface PickupReportTotalsDto {
@@ -1166,52 +1132,6 @@ export interface PickupReportParams {
   preset?: PickupReportPreset
   fromDate?: string
   toDate?: string
-  status?: FulfillmentStatus
-  search?: string
-  page?: number
-  pageSize?: number
-}
-
-// ---- Combined fulfillment view (one row per sale-item-per-method allocation) ----
-
-export interface FulfillmentReportRowDto {
-  saleId: string
-  saleNumber: string
-  saleItemId: string
-  productName: string
-  variantName: string | null
-  quantity: number
-  method: FulfillmentMethod
-  status: FulfillmentStatus
-  scheduledDate: string | null
-  completedAtUtc: string | null
-  recipientName: string | null
-  sourceScheduleId: string | null
-  replacementScheduleId: string | null
-}
-
-export interface FulfillmentReportSummaryDto {
-  totalTakeNowQuantity: number
-  totalDeliveryUnscheduledQuantity: number
-  totalDeliveryPendingQuantity: number
-  totalDeliveredQuantity: number
-  totalPickupUnscheduledQuantity: number
-  totalPickupPendingQuantity: number
-  totalClaimedQuantity: number
-  totalCancelledSchedules: number
-  fullyFulfilledSalesCount: number
-  salesNeedingAttentionCount: number
-  totalDeliveryCharges: number
-}
-
-export interface FulfillmentReportResultDto {
-  page: PagedResult<FulfillmentReportRowDto>
-  summary: FulfillmentReportSummaryDto
-}
-
-export interface FulfillmentReportParams {
-  branchId?: string
-  method?: FulfillmentMethod
   status?: FulfillmentStatus
   search?: string
   page?: number

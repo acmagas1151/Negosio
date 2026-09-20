@@ -3,26 +3,17 @@ import type {
   CancelDeliveryRequest,
   CancelPickupRequest,
   CancellationResultDto,
-  CreateDeliveryReceiptBatchRequest,
   CreateDeliveryReceiptRequest,
-  CreatePickupBatchRequest,
   CreatePickupRequest,
-  FulfillmentBatchResultDto,
   FulfillmentScheduleDto,
   SaleFulfillmentSummaryDto,
 } from './types'
 
-/** Scheduled, partial, multi-schedule fulfillment across both methods. See the DTO block in
- * types.ts for the full backend-route contract. */
+/** Whole-sale fulfillment: one active schedule per sale, covering every item at its full quantity.
+ * See the DTO block in types.ts for the full backend-route contract. */
 export const fulfillmentApi = {
-  createDeliveryBatch: (saleId: string, body: CreateDeliveryReceiptBatchRequest) =>
-    apiRequest<FulfillmentBatchResultDto>(`/api/sales/${saleId}/delivery-receipts/batch`, { method: 'POST', body }),
-
   createDelivery: (saleId: string, body: CreateDeliveryReceiptRequest) =>
     apiRequest<FulfillmentScheduleDto>(`/api/sales/${saleId}/delivery-receipts`, { method: 'POST', body }),
-
-  createPickupBatch: (saleId: string, body: CreatePickupBatchRequest) =>
-    apiRequest<FulfillmentBatchResultDto>(`/api/sales/${saleId}/pickups/batch`, { method: 'POST', body }),
 
   createPickup: (saleId: string, body: CreatePickupRequest) =>
     apiRequest<FulfillmentScheduleDto>(`/api/sales/${saleId}/pickups`, { method: 'POST', body }),
