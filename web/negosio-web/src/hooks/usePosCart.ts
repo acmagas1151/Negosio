@@ -7,8 +7,6 @@ type Action =
   | { kind: 'setQty'; variantId: string; qty: number }
   | { kind: 'remove'; variantId: string }
   | { kind: 'setDiscount'; variantId: string; discount: { type: DiscountType; value: number } }
-  | { kind: 'setDeliveryRequired'; variantId: string; quantity: number }
-  | { kind: 'setPickupRequired'; variantId: string; quantity: number }
   | { kind: 'clear' }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000
@@ -34,33 +32,13 @@ function reducer(state: CartLine[], action: Action): CartLine[] {
           unitPrice: item.sellingPrice,
           quantity: 1,
           discount: { type: 'None', value: 0 },
-          deliveryRequiredQuantity: 0,
-          pickupRequiredQuantity: 0,
         },
       ]
     }
     case 'setQty': {
       const qty = round3(action.qty)
       if (!(qty > 0)) return state.filter((l) => l.variantId !== action.variantId)
-      return state.map((l) => {
-        if (l.variantId !== action.variantId) return l
-        // Sold = TakeNow + Delivery + Pickup always. If the line's own quantity shrinks below
-        // what's already allocated to delivery/pickup, claw the identity back by reducing PICKUP
-        // first, then delivery — never touch the line's own quantity again here, and never let the
-        // two allocations exceed the new, smaller quantity.
-        let pickupRequiredQuantity = l.pickupRequiredQuantity
-        let deliveryRequiredQuantity = l.deliveryRequiredQuantity
-        const overflow = pickupRequiredQuantity + deliveryRequiredQuantity - qty
-        if (overflow > 0) {
-          const pickupCut = Math.min(pickupRequiredQuantity, overflow)
-          pickupRequiredQuantity = round3(pickupRequiredQuantity - pickupCut)
-          const stillOver = overflow - pickupCut
-          if (stillOver > 0) {
-            deliveryRequiredQuantity = round3(Math.max(0, deliveryRequiredQuantity - stillOver))
-          }
-        }
-        return { ...l, quantity: qty, pickupRequiredQuantity, deliveryRequiredQuantity }
-      })
+      return state.map((l) => (l.variantId === action.variantId ? { ...l, quantity: qty } : l))
     }
     case 'remove':
       return state.filter((l) => l.variantId !== action.variantId)
@@ -68,23 +46,6 @@ function reducer(state: CartLine[], action: Action): CartLine[] {
       return state.map((l) =>
         l.variantId === action.variantId ? { ...l, discount: action.discount } : l,
       )
-    case 'setDeliveryRequired': {
-      return state.map((l) => {
-        if (l.variantId !== action.variantId) return l
-        // Clamp the input the user just touched only — never silently reduce pickup to make room.
-        const max = Math.max(0, round3(l.quantity - l.pickupRequiredQuantity))
-        const quantity = Math.max(0, Math.min(round3(action.quantity), max))
-        return { ...l, deliveryRequiredQuantity: quantity }
-      })
-    }
-    case 'setPickupRequired': {
-      return state.map((l) => {
-        if (l.variantId !== action.variantId) return l
-        const max = Math.max(0, round3(l.quantity - l.deliveryRequiredQuantity))
-        const quantity = Math.max(0, Math.min(round3(action.quantity), max))
-        return { ...l, pickupRequiredQuantity: quantity }
-      })
-    }
     case 'clear':
       return []
   }
@@ -96,8 +57,6 @@ export interface PosCart {
   setQty: (variantId: string, qty: number) => void
   removeLine: (variantId: string) => void
   setLineDiscount: (variantId: string, d: { type: DiscountType; value: number }) => void
-  setDeliveryRequired: (variantId: string, quantity: number) => void
-  setPickupRequired: (variantId: string, quantity: number) => void
   clear: () => void
   isEmpty: boolean
 }
@@ -137,14 +96,6 @@ export function usePosCart(ctx: TerminalCtx | null): PosCart {
       dispatch({ kind: 'setDiscount', variantId, discount: d }),
     [],
   )
-  const setDeliveryRequired = useCallback(
-    (variantId: string, quantity: number) => dispatch({ kind: 'setDeliveryRequired', variantId, quantity }),
-    [],
-  )
-  const setPickupRequired = useCallback(
-    (variantId: string, quantity: number) => dispatch({ kind: 'setPickupRequired', variantId, quantity }),
-    [],
-  )
   const clear = useCallback(() => {
     dispatch({ kind: 'clear' })
     if (ctx) {
@@ -160,20 +111,9 @@ export function usePosCart(ctx: TerminalCtx | null): PosCart {
       setQty,
       removeLine,
       setLineDiscount,
-      setDeliveryRequired,
-      setPickupRequired,
       clear,
       isEmpty: lines.length === 0,
     }),
-    [
-      lines,
-      addItem,
-      setQty,
-      removeLine,
-      setLineDiscount,
-      setDeliveryRequired,
-      setPickupRequired,
-      clear,
-    ],
+    [lines, addItem, setQty, removeLine, setLineDiscount, clear],
   )
 }

@@ -16,12 +16,6 @@ export interface CartLine {
   unitPrice: number
   quantity: number
   discount: { type: DiscountType; value: number }
-  /** How much of this line is set aside for delivery rather than taken at the counter today.
-   * Always `>= 0` and `deliveryRequiredQuantity + pickupRequiredQuantity <= quantity` —
-   * `usePosCart` enforces that invariant on every edit. */
-  deliveryRequiredQuantity: number
-  /** Same as `deliveryRequiredQuantity`, for pickup. */
-  pickupRequiredQuantity: number
 }
 
 const CART_PREFIX = 'negosio.pos.cart.v1.'
@@ -67,20 +61,7 @@ export const posStorage = {
     try {
       const parsed: unknown = JSON.parse(raw)
       if (!Array.isArray(parsed)) return null
-      // Backward compat: a cart persisted before pickup support (or before delivery support, for
-      // an even older cart) has no pickupRequiredQuantity / deliveryRequiredQuantity key at all.
-      // Coerce a missing or non-finite value to 0 here, on read, so `undefined` never reaches the
-      // checkout body or the take-now arithmetic (`quantity - delivery - pickup`), where it would
-      // silently produce NaN.
-      return (parsed as Partial<CartLine>[]).map((l) => ({
-        ...l,
-        deliveryRequiredQuantity: Number.isFinite(l.deliveryRequiredQuantity)
-          ? (l.deliveryRequiredQuantity as number)
-          : 0,
-        pickupRequiredQuantity: Number.isFinite(l.pickupRequiredQuantity)
-          ? (l.pickupRequiredQuantity as number)
-          : 0,
-      })) as CartLine[]
+      return parsed as CartLine[]
     } catch {
       return null
     }
