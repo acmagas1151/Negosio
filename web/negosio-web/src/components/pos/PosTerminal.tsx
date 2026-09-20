@@ -8,7 +8,7 @@ import type {
   CheckoutPaymentInput,
   CheckoutRequest,
   DiscountType,
-  FulfillmentItemInput,
+  FulfillmentMethod,
   PosCatalogItemDto,
   SaleDetailDto,
   SaleResultDto,
@@ -24,11 +24,10 @@ import { calcTotals, roundMoney } from '../../lib/saleMath'
 import type { LastSaleRef } from '../../lib/pos'
 import {
   EMPTY_DELIVERY_CHARGE,
-  emptyFulfillmentSchedule,
+  emptyFulfillmentDetails,
   parseDeliveryCharge,
-  reconcileSchedules,
   VOID_INELIGIBLE_MESSAGES,
-  type FulfillmentSchedule,
+  type FulfillmentDetails,
 } from '../../lib/pos'
 import { hasReturnableQty } from '../../lib/returns'
 import { useCan } from '../../lib/useCan'
@@ -50,39 +49,6 @@ import { ReprintReceiptModal } from './ReprintReceiptModal'
 import { TransactionDiscountModal } from './TransactionDiscountModal'
 import { TransactionLookupModal } from './TransactionLookupModal'
 import { VoidChoiceModal } from './VoidChoiceModal'
-
-/** One method's schedule-list state + editing callbacks, built fresh for Delivery and again for
- * Pickup — each method's schedules are entirely independent (separate idempotency keys, separate
- * validation, never merged into one list). */
-function useFulfillmentSchedules() {
-  const [schedules, setSchedules] = useState<FulfillmentSchedule[]>([emptyFulfillmentSchedule()])
-
-  const onScheduleFieldChange = useCallback(
-    (key: string, patch: Partial<Omit<FulfillmentSchedule, 'key' | 'items'>>) =>
-      setSchedules((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s))),
-    [],
-  )
-  const onScheduleItemChange = useCallback((key: string, variantId: string, quantity: number) => {
-    setSchedules((prev) =>
-      prev.map((s) => {
-        if (s.key !== key) return s
-        const exists = s.items.some((i) => i.variantId === variantId)
-        const items = exists
-          ? s.items.map((i) => (i.variantId === variantId ? { ...i, quantity } : i))
-          : [...s.items, { variantId, quantity }]
-        return { ...s, items: items.filter((i) => i.quantity > 0) }
-      }),
-    )
-  }, [])
-  const onAddSchedule = useCallback(() => setSchedules((prev) => [...prev, emptyFulfillmentSchedule()]), [])
-  const onRemoveSchedule = useCallback(
-    (key: string) => setSchedules((prev) => (prev.length > 1 ? prev.filter((s) => s.key !== key) : prev)),
-    [],
-  )
-  const reset = useCallback(() => setSchedules([emptyFulfillmentSchedule()]), [])
-
-  return { schedules, setSchedules, onScheduleFieldChange, onScheduleItemChange, onAddSchedule, onRemoveSchedule, reset }
-}
 
 const PAGE_SIZE = 24
 
@@ -139,15 +105,16 @@ export function PosTerminal({
   const [discountApprovalError, setDiscountApprovalError] = useState<string | null>(null)
   const [successResult, setSuccessResult] = useState<SaleResultDto | null>(null)
   const [successPayment, setSuccessPayment] = useState<CheckoutPaymentInput | null>(null)
-  // Delivery/pickup involvement itself lives on the cart lines now (CartItem's per-line
-  // allocation) — what's built here is just the SCHEDULE detail (recipient/date/address/notes)
-  // for whichever lines the cashier marked. Values live here (not in PaymentModal) so a
-  // failed-payment retry keeps them through the modal's reopen. Schedules are submitted only
-  // after the sale exists (checkout mutation's onSuccess). Cleared on New Transaction and after a
-  // completed sale.
+  // Fulfillment is chosen once per whole sale now — TakeNow/Delivery/Pickup applies to every item
+  // at its full quantity (see the plan's whole-sale fulfillment model). `deliveryFields`/
+  // `pickupFields` hold just the SCHEDULE detail (recipient/date/address/notes) for whichever
+  // method is selected. Values live here (not in PaymentModal) so a failed-payment retry keeps
+  // them through the modal's reopen. The schedule is submitted only after the sale exists
+  // (checkout mutation's onSuccess). Cleared on New Transaction and after a completed sale.
+  const [fulfillmentMethod, setFulfillmentMethod] = useState<FulfillmentMethod>('TakeNow')
+  const [deliveryFields, setDeliveryFields] = useState<FulfillmentDetails>(emptyFulfillmentDetails())
+  const [pickupFields, setPickupFields] = useState<FulfillmentDetails>(emptyFulfillmentDetails())
   const [deliveryCharge, setDeliveryCharge] = useState(EMPTY_DELIVERY_CHARGE)
-  const delivery = useFulfillmentSchedules()
-  const pickup = useFulfillmentSchedules()
   // How many delivery/pickup schedules were created for a just-completed sale — powers the success
   // modal's "View N schedules" affordance. Cleared with the success modal.
   const [successDeliveryCount, setSuccessDeliveryCount] = useState(0)
@@ -160,11 +127,6 @@ export function PosTerminal({
   >(null)
 
   const idRef = useRef<string | null>(null)
-  // Two independent idempotency keys — the delivery batch and the pickup batch are never allowed
-  // to share one, since retrying one method's batch must never be mistaken (server-side) for a
-  // retry of the other's.
-  const deliveryBatchIdRef = useRef<string | null>(null)
-  const pickupBatchIdRef = useRef<string | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   // The payment the cashier already confirmed — kept so a DISCOUNT_APPROVAL_REQUIRED retry can
   // resubmit the exact same charge with the approval attached, without re-prompting for payment.
@@ -235,8 +197,6 @@ export function PosTerminal({
   const setQty = cart.setQty
   const removeLine = cart.removeLine
   const setLineDiscount = cart.setLineDiscount
-  const setDeliveryRequired = cart.setDeliveryRequired
-  const setPickupRequired = cart.setPickupRequired
 
   const onAdd = useCallback(
     (item: Parameters<typeof addItem>[0]) => {
@@ -266,23 +226,6 @@ export function PosTerminal({
     },
     [rotateIfNeeded, setLineDiscount],
   )
-  // Delivery/pickup allocation is part of the checkout body too (CheckoutItemInput carries both
-  // quantities), so editing it rotates a needs-new-id attempt the same as editing qty/discount does.
-  const onSetDeliveryRequired = useCallback(
-    (variantId: string, quantity: number) => {
-      rotateIfNeeded()
-      setDeliveryRequired(variantId, quantity)
-    },
-    [rotateIfNeeded, setDeliveryRequired],
-  )
-  const onSetPickupRequired = useCallback(
-    (variantId: string, quantity: number) => {
-      rotateIfNeeded()
-      setPickupRequired(variantId, quantity)
-    },
-    [rotateIfNeeded, setPickupRequired],
-  )
-
   // New Transaction: an empty cart has nothing to clear — just return focus to search. A
   // non-empty cart is confirmed first (see ConfirmDialog below), then cleared the same way a
   // successful checkout clears it: cart.clear() drops the persisted cart AND attempt id, and we
@@ -296,176 +239,65 @@ export function PosTerminal({
     setNewTxnConfirmOpen(true)
   }, [cart.isEmpty])
 
-  const ensureDeliveryBatchId = useCallback(() => {
-    if (!deliveryBatchIdRef.current) deliveryBatchIdRef.current = crypto.randomUUID()
-    return deliveryBatchIdRef.current
-  }, [])
-  const ensurePickupBatchId = useCallback(() => {
-    if (!pickupBatchIdRef.current) pickupBatchIdRef.current = crypto.randomUUID()
-    return pickupBatchIdRef.current
-  }, [])
-
   const resetFulfillmentState = useCallback(() => {
+    setFulfillmentMethod('TakeNow')
+    setDeliveryFields(emptyFulfillmentDetails())
+    setPickupFields(emptyFulfillmentDetails())
     setDeliveryCharge(EMPTY_DELIVERY_CHARGE)
-    delivery.reset()
-    pickup.reset()
-    deliveryBatchIdRef.current = null
-    pickupBatchIdRef.current = null
-  }, [delivery, pickup])
+  }, [])
 
   const onDeliveryChargeChange = useCallback((value: string) => setDeliveryCharge(value), [])
+  const onFulfillmentMethodChange = useCallback((method: FulfillmentMethod) => setFulfillmentMethod(method), [])
+  const onDeliveryFieldsChange = useCallback(
+    (patch: Partial<FulfillmentDetails>) => setDeliveryFields((prev) => ({ ...prev, ...patch })),
+    [],
+  )
+  const onPickupFieldsChange = useCallback(
+    (patch: Partial<FulfillmentDetails>) => setPickupFields((prev) => ({ ...prev, ...patch })),
+    [],
+  )
 
-  // Delivery/pickup schedules deliberately survive a failed-payment retry (see the comment on their
-  // declarations above) — nothing else resets them when the CART changes. But a line removed (or
-  // its allocation reduced) after a schedule was drafted against it leaves that schedule stale: a
-  // removed variant's schedule item would still be submitted to the batch-create mutation
-  // post-checkout even though checkout itself never sent that line (CheckoutRequest.items comes
-  // from cart.lines), and posting a stale saleItemId/quantity pair fails the WHOLE batch for a sale
-  // that's already been paid for. This reconciles both methods' schedules against the cart's OWN
-  // deliveryRequiredQuantity/pickupRequiredQuantity fields (usePosCart already keeps those within
-  // `0 <= x <= quantity` on every cart edit) every time the cart changes, so the schedules the
-  // cashier sees in the payment modal are never more than one render behind the cart. Reading
-  // delivery.schedules/pickup.schedules directly (rather than via a functional updater) is safe
-  // because this render's closure already has their latest values; depending on them too would
-  // re-run this effect on every schedule-form edit.
-  useEffect(() => {
-    const deliveryRequired: Record<string, number> = {}
-    const pickupRequired: Record<string, number> = {}
-    for (const l of cart.lines) {
-      if (l.deliveryRequiredQuantity > 0) deliveryRequired[l.variantId] = l.deliveryRequiredQuantity
-      if (l.pickupRequiredQuantity > 0) pickupRequired[l.variantId] = l.pickupRequiredQuantity
-    }
-
-    const d = reconcileSchedules(delivery.schedules, deliveryRequired)
-    if (d.changed) {
-      // oxlint-disable-next-line set-state-in-effect
-      delivery.setSchedules(d.schedules)
-    }
-    const p = reconcileSchedules(pickup.schedules, pickupRequired)
-    if (p.changed) {
-      // oxlint-disable-next-line set-state-in-effect
-      pickup.setSchedules(p.schedules)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart.lines])
-
-  // Schedules the sale's delivery/pickup allocations right after checkout succeeds. A failure here
+  // Schedules the sale's delivery/pickup fulfillment right after checkout succeeds — at most one of
+  // these ever fires per sale, since fulfillment is a single whole-sale choice now. A failure here
   // never unwinds the sale — it stays Completed — it only tells the cashier to finish scheduling
-  // from the Sale page. Idempotent server-side via each ref's own BatchRequestId: retrying (e.g. the
-  // cashier clicking retry after seeing the toast) resubmits the SAME batch id and returns the
-  // original rows. The two methods use separate idempotency keys — never one shared id — since a
-  // retry of one must never be mistaken, server-side, for a retry of the other.
-  const createDeliveryBatchMutation = useMutation({
-    mutationFn: ({
-      saleId,
-      resultItems,
-    }: {
-      saleId: string
-      saleNumber: string
-      resultItems: SaleResultDto['items']
-    }) => {
-      // Defense in depth only — the cart-reconciliation effect above should already guarantee every
-      // schedule item's variantId is still on the sale that was just checked out. If a lookup ever
-      // misses anyway, drop just that one item (never throw): the sale is already completed and paid
-      // for by this point, so a non-null assertion here would take down an otherwise-valid batch over
-      // one stale entry. A miss means the reconciliation has a gap, so it's surfaced via a toast.
-      let droppedStaleItem = false
-      const resolvedSchedules = delivery.schedules
-        .map((s) => ({
-          ...s,
-          items: s.items
-            .filter((i) => i.quantity > 0)
-            .flatMap((i): FulfillmentItemInput[] => {
-              const match = resultItems.find((ri) => ri.productVariantId === i.variantId)
-              if (!match) {
-                droppedStaleItem = true
-                return []
-              }
-              return [{ saleItemId: match.saleItemId, quantity: i.quantity }]
-            }),
-        }))
-        .filter((s) => s.items.length > 0)
-
-      if (droppedStaleItem) {
-        toast(
-          'error',
-          'One or more delivery items no longer matched the completed sale and were skipped. Please verify the delivery schedule.',
-        )
-      }
-
-      return fulfillmentApi.createDeliveryBatch(saleId, {
-        batchRequestId: ensureDeliveryBatchId(),
-        schedules: resolvedSchedules.map((s) => ({
-          scheduledDate: s.scheduledDate,
-          recipientName: s.recipientName.trim(),
-          deliveryAddress: s.deliveryAddress.trim(),
-          contactNumber: s.contactNumber.trim() || null,
-          notes: s.notes.trim() || null,
-          items: s.items,
-        })),
-      })
-    },
-    onSuccess: (result) => setSuccessDeliveryCount(result.created.length),
+  // from the Sale page. Neither request carries item data: the backend resolves "every item on the
+  // sale" itself, so there's nothing here to reconcile against a possibly-stale cart. A naive
+  // frontend retry (e.g. the cashier clicking retry after seeing the error toast) is safe without a
+  // client-side idempotency key of its own, because the backend's one-active-schedule-per-sale guard
+  // already makes a duplicate submission a no-op/rejection rather than a double-schedule.
+  const createDeliveryMutation = useMutation({
+    mutationFn: ({ saleId }: { saleId: string; saleNumber: string }) =>
+      fulfillmentApi.createDelivery(saleId, {
+        scheduledDate: deliveryFields.scheduledDate,
+        recipientName: deliveryFields.recipientName.trim(),
+        deliveryAddress: deliveryFields.deliveryAddress.trim(),
+        contactNumber: deliveryFields.contactNumber.trim() || null,
+        notes: deliveryFields.notes.trim() || null,
+      }),
+    onSuccess: () => setSuccessDeliveryCount(1),
     onError: (_err, variables) => {
       // Never a modal implying the payment failed — the sale already succeeded by this point. A
       // toast naming the sale number, pointing at where to finish, is the whole recovery story.
       toast(
         'error',
-        `Sale #${variables.saleNumber} completed, but the delivery schedule could not be created. Schedule it from the sale's detail page.`,
+        `Sale #${variables.saleNumber} completed, but the delivery could not be scheduled. Schedule it from the sale's detail page.`,
       )
     },
   })
 
-  const createPickupBatchMutation = useMutation({
-    mutationFn: ({
-      saleId,
-      resultItems,
-    }: {
-      saleId: string
-      saleNumber: string
-      resultItems: SaleResultDto['items']
-    }) => {
-      // Same defense-in-depth reconciliation as the delivery batch above.
-      let droppedStaleItem = false
-      const resolvedSchedules = pickup.schedules
-        .map((s) => ({
-          ...s,
-          items: s.items
-            .filter((i) => i.quantity > 0)
-            .flatMap((i): FulfillmentItemInput[] => {
-              const match = resultItems.find((ri) => ri.productVariantId === i.variantId)
-              if (!match) {
-                droppedStaleItem = true
-                return []
-              }
-              return [{ saleItemId: match.saleItemId, quantity: i.quantity }]
-            }),
-        }))
-        .filter((s) => s.items.length > 0)
-
-      if (droppedStaleItem) {
-        toast(
-          'error',
-          'One or more pickup items no longer matched the completed sale and were skipped. Please verify the pickup schedule.',
-        )
-      }
-
-      return fulfillmentApi.createPickupBatch(saleId, {
-        batchRequestId: ensurePickupBatchId(),
-        schedules: resolvedSchedules.map((s) => ({
-          scheduledDate: s.scheduledDate,
-          recipientName: s.recipientName.trim(),
-          contactNumber: s.contactNumber.trim() || null,
-          notes: s.notes.trim() || null,
-          items: s.items,
-        })),
-      })
-    },
-    onSuccess: (result) => setSuccessPickupCount(result.created.length),
+  const createPickupMutation = useMutation({
+    mutationFn: ({ saleId }: { saleId: string; saleNumber: string }) =>
+      fulfillmentApi.createPickup(saleId, {
+        scheduledDate: pickupFields.scheduledDate,
+        recipientName: pickupFields.recipientName.trim(),
+        contactNumber: pickupFields.contactNumber.trim() || null,
+        notes: pickupFields.notes.trim() || null,
+      }),
+    onSuccess: () => setSuccessPickupCount(1),
     onError: (_err, variables) => {
       toast(
         'error',
-        `Sale #${variables.saleNumber} completed, but the pickup schedule could not be created. Schedule it from the sale's detail page.`,
+        `Sale #${variables.saleNumber} completed, but the pickup could not be scheduled. Schedule it from the sale's detail page.`,
       )
     },
   })
@@ -602,7 +434,6 @@ export function PosTerminal({
     }) => {
       pendingPaymentRef.current = payment
       const clientRequestId = ensureId()
-      const anyDeliveryRequired = cart.lines.some((l) => l.deliveryRequiredQuantity > 0)
       const body: CheckoutRequest = {
         branchId,
         registerSessionId: ctx.registerSessionId,
@@ -611,11 +442,11 @@ export function PosTerminal({
           productVariantId: l.variantId,
           quantity: l.quantity,
           discount: l.discount.type === 'None' ? null : l.discount,
-          deliveryRequiredQuantity: l.deliveryRequiredQuantity,
-          pickupRequiredQuantity: l.pickupRequiredQuantity,
         })),
         payments: [payment],
-        deliveryCharge: roundMoney(parseDeliveryCharge(anyDeliveryRequired, deliveryCharge)),
+        method: fulfillmentMethod,
+        deliveryCharge:
+          fulfillmentMethod === 'Delivery' ? roundMoney(parseDeliveryCharge(true, deliveryCharge)) : 0,
         approval,
       }
       return checkoutApi.checkout(body)
@@ -642,27 +473,15 @@ export function PosTerminal({
       setSuccessPayment(variables.payment)
       setSuccessResult(result)
 
-      // The sale exists now, so submit whichever schedules the cashier built — up to two batches,
-      // each with its own idempotency key. A batch failure only surfaces a toast; it never touches
-      // the sale, which has already succeeded by this point.
-      const activeDeliverySchedules = delivery.schedules.filter((s) => s.items.some((i) => i.quantity > 0))
-      if (activeDeliverySchedules.length > 0) {
-        createDeliveryBatchMutation.mutate({
-          saleId: result.saleId,
-          saleNumber: result.saleNumber,
-          resultItems: result.items,
-        })
+      // The sale exists now, so submit the single schedule the chosen method needs, if any. A
+      // failure here only surfaces a toast; it never touches the sale, which has already succeeded
+      // by this point.
+      if (fulfillmentMethod === 'Delivery') {
+        createDeliveryMutation.mutate({ saleId: result.saleId, saleNumber: result.saleNumber })
+      } else if (fulfillmentMethod === 'Pickup') {
+        createPickupMutation.mutate({ saleId: result.saleId, saleNumber: result.saleNumber })
       } else {
         setSuccessDeliveryCount(0)
-      }
-      const activePickupSchedules = pickup.schedules.filter((s) => s.items.some((i) => i.quantity > 0))
-      if (activePickupSchedules.length > 0) {
-        createPickupBatchMutation.mutate({
-          saleId: result.saleId,
-          saleNumber: result.saleNumber,
-          resultItems: result.items,
-        })
-      } else {
         setSuccessPickupCount(0)
       }
       resetFulfillmentState()
@@ -837,24 +656,14 @@ export function PosTerminal({
         error={payError}
         onConfirm={(payment) => mutation.mutate({ payment })}
         cartLines={cart.lines}
-        delivery={{
-          schedules: delivery.schedules,
-          onScheduleFieldChange: delivery.onScheduleFieldChange,
-          onScheduleItemChange: delivery.onScheduleItemChange,
-          onAddSchedule: delivery.onAddSchedule,
-          onRemoveSchedule: delivery.onRemoveSchedule,
-        }}
-        pickup={{
-          schedules: pickup.schedules,
-          onScheduleFieldChange: pickup.onScheduleFieldChange,
-          onScheduleItemChange: pickup.onScheduleItemChange,
-          onAddSchedule: pickup.onAddSchedule,
-          onRemoveSchedule: pickup.onRemoveSchedule,
-        }}
+        fulfillmentMethod={fulfillmentMethod}
+        onFulfillmentMethodChange={onFulfillmentMethodChange}
+        deliveryFields={deliveryFields}
+        onDeliveryFieldsChange={onDeliveryFieldsChange}
+        pickupFields={pickupFields}
+        onPickupFieldsChange={onPickupFieldsChange}
         deliveryCharge={deliveryCharge}
         onDeliveryChargeChange={onDeliveryChargeChange}
-        onSetDeliveryRequired={onSetDeliveryRequired}
-        onSetPickupRequired={onSetPickupRequired}
       />
 
       <PaymentSuccessModal
@@ -884,8 +693,7 @@ export function PosTerminal({
           setPayOpen(true)
         }}
         amount={
-          totals.grandTotal +
-          roundMoney(parseDeliveryCharge(cart.lines.some((l) => l.deliveryRequiredQuantity > 0), deliveryCharge))
+          totals.grandTotal + roundMoney(parseDeliveryCharge(fulfillmentMethod === 'Delivery', deliveryCharge))
         }
         payment={pendingPaymentRef.current}
         message={paymentFailure?.message ?? ''}
