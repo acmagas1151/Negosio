@@ -7,6 +7,7 @@ using Negosio.Application.Pos;
 using Negosio.Application.Registers;
 using Negosio.Application.Reports;
 using Negosio.Application.Sales;
+using Negosio.Application.Staff;
 using Negosio.Domain.Enums;
 using Negosio.IntegrationTests.Infrastructure;
 
@@ -655,5 +656,169 @@ public class ReportsTests : IntegrationTest
             $"/api/reports/register-sessions?period=Last30Days&branchId={bgc.Id}", TestJson.Options);
         managerAttemptBgc!.Items.Should().ContainSingle().Which.SessionId.Should().Be(mainSession.Id,
             "a branch-scoped Manager must always be forced to their own branch");
+    }
+
+    // ---- Cashier performance ----
+
+    [Fact]
+    public async Task GetCashierPerformanceAsync_AttributesByCheckoutUserRegardlessOfRole()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var registerA = await CreateRegisterAsync(branchId, "RA", "RA");
+        var registerB = await CreateRegisterAsync(branchId, "RB", "RB");
+        var category = await CreateCategoryAsync();
+        var (_, cashierVariantId) = await SeedStockedProductAsync(
+            branchId, category.Id, name: "Cashier Item", sku: "CASH-SKU", sellingPrice: 400m, openingStock: 10m);
+        var (_, managerVariantId) = await SeedStockedProductAsync(
+            branchId, category.Id, name: "Manager Item", sku: "MGR-SKU", sellingPrice: 250m, openingStock: 10m);
+
+        var cashierToken = await AddTenantUserTokenAsync("cashierperf@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+        var managerToken = await AddTenantUserTokenAsync("managerperf@example.com", UserRole.Manager, branchId);
+        var managerId = await GetUserIdFromTokenAsync(managerToken);
+
+        Authorize(cashierToken);
+        var cashierSession = await OpenSessionAsync(registerA.Id);
+        await SellAsync(branchId, cashierSession.Id, cashierVariantId, 1m, 400m);
+
+        // A Manager ringing up their own sale — this must show up too, since this report attributes by
+        // whoever actually completed the checkout, never filtered to Role == Cashier.
+        Authorize(managerToken);
+        var managerSession = await OpenSessionAsync(registerB.Id);
+        await SellAsync(branchId, managerSession.Id, managerVariantId, 1m, 250m);
+
+        Authorize(owner.AccessToken);
+        var result = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            "/api/reports/cashier-performance?period=Last30Days", TestJson.Options);
+
+        result!.Rows.Should().HaveCount(2, "both the Cashier AND the Manager rang up their own sale");
+        result.Rows.Single(r => r.CashierUserId == cashierId).NetSales.Should().Be(400m);
+        result.Rows.Single(r => r.CashierUserId == managerId).NetSales.Should().Be(250m);
+    }
+
+    [Fact]
+    public async Task GetCashierPerformanceAsync_VoidActivityIsAttributedToTheVoidingActorNotTheOriginalCashier()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId);
+        var category = await CreateCategoryAsync();
+        var (_, keepVariantId) = await SeedStockedProductAsync(
+            branchId, category.Id, name: "Kept Item", sku: "KEEP-SKU", sellingPrice: 200m, openingStock: 10m);
+        var (_, voidVariantId) = await SeedStockedProductAsync(
+            branchId, category.Id, name: "Void Item", sku: "VOID-SKU", sellingPrice: 100m, openingStock: 10m);
+
+        var cashierToken = await AddTenantUserTokenAsync("voidcashier@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+        var managerToken = await AddTenantUserTokenAsync("voidmanager@example.com", UserRole.Manager, branchId);
+        var managerId = await GetUserIdFromTokenAsync(managerToken);
+
+        Authorize(cashierToken);
+        var session = await OpenSessionAsync(register.Id);
+        await SellAsync(branchId, session.Id, keepVariantId, 1m, 200m);
+        var saleToVoid = await SellAsync(branchId, session.Id, voidVariantId, 1m, 100m);
+
+        // Manager B voids Cashier A's sale — the void must be attributed to the VOIDING actor
+        // (Sale.VoidedByUserId), never the original checkout cashier (Sale.CreatedByUserId).
+        Authorize(managerToken);
+        var voidRes = await Client.PostAsJsonAsync($"/api/sales/{saleToVoid.SaleId}/void", new VoidSaleRequest("Test void"));
+        voidRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Authorize(owner.AccessToken);
+        var result = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            "/api/reports/cashier-performance?period=Last30Days", TestJson.Options);
+
+        var cashierRow = result!.Rows.Single(r => r.CashierUserId == cashierId);
+        cashierRow.NetSales.Should().Be(200m, "the voided 100 sale must not count toward the original cashier's Net sales");
+        cashierRow.GrossSales.Should().Be(200m);
+        cashierRow.CompletedTransactions.Should().Be(1);
+        cashierRow.VoidedSalesCount.Should().Be(0, "the void was performed by the Manager, not this Cashier");
+        cashierRow.VoidedSalesValue.Should().Be(0m);
+
+        var managerRow = result.Rows.Single(r => r.CashierUserId == managerId);
+        managerRow.VoidedSalesCount.Should().Be(1, "attributed to whoever performed the void");
+        managerRow.VoidedSalesValue.Should().Be(100m);
+        managerRow.NetSales.Should().Be(0m, "the Manager did not ring up any sale themselves");
+        managerRow.CompletedTransactions.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetCashierPerformanceAsync_ReturnActivityIsAttributedToWhoeverProcessedIt()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 10m);
+
+        var cashierToken = await AddTenantUserTokenAsync("returncashier@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+        var managerToken = await AddTenantUserTokenAsync("returnmanager@example.com", UserRole.Manager, branchId);
+        var managerId = await GetUserIdFromTokenAsync(managerToken);
+
+        Authorize(cashierToken);
+        var session = await OpenSessionAsync(register.Id);
+        var sale = await SellAsync(branchId, session.Id, variantId, 1m, 100m);
+        var detail = await Client.GetFromJsonAsync<SaleDetailDto>($"/api/sales/{sale.SaleId}", TestJson.Options);
+        var saleItemId = detail!.Items.Single().Id;
+
+        // Manager processes the return for Cashier A's sale — return activity must be attributed to
+        // whoever processed it (SaleReturn.CreatedByUserId), never the original checkout cashier.
+        Authorize(managerToken);
+        var returnRes = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/returns",
+            new CreateReturnRequest(new[] { new ReturnLineInput(saleItemId, 1m) }, "Test return", PaymentMethod.Cash, null));
+        returnRes.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        Authorize(owner.AccessToken);
+        var result = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            "/api/reports/cashier-performance?period=Last30Days", TestJson.Options);
+
+        var cashierRow = result!.Rows.Single(r => r.CashierUserId == cashierId);
+        cashierRow.NetSales.Should().Be(100m, "the sale itself stays at its original amount; the return is a separate bucket");
+        cashierRow.ReturnsCount.Should().Be(0, "the return was processed by the Manager, not this Cashier");
+        cashierRow.ReturnsValue.Should().Be(0m);
+
+        var managerRow = result.Rows.Single(r => r.CashierUserId == managerId);
+        managerRow.ReturnsCount.Should().Be(1);
+        managerRow.ReturnsValue.Should().Be(100m);
+    }
+
+    [Fact]
+    public async Task GetCashierPerformanceAsync_HistoricalSaleKeepsItsOriginalBranchRegardlessOfLaterReassignment()
+    {
+        // A User has at most one BranchId — there is no multi-branch assignment. What must hold is that
+        // a Sale's own BranchId (fixed at checkout) is what this report's branch scoping honors, not the
+        // cashier's CURRENT branch — verified by reassigning the cashier's branch after checkout.
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
+        var bgc = await CreateBranchAsync("BGC", "BGC");
+
+        var cashierToken = await AddTenantUserTokenAsync("branchmove-cashier@example.com", UserRole.Cashier, mainId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+
+        var register = await CreateRegisterAsync(mainId, "M1", "M1");
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(mainId, category.Id, sellingPrice: 400m, openingStock: 10m);
+
+        Authorize(cashierToken);
+        var session = await OpenSessionAsync(register.Id);
+        await SellAsync(mainId, session.Id, variantId, 1m, 400m);
+        (await Client.PostAsJsonAsync($"/api/register-sessions/{session.Id}/close", new CloseRegisterSessionRequest(1400m)))
+            .EnsureSuccessStatusCode();
+
+        // The cashier moves to Branch BGC after checkout.
+        Authorize(owner.AccessToken);
+        (await Client.PostAsJsonAsync($"/api/staff/{cashierId}/branch", new ChangeStaffBranchRequest(bgc.Id.ToString())))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var resultForMain = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            $"/api/reports/cashier-performance?period=Last30Days&branchId={mainId}", TestJson.Options);
+        resultForMain!.Rows.Should().ContainSingle(r => r.CashierUserId == cashierId && r.NetSales == 400m);
+
+        var resultForBgc = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            $"/api/reports/cashier-performance?period=Last30Days&branchId={bgc.Id}", TestJson.Options);
+        resultForBgc!.Rows.Should().NotContain(r => r.CashierUserId == cashierId,
+            "the sale happened at Main, not BGC, regardless of where the cashier is assigned now");
     }
 }

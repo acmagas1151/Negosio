@@ -76,4 +76,10 @@ public sealed class ReportsController : ControllerBase
     public async Task<ActionResult<PagedResult<RegisterSessionReconciliationRowDto>>> RegisterSessionReconciliation(
         [FromQuery] RegisterSessionReconciliationQuery query, CancellationToken cancellationToken)
         => Ok(await _reports.GetRegisterSessionReconciliationAsync(query, cancellationToken));
+
+    [HttpGet("cashier-performance")]
+    [ProducesResponseType(typeof(CashierPerformanceResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<CashierPerformanceResultDto>> CashierPerformance(
+        [FromQuery] ReportFilter filter, CancellationToken cancellationToken)
+        => Ok(await _reports.GetCashierPerformanceAsync(filter, cancellationToken));
 }

@@ -362,6 +362,44 @@ public sealed record RegisterSessionReconciliationRowDto(
     decimal CashIn,
     decimal CashOut);
 
+// ---- Cashier performance ----
+
+/// <summary>One user's KPI slice for the resolved range, attributed by whoever actually performed each
+/// action rather than by role. <see cref="CashierUserId"/> keys the sales-side figures
+/// (<see cref="GrossSales"/>/<see cref="NetSales"/>/<see cref="CompletedTransactions"/>/
+/// <see cref="AverageTransactionValue"/>/<see cref="Discounts"/>) to
+/// <see cref="Negosio.Domain.Entities.Sale.CreatedByUserId"/> (who rang up the checkout), while
+/// <see cref="VoidedSalesCount"/>/<see cref="VoidedSalesValue"/> are keyed to
+/// <see cref="Negosio.Domain.Entities.Sale.VoidedByUserId"/> (who performed the void) and
+/// <see cref="ReturnsCount"/>/<see cref="ReturnsValue"/> to
+/// <see cref="Negosio.Domain.Entities.SaleReturn.CreatedByUserId"/> (who processed the return) — three
+/// independently-keyed buckets that can land on three different people for the very same sale (e.g.
+/// Cashier A rings it up, Manager B later voids it: A's row never counts that sale toward Net/Gross
+/// once it's voided — same <c>Qualifying</c> rule as every other report here — while B's row picks up
+/// the void). No role filter is applied anywhere in this query — a Manager or Owner who personally
+/// completes a checkout, voids a sale, or processes a return shows up here exactly like a Cashier would,
+/// by design (see <c>ReportsService.GetCashierPerformanceAsync</c>). <see cref="Discounts"/> is
+/// amount/count only — this codebase does not persist who APPROVED a discount anywhere, so no approver
+/// identity is exposed or implied here, only the total already carried on
+/// <see cref="Negosio.Domain.Entities.Sale.DiscountTotal"/>.</summary>
+public sealed record CashierPerformanceRowDto(
+    Guid CashierUserId,
+    string CashierName,
+    decimal GrossSales,
+    decimal NetSales,
+    int CompletedTransactions,
+    decimal AverageTransactionValue,
+    decimal Discounts,
+    int ReturnsCount,
+    decimal ReturnsValue,
+    int VoidedSalesCount,
+    decimal VoidedSalesValue);
+
+public sealed record CashierPerformanceResultDto(
+    DateTime FromUtc,
+    DateTime ToUtc,
+    IReadOnlyList<CashierPerformanceRowDto> Rows);
+
 public interface IReportsService
 {
     Task<ReportsOverviewDto> GetOverviewAsync(ReportFilter filter, CancellationToken cancellationToken = default);
@@ -382,4 +420,6 @@ public interface IReportsService
 
     Task<PagedResult<RegisterSessionReconciliationRowDto>> GetRegisterSessionReconciliationAsync(
         RegisterSessionReconciliationQuery query, CancellationToken cancellationToken = default);
+
+    Task<CashierPerformanceResultDto> GetCashierPerformanceAsync(ReportFilter filter, CancellationToken cancellationToken = default);
 }

@@ -368,6 +368,100 @@ public sealed class ReportsService : IReportsService
         return new RegisterPerformanceResultDto(range.FromUtc, range.ToUtc, rows);
     }
 
+    /// <summary>Same KPI-bucket pattern as <see cref="GetBranchPerformanceAsync"/>/
+    /// <see cref="GetRegisterPerformanceAsync"/>, grouped by whoever performed each action rather than
+    /// by branch/register — and, unlike those two, potentially by THREE DIFFERENT actors for the very
+    /// same sale. Sales-side figures (<see cref="CashierPerformanceRowDto.GrossSales"/> etc.) are keyed
+    /// to <see cref="Sale.CreatedByUserId"/> — whoever completed the checkout — via
+    /// <see cref="BaseSalesAsync"/>'s own scoping (which already applies the request's own
+    /// <c>CashierId</c> filter, if any, to that same column). Void activity is deliberately re-grouped
+    /// by <see cref="Sale.VoidedByUserId"/> instead — whoever performed the void, which can be a
+    /// different person than whoever rang up the original sale (e.g. a Manager voiding a Cashier's
+    /// sale) — so one voided sale can appear in one person's sales bucket (excluded from Net/Gross
+    /// there, per <see cref="Qualifying"/>'s existing <c>Status != Voided</c> rule) and a DIFFERENT
+    /// person's void bucket, in the same report. Return activity is similarly re-grouped by
+    /// <see cref="SaleReturn.CreatedByUserId"/> — whoever processed the return, not the original
+    /// cashier. No role filter anywhere: a Manager/Owner's own checkout, void, or return shows up here
+    /// exactly like a Cashier's would — this report attributes by ACTION, never by role.</summary>
+    public async Task<CashierPerformanceResultDto> GetCashierPerformanceAsync(
+        ReportFilter filter, CancellationToken cancellationToken = default)
+    {
+        RequireAuthenticated();
+        var tenantId = _currentUser.TenantId;
+        var range = _periodResolver.Resolve(filter.Period, filter.FromDate, filter.ToDate);
+
+        var salesBase = await BaseSalesAsync(filter, cancellationToken);
+        var returnsBase = await BaseReturnsAsync(filter, cancellationToken);
+
+        var qualifying = Qualifying(salesBase, range.FromUtc, range.ToUtc);
+
+        var salesByCashier = await qualifying
+            .GroupBy(s => s.CreatedByUserId)
+            .Select(g => new
+            {
+                CashierUserId = g.Key,
+                GrossSales = g.Sum(s => s.Subtotal),
+                NetSales = g.Sum(s => s.GrandTotal),
+                Discounts = g.Sum(s => s.DiscountTotal),
+                CompletedTransactions = g.Count(),
+            })
+            .ToListAsync(cancellationToken);
+
+        // Void activity attributed to whoever performed the VOID, never the original checkout cashier —
+        // grouped by VoidedByUserId, off the same already-scoped salesBase (branch/register/cashier
+        // filters all still apply), not a re-derived query. VoidedByUserId is only ever null on a sale
+        // that was never voided, which the Status == Voided filter here already excludes.
+        var voidedByActor = await salesBase
+            .Where(s => s.Status == SaleStatus.Voided && s.VoidedAtUtc != null
+                && s.VoidedAtUtc >= range.FromUtc && s.VoidedAtUtc < range.ToUtc && s.VoidedByUserId != null)
+            .GroupBy(s => s.VoidedByUserId!.Value)
+            .Select(g => new { ActorUserId = g.Key, Count = g.Count(), Value = g.Sum(s => s.GrandTotal) })
+            .ToListAsync(cancellationToken);
+
+        // Return activity attributed to whoever PROCESSED the return — SaleReturn.CreatedByUserId —
+        // never the original sale's cashier.
+        var returnsByActor = await returnsBase
+            .Where(r => r.CreatedAtUtc >= range.FromUtc && r.CreatedAtUtc < range.ToUtc)
+            .GroupBy(r => r.CreatedByUserId)
+            .Select(g => new { ActorUserId = g.Key, Count = g.Count(), Value = g.Sum(r => r.TotalRefund) })
+            .ToListAsync(cancellationToken);
+
+        var userIds = salesByCashier.Select(r => r.CashierUserId)
+            .Union(voidedByActor.Select(r => r.ActorUserId))
+            .Union(returnsByActor.Select(r => r.ActorUserId))
+            .Distinct()
+            .ToList();
+
+        var userNames = await _db.Users.AsNoTracking()
+            .Where(u => u.TenantId == tenantId && userIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.FirstName + " " + u.LastName, cancellationToken);
+
+        var rows = userIds.Select(id =>
+        {
+            var s = salesByCashier.FirstOrDefault(r => r.CashierUserId == id);
+            var v = voidedByActor.FirstOrDefault(r => r.ActorUserId == id);
+            var r = returnsByActor.FirstOrDefault(r => r.ActorUserId == id);
+            var netSales = s?.NetSales ?? 0m;
+            var count = s?.CompletedTransactions ?? 0;
+            return new CashierPerformanceRowDto(
+                id,
+                userNames.TryGetValue(id, out var name) ? name : "(unknown user)",
+                s?.GrossSales ?? 0m,
+                netSales,
+                count,
+                count == 0 ? 0m : Money.Round(netSales / count),
+                s?.Discounts ?? 0m,
+                r?.Count ?? 0,
+                r?.Value ?? 0m,
+                v?.Count ?? 0,
+                v?.Value ?? 0m);
+        })
+        .OrderByDescending(r => r.NetSales)
+        .ToList();
+
+        return new CashierPerformanceResultDto(range.FromUtc, range.ToUtc, rows);
+    }
+
     /// <summary>Session-granular, not day-bucketed like every other report in this module — a
     /// <see cref="RegisterSession"/>'s reconciliation figures (<see cref="RegisterSession.ClosingCash"/>,
     /// <see cref="RegisterSession.ExpectedCash"/>, etc.) are computed exactly once, at close time, by
