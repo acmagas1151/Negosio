@@ -267,6 +267,31 @@ public sealed record DeliveryFulfillmentReportTotalsDto(int TotalSales, decimal 
 public sealed record DeliveryFulfillmentReportResultDto(
     PagedResult<DeliveryFulfillmentReportRowDto> Page, DeliveryFulfillmentReportTotalsDto Totals);
 
+// ---- Branch performance ----
+
+/// <summary>One branch's KPI slice for the resolved range — same formulas as <see cref="ReportKpiDto"/>
+/// (see <c>ReportsService</c>'s own doc comment for the exact derivations), grouped by
+/// <see cref="BranchId"/> instead of aggregated tenant-wide. Voided sales are never folded into
+/// <see cref="GrossSales"/>/<see cref="NetSales"/> — they get their own
+/// <see cref="VoidedSalesCount"/>/<see cref="VoidedSalesValue"/>, same rule as the overview report.</summary>
+public sealed record BranchPerformanceRowDto(
+    Guid BranchId,
+    string BranchName,
+    decimal GrossSales,
+    decimal NetSales,
+    int CompletedTransactions,
+    decimal AverageTransactionValue,
+    decimal Discounts,
+    int ReturnsCount,
+    decimal ReturnsValue,
+    int VoidedSalesCount,
+    decimal VoidedSalesValue);
+
+public sealed record BranchPerformanceResultDto(
+    DateTime FromUtc,
+    DateTime ToUtc,
+    IReadOnlyList<BranchPerformanceRowDto> Rows);
+
 public interface IReportsService
 {
     Task<ReportsOverviewDto> GetOverviewAsync(ReportFilter filter, CancellationToken cancellationToken = default);
@@ -280,4 +305,6 @@ public interface IReportsService
     Task<DeliveryFulfillmentReportResultDto> GetDeliveryFulfillmentAsync(DeliveryFulfillmentReportQuery query, CancellationToken cancellationToken = default);
 
     Task<PickupReportResultDto> GetPickupsAsync(PickupReportQuery query, CancellationToken cancellationToken = default);
+
+    Task<BranchPerformanceResultDto> GetBranchPerformanceAsync(ReportFilter filter, CancellationToken cancellationToken = default);
 }

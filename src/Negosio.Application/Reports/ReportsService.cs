@@ -159,6 +159,91 @@ public sealed class ReportsService : IReportsService
             .ToList();
     }
 
+    /// <summary>Same KPI computation as <see cref="GetOverviewAsync"/>, grouped by branch instead of
+    /// aggregated tenant-wide. Voided sales and returns are never folded into a branch's Gross/Net —
+    /// each gets its own count/value bucket, same rule <see cref="Qualifying"/>'s <c>Status != Voided</c>
+    /// filter already enforces for the sale-side aggregates. <see cref="BaseSalesAsync"/>/
+    /// <see cref="BaseReturnsAsync"/> already apply tenant + branch/register/cashier scoping (Manager
+    /// forced to their own branch) — this method derives every bucket from those two already-scoped
+    /// queryables rather than re-resolving scope itself.</summary>
+    public async Task<BranchPerformanceResultDto> GetBranchPerformanceAsync(
+        ReportFilter filter, CancellationToken cancellationToken = default)
+    {
+        RequireAuthenticated();
+        var tenantId = _currentUser.TenantId;
+        var range = _periodResolver.Resolve(filter.Period, filter.FromDate, filter.ToDate);
+
+        var salesBase = await BaseSalesAsync(filter, cancellationToken);
+        var returnsBase = await BaseReturnsAsync(filter, cancellationToken);
+
+        var qualifying = Qualifying(salesBase, range.FromUtc, range.ToUtc);
+
+        var salesRows = await qualifying
+            .GroupBy(s => s.BranchId)
+            .Select(g => new
+            {
+                BranchId = g.Key,
+                GrossSales = g.Sum(s => s.Subtotal),
+                NetSales = g.Sum(s => s.GrandTotal),
+                Discounts = g.Sum(s => s.DiscountTotal),
+                CompletedTransactions = g.Count(),
+            })
+            .ToListAsync(cancellationToken);
+
+        // Voided bucket: derived from the SAME already-scoped salesBase, never a re-derived scope —
+        // attributed to VoidedAtUtc, not CreatedAtUtc (a sale voided today but created yesterday
+        // counts as today's void, mirroring ComputeKpisAsync's own voidedQuery).
+        var voidedRows = await salesBase
+            .Where(s => s.Status == SaleStatus.Voided && s.VoidedAtUtc != null
+                && s.VoidedAtUtc >= range.FromUtc && s.VoidedAtUtc < range.ToUtc)
+            .GroupBy(s => s.BranchId)
+            .Select(g => new { BranchId = g.Key, Count = g.Count(), Value = g.Sum(s => s.GrandTotal) })
+            .ToListAsync(cancellationToken);
+
+        // SaleReturn carries its own BranchId (the branch the return was processed at) — no join to
+        // Sales needed to group it, unlike a query that only had the original sale's branch to go on.
+        var returnsRows = await returnsBase
+            .Where(r => r.CreatedAtUtc >= range.FromUtc && r.CreatedAtUtc < range.ToUtc)
+            .GroupBy(r => r.BranchId)
+            .Select(g => new { BranchId = g.Key, Count = g.Count(), Value = g.Sum(r => r.TotalRefund) })
+            .ToListAsync(cancellationToken);
+
+        var branchIds = salesRows.Select(r => r.BranchId)
+            .Union(voidedRows.Select(r => r.BranchId))
+            .Union(returnsRows.Select(r => r.BranchId))
+            .Distinct()
+            .ToList();
+
+        var branchNames = await _db.Branches.AsNoTracking()
+            .Where(b => b.TenantId == tenantId && branchIds.Contains(b.Id))
+            .ToDictionaryAsync(b => b.Id, b => b.Name, cancellationToken);
+
+        var rows = branchIds.Select(id =>
+        {
+            var s = salesRows.FirstOrDefault(r => r.BranchId == id);
+            var v = voidedRows.FirstOrDefault(r => r.BranchId == id);
+            var r = returnsRows.FirstOrDefault(r => r.BranchId == id);
+            var netSales = s?.NetSales ?? 0m;
+            var count = s?.CompletedTransactions ?? 0;
+            return new BranchPerformanceRowDto(
+                id,
+                branchNames.TryGetValue(id, out var name) ? name : "(unknown branch)",
+                s?.GrossSales ?? 0m,
+                netSales,
+                count,
+                count == 0 ? 0m : Money.Round(netSales / count),
+                s?.Discounts ?? 0m,
+                r?.Count ?? 0,
+                r?.Value ?? 0m,
+                v?.Count ?? 0,
+                v?.Value ?? 0m);
+        })
+        .OrderByDescending(r => r.NetSales)
+        .ToList();
+
+        return new BranchPerformanceResultDto(range.FromUtc, range.ToUtc, rows);
+    }
+
     public async Task<DeliveryReportResultDto> GetDeliveriesAsync(DeliveryReportQuery query, CancellationToken cancellationToken = default)
     {
         RequireAuthenticated();

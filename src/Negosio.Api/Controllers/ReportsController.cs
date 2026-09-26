@@ -57,4 +57,10 @@ public sealed class ReportsController : ControllerBase
     public async Task<ActionResult<PickupReportResultDto>> Pickups(
         [FromQuery] PickupReportQuery query, CancellationToken cancellationToken)
         => Ok(await _reports.GetPickupsAsync(query, cancellationToken));
+
+    [HttpGet("branch-performance")]
+    [ProducesResponseType(typeof(BranchPerformanceResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<BranchPerformanceResultDto>> BranchPerformance(
+        [FromQuery] ReportFilter filter, CancellationToken cancellationToken)
+        => Ok(await _reports.GetBranchPerformanceAsync(filter, cancellationToken));
 }

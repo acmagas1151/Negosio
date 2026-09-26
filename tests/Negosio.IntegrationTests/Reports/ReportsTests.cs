@@ -384,6 +384,95 @@ public class ReportsTests : IntegrationTest
         row.ScheduleCount.Should().Be(1);
     }
 
+    // ---- Branch performance ----
+
+    [Fact]
+    public async Task GetBranchPerformanceAsync_GroupsByBranchAndExcludesVoided()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
+        var bgc = await CreateBranchAsync("BGC", "BGC");
+
+        var mainRegister = await CreateRegisterAsync(mainId, "M1", "M1");
+        var mainSession = await OpenSessionAsync(mainRegister.Id);
+        var category = await CreateCategoryAsync();
+        var (_, mainVariantId) = await SeedStockedProductAsync(
+            mainId, category.Id, sku: "MAIN-SKU", sellingPrice: 500m, openingStock: 20m);
+
+        // Branch A: one completed sale (500) plus a second sale that gets voided (100) — the void
+        // must land in its own bucket and never inflate/deflate NetSales.
+        var saleA = await SellAsync(mainId, mainSession.Id, mainVariantId, 1m, 500m);
+        var (_, voidVariantId) = await SeedStockedProductAsync(
+            mainId, category.Id, name: "Void Candidate", sku: "MAIN-VOID-SKU", sellingPrice: 100m, openingStock: 20m);
+        var saleToVoid = await SellAsync(mainId, mainSession.Id, voidVariantId, 1m, 100m);
+        var voidRes = await Client.PostAsJsonAsync($"/api/sales/{saleToVoid.SaleId}/void", new VoidSaleRequest("Test void"));
+        voidRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // A user may only have one open session at a time — close before opening a second on branch B.
+        (await Client.PostAsJsonAsync($"/api/register-sessions/{mainSession.Id}/close", new CloseRegisterSessionRequest(1200m)))
+            .EnsureSuccessStatusCode();
+
+        // Branch B: one completed sale (300), no voids.
+        var bgcRegister = await CreateRegisterAsync(bgc.Id, "B1", "B1");
+        var bgcSession = await OpenSessionAsync(bgcRegister.Id);
+        var (_, bgcVariantId) = await SeedStockedProductAsync(
+            bgc.Id, category.Id, sku: "BGC-SKU", sellingPrice: 300m, openingStock: 20m);
+        var saleB = await SellAsync(bgc.Id, bgcSession.Id, bgcVariantId, 1m, 300m);
+        saleB.GrandTotal.Should().Be(300m);
+
+        var result = await Client.GetFromJsonAsync<BranchPerformanceResultDto>(
+            "/api/reports/branch-performance?period=Last30Days", TestJson.Options);
+
+        result!.Rows.Should().HaveCount(2);
+        var rowA = result.Rows.Single(r => r.BranchId == mainId);
+        rowA.NetSales.Should().Be(500m, "the voided 100 must not be included");
+        rowA.GrossSales.Should().Be(500m);
+        rowA.CompletedTransactions.Should().Be(1);
+        rowA.VoidedSalesCount.Should().Be(1);
+        rowA.VoidedSalesValue.Should().Be(100m);
+
+        var rowB = result.Rows.Single(r => r.BranchId == bgc.Id);
+        rowB.NetSales.Should().Be(300m);
+        rowB.CompletedTransactions.Should().Be(1);
+        rowB.VoidedSalesCount.Should().Be(0);
+        rowB.VoidedSalesValue.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task Branch_performance_manager_is_forced_to_their_own_branch()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
+        var bgc = await CreateBranchAsync("BGC", "BGC");
+
+        var mainRegister = await CreateRegisterAsync(mainId, "M1", "M1");
+        var mainSession = await OpenSessionAsync(mainRegister.Id);
+        var category = await CreateCategoryAsync();
+        var (_, mainVariantId) = await SeedStockedProductAsync(mainId, category.Id, sku: "MAIN-SKU", sellingPrice: 100m, openingStock: 20m);
+        await SellAsync(mainId, mainSession.Id, mainVariantId, 1m, 100m);
+
+        (await Client.PostAsJsonAsync($"/api/register-sessions/{mainSession.Id}/close", new CloseRegisterSessionRequest(1200m)))
+            .EnsureSuccessStatusCode();
+
+        var bgcRegister = await CreateRegisterAsync(bgc.Id, "B1", "B1");
+        var bgcSession = await OpenSessionAsync(bgcRegister.Id);
+        var (_, bgcVariantId) = await SeedStockedProductAsync(bgc.Id, category.Id, sku: "BGC-SKU", sellingPrice: 150m, openingStock: 20m);
+        await SellAsync(bgc.Id, bgcSession.Id, bgcVariantId, 1m, 150m);
+
+        var managerToken = await AddTenantUserTokenAsync("branchperf-mgr@example.com", UserRole.Manager, mainId);
+        Authorize(managerToken);
+
+        var managerResult = await Client.GetFromJsonAsync<BranchPerformanceResultDto>(
+            "/api/reports/branch-performance?period=Last30Days", TestJson.Options);
+        managerResult!.Rows.Should().ContainSingle().Which.BranchId.Should().Be(mainId);
+
+        // Even explicitly requesting the other branch's id must not leak BGC's data to the Main manager.
+        var managerAttemptBgc = await Client.GetFromJsonAsync<BranchPerformanceResultDto>(
+            $"/api/reports/branch-performance?period=Last30Days&branchId={bgc.Id}", TestJson.Options);
+        managerAttemptBgc!.Rows.Should().ContainSingle().Which.BranchId.Should().Be(mainId,
+            "a branch-scoped Manager must always be forced to their own branch");
+    }
+
     [Fact]
     public async Task A_sale_with_nothing_marked_for_delivery_never_appears_in_the_fulfillment_report()
     {
