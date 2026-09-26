@@ -287,7 +287,7 @@ export function PosTerminal({
       // toast naming the sale number, pointing at where to finish, is the whole recovery story.
       toast(
         'error',
-        `Sale #${variables.saleNumber} completed, but the delivery could not be scheduled. Schedule it from the sale's detail page.`,
+        `Sale #${variables.saleNumber} completed, but the delivery could not be scheduled. Open the sale's detail page and use "Schedule now" to finish setting it up.`,
       )
     },
   })
@@ -311,7 +311,7 @@ export function PosTerminal({
     onError: (_err, variables) => {
       toast(
         'error',
-        `Sale #${variables.saleNumber} completed, but the pickup could not be scheduled. Schedule it from the sale's detail page.`,
+        `Sale #${variables.saleNumber} completed, but the pickup could not be scheduled. Open the sale's detail page and use "Schedule now" to finish setting it up.`,
       )
     },
   })
