@@ -727,6 +727,7 @@ export type CancellationDisposition =
   | 'ConvertToDelivery'
   | 'ConvertToPickup'
   | 'CustomerPickedUpInstead'
+  | 'SaleVoided'
 
 export interface FulfillmentItemDto {
   saleItemId: string

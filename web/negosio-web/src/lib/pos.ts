@@ -92,6 +92,7 @@ export const CANCELLATION_DISPOSITION_LABELS: Record<CancellationDisposition, st
   ConvertToDelivery: 'Convert to delivery',
   ConvertToPickup: 'Convert to pickup',
   CustomerPickedUpInstead: 'Customer picked it up instead',
+  SaleVoided: 'Sale voided',
 }
 
 export const SALE_FULFILLMENT_STATUS_LABELS: Record<SaleFulfillmentStatus, string> = {

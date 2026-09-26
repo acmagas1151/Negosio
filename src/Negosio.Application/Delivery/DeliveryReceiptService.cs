@@ -441,7 +441,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         CancellationDisposition disposition,
         FulfillmentMethod convertToMethod,      // == expectedMethod when the quantities just go back to unscheduled
         bool completeReplacementImmediately,    // true only for CustomerPickedUpInstead
-        ReplacementFactory? buildReplacement,   // kept nullable defensively; every current disposition (including DeliverLater/PickupLater, since Task 3B) passes one
+        ReplacementFactory? buildReplacement,   // null means "no replacement is created" (a plain release). Every disposition reachable through the public cancel endpoints — including DeliverLater/PickupLater, since Task 3B — passes one, but SaleVoided (the void cascade) always passes null, and that's the real, load-bearing path, not a defensive fallback.
         CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -531,19 +531,15 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         // DeliverLater / PickupLater — builds an immediate same-method replacement schedule rather than
         // releasing quantity back to "unscheduled", so buildReplacement is effectively never null here for
         // those 5 dispositions. SaleVoided (Task 2 of the fulfillment-recovery-fixes plan) is the one
-        // caller that deliberately passes null: a voided sale has no replacement to create, so it takes
-        // the else branch below and is never blocked by this gate — correct, since by the time this runs
-        // the sale may already be (or is about to become) Voided.
-        Sale sale;
-        if (buildReplacement is not null)
+        // caller that deliberately passes null: a voided sale has no replacement to create, so this gate
+        // never runs for it — correct, since by the time this runs the sale may already be (or is about
+        // to become) Voided. That path still needs the sale to exist, though, so it gets a cheap
+        // existence check below instead of the full LoadFulfillableSaleAsync load — unlike the
+        // buildReplacement-not-null path, nothing here ever reads the Sale entity itself.
+        if (buildReplacement is null && !await _db.Sales.AsNoTracking()
+                .AnyAsync(s => s.TenantId == tenantId && s.Id == saleId, ct))
         {
-            sale = await LoadFulfillableSaleAsync(tenantId, saleId, ct);
-        }
-        else
-        {
-            sale = await _db.Sales.AsNoTracking()
-                .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == saleId, ct)
-                ?? throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
+            throw new NotFoundException(ErrorCodes.SaleNotFound, "Sale not found.");
         }
 
         // TRACKED on purpose — ConvertFulfillment mutates these rows, and it is the only mutator either
@@ -558,6 +554,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         DeliveryReceipt? replacement = null;
         if (buildReplacement is not null)
         {
+            var sale = await LoadFulfillableSaleAsync(tenantId, saleId, ct);
             var preparedByName = await ResolvePreparedByNameAsync(ct);
             var sequenceNumber = await NextSequenceNumberAsync(tenantId, saleId, convertToMethod, ct);
             replacement = buildReplacement(sale, sequenceNumber, preparedByName);

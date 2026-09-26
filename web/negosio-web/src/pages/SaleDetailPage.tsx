@@ -207,6 +207,15 @@ export default function SaleDetailPage() {
     },
   })
 
+  // Closes the "Schedule now" recovery form and resets its state, so reopening it later (after a
+  // success, or after the cashier cancels out of it) always starts from a clean, unattempted form
+  // rather than replaying stale validation errors against fields the cashier never touched this time.
+  const closeScheduling = () => {
+    setSchedulingOpen(false)
+    setSchedulingAttempted(false)
+    setSchedulingFields(emptyFulfillmentDetails())
+  }
+
   // These fire only from the recovery flow below, after a Delivery/Pickup checkout succeeded but the
   // schedule-creation call that should have followed it failed — so `id` (this page's own route
   // param, already used for both queries above) is the sale to schedule against. `d.sale.id` isn't
@@ -221,7 +230,7 @@ export default function SaleDetailPage() {
         notes: fields.notes.trim() || null,
       }),
     onSuccess: () => {
-      setSchedulingOpen(false)
+      closeScheduling()
       invalidateFulfillment()
     },
   })
@@ -235,7 +244,7 @@ export default function SaleDetailPage() {
         notes: fields.notes.trim() || null,
       }),
     onSuccess: () => {
-      setSchedulingOpen(false)
+      closeScheduling()
       invalidateFulfillment()
     },
   })
@@ -494,7 +503,7 @@ export default function SaleDetailPage() {
                               >
                                 Confirm schedule
                               </Button>
-                              <Button variant="secondary" onClick={() => setSchedulingOpen(false)}>
+                              <Button variant="secondary" onClick={closeScheduling}>
                                 Cancel
                               </Button>
                             </div>

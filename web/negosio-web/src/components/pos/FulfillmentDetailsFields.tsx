@@ -41,7 +41,7 @@ export function FulfillmentDetailsFields({
 
   return (
     <div className="mt-3 space-y-4 border-t border-border pt-3">
-      {isDelivery && (
+      {isDelivery && onDeliveryChargeChange && (
         <div>
           <TextField
             label="Delivery charge (₱)"
