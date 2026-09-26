@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { reportsApi } from '../api/reports'
@@ -10,8 +10,68 @@ import { formatMoney } from '../lib/format'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
 import { ReportFilterBar } from '../components/reports/ReportFilterBar'
 import { EmptyState, ErrorState, Pagination, SkeletonText, Table } from '../components/ui'
+import type { BranchPerformanceRowDto, CashierPerformanceRowDto, RegisterPerformanceRowDto } from '../api/types'
 
 type Tab = 'branches' | 'registers' | 'cashiers'
+
+// ---- Client-side sort for the three flat comparison tables (Branch/Register-sales/Cashier) — these
+// views already fetch their full row array via a plain useQuery (no pagination), so sorting is done
+// entirely in-memory rather than round-tripping to the server. Deliberately its own local state, not
+// URL-synced like ProductsPage's server-side sort (usePagedQuery.setSort) — there's no page to preserve
+// across. Toggle semantics mirror usePagedQuery.setSort exactly: click an unsorted column -> ascending,
+// click it again -> descending, click it a third time -> clear back to the backend's own default order
+// (NetSales descending).
+type SortDirection = 'asc' | 'desc'
+type SortState = { key: string; direction: SortDirection } | null
+
+function toggleSort(current: SortState, key: string): SortState {
+  if (!current || current.key !== key) return { key, direction: 'asc' }
+  if (current.direction === 'asc') return { key, direction: 'desc' }
+  return null
+}
+
+function useSortableRows<T>(rows: T[] | undefined, accessors: Record<string, (row: T) => number>) {
+  const [sort, setSort] = useState<SortState>(null)
+  const onSort = (key: string) => setSort((prev) => toggleSort(prev, key))
+  const sortedRows = useMemo(() => {
+    const list = rows ?? []
+    if (!sort) return list
+    const accessor = accessors[sort.key]
+    if (!accessor) return list
+    const dir = sort.direction === 'asc' ? 1 : -1
+    return [...list].sort((a, b) => (accessor(a) - accessor(b)) * dir)
+  }, [rows, sort, accessors])
+  return { sortedRows, activeSort: { by: sort?.key, dir: sort?.direction }, onSort }
+}
+
+const branchSortAccessors: Record<string, (r: BranchPerformanceRowDto) => number> = {
+  netSales: (r) => r.netSales,
+  grossSales: (r) => r.grossSales,
+  transactions: (r) => r.completedTransactions,
+  averageSale: (r) => r.averageTransactionValue,
+  discounts: (r) => r.discounts,
+  returnsValue: (r) => r.returnsValue,
+  voidedValue: (r) => r.voidedSalesValue,
+}
+
+const registerSalesSortAccessors: Record<string, (r: RegisterPerformanceRowDto) => number> = {
+  netSales: (r) => r.netSales,
+  transactions: (r) => r.completedTransactions,
+  cashIn: (r) => r.cashIn,
+  cashOut: (r) => r.cashOut,
+}
+
+const cashierSortAccessors: Record<string, (r: CashierPerformanceRowDto) => number> = {
+  netSales: (r) => r.netSales,
+  grossSales: (r) => r.grossSales,
+  transactions: (r) => r.completedTransactions,
+  averageSale: (r) => r.averageTransactionValue,
+  discounts: (r) => r.discounts,
+  returnsValue: (r) => r.returnsValue,
+  voidedValue: (r) => r.voidedSalesValue,
+  voidApprovalsCount: (r) => r.voidApprovalsCount,
+  returnApprovalsCount: (r) => r.returnApprovalsCount,
+}
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
@@ -78,6 +138,7 @@ function BranchPerformanceTab({ filters }: { filters: ReportFiltersState }) {
     queryKey: ['reports', 'branch-performance', filters.params],
     queryFn: () => reportsApi.branchPerformance(filters.params),
   })
+  const { sortedRows, activeSort, onSort } = useSortableRows(query.data?.rows, branchSortAccessors)
 
   if (query.isError) {
     return (
@@ -124,16 +185,30 @@ function BranchPerformanceTab({ filters }: { filters: ReportFiltersState }) {
     <Table>
       <Table.Head>
         <Table.HeaderCell>Branch</Table.HeaderCell>
-        <Table.HeaderCell align="right">Net sales</Table.HeaderCell>
-        <Table.HeaderCell align="right">Gross sales</Table.HeaderCell>
-        <Table.HeaderCell align="right">Transactions</Table.HeaderCell>
-        <Table.HeaderCell align="right">Average sale</Table.HeaderCell>
-        <Table.HeaderCell align="right">Discounts</Table.HeaderCell>
-        <Table.HeaderCell align="right">Returns</Table.HeaderCell>
-        <Table.HeaderCell align="right">Voids</Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="netSales" activeSort={activeSort} onSort={onSort}>
+          Net sales
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="grossSales" activeSort={activeSort} onSort={onSort}>
+          Gross sales
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="transactions" activeSort={activeSort} onSort={onSort}>
+          Transactions
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="averageSale" activeSort={activeSort} onSort={onSort}>
+          Average sale
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="discounts" activeSort={activeSort} onSort={onSort}>
+          Discounts
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="returnsValue" activeSort={activeSort} onSort={onSort}>
+          Returns
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="voidedValue" activeSort={activeSort} onSort={onSort}>
+          Voids
+        </Table.HeaderCell>
       </Table.Head>
       <Table.Body>
-        {query.data.rows.map((r) => (
+        {sortedRows.map((r) => (
           <Table.Row key={r.branchId}>
             <Table.Cell>{r.branchName}</Table.Cell>
             <Table.Cell align="right">{formatMoney(r.netSales)}</Table.Cell>
@@ -184,6 +259,7 @@ function RegisterSalesView({ filters }: { filters: ReportFiltersState }) {
     queryKey: ['reports', 'register-performance', filters.params],
     queryFn: () => reportsApi.registerPerformance(filters.params),
   })
+  const { sortedRows, activeSort, onSort } = useSortableRows(query.data?.rows, registerSalesSortAccessors)
 
   if (query.isError) {
     return (
@@ -230,14 +306,22 @@ function RegisterSalesView({ filters }: { filters: ReportFiltersState }) {
       <Table.Head>
         <Table.HeaderCell>Register</Table.HeaderCell>
         <Table.HeaderCell>Branch</Table.HeaderCell>
-        <Table.HeaderCell align="right">Net sales</Table.HeaderCell>
-        <Table.HeaderCell align="right">Transactions</Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="netSales" activeSort={activeSort} onSort={onSort}>
+          Net sales
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="transactions" activeSort={activeSort} onSort={onSort}>
+          Transactions
+        </Table.HeaderCell>
         <Table.HeaderCell>Payment methods</Table.HeaderCell>
-        <Table.HeaderCell align="right">Cash in</Table.HeaderCell>
-        <Table.HeaderCell align="right">Cash out</Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="cashIn" activeSort={activeSort} onSort={onSort}>
+          Cash in
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="cashOut" activeSort={activeSort} onSort={onSort}>
+          Cash out
+        </Table.HeaderCell>
       </Table.Head>
       <Table.Body>
-        {query.data.rows.map((r) => (
+        {sortedRows.map((r) => (
           <Table.Row key={r.registerId}>
             <Table.Cell>{r.registerName}</Table.Cell>
             <Table.Cell>{r.branchName}</Table.Cell>
@@ -359,6 +443,7 @@ function CashierPerformanceTab({ filters }: { filters: ReportFiltersState }) {
     queryKey: ['reports', 'cashier-performance', filters.params],
     queryFn: () => reportsApi.cashierPerformance(filters.params),
   })
+  const { sortedRows, activeSort, onSort } = useSortableRows(query.data?.rows, cashierSortAccessors)
 
   if (query.isError) {
     return (
@@ -381,11 +466,13 @@ function CashierPerformanceTab({ filters }: { filters: ReportFiltersState }) {
           <Table.HeaderCell align="right">Discounts</Table.HeaderCell>
           <Table.HeaderCell align="right">Returns</Table.HeaderCell>
           <Table.HeaderCell align="right">Voids</Table.HeaderCell>
+          <Table.HeaderCell align="right">Void approvals</Table.HeaderCell>
+          <Table.HeaderCell align="right">Return approvals</Table.HeaderCell>
         </Table.Head>
         <Table.Body>
           {Array.from({ length: 4 }).map((_, i) => (
             <Table.Row key={i}>
-              {Array.from({ length: 8 }).map((__, j) => (
+              {Array.from({ length: 10 }).map((__, j) => (
                 <Table.Cell key={j}>
                   <SkeletonText className={j === 0 ? 'w-24' : 'w-16'} />
                 </Table.Cell>
@@ -405,16 +492,36 @@ function CashierPerformanceTab({ filters }: { filters: ReportFiltersState }) {
     <Table>
       <Table.Head>
         <Table.HeaderCell>Cashier</Table.HeaderCell>
-        <Table.HeaderCell align="right">Net sales</Table.HeaderCell>
-        <Table.HeaderCell align="right">Gross sales</Table.HeaderCell>
-        <Table.HeaderCell align="right">Transactions</Table.HeaderCell>
-        <Table.HeaderCell align="right">Average sale</Table.HeaderCell>
-        <Table.HeaderCell align="right">Discounts</Table.HeaderCell>
-        <Table.HeaderCell align="right">Returns</Table.HeaderCell>
-        <Table.HeaderCell align="right">Voids</Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="netSales" activeSort={activeSort} onSort={onSort}>
+          Net sales
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="grossSales" activeSort={activeSort} onSort={onSort}>
+          Gross sales
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="transactions" activeSort={activeSort} onSort={onSort}>
+          Transactions
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="averageSale" activeSort={activeSort} onSort={onSort}>
+          Average sale
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="discounts" activeSort={activeSort} onSort={onSort}>
+          Discounts
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="returnsValue" activeSort={activeSort} onSort={onSort}>
+          Returns
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="voidedValue" activeSort={activeSort} onSort={onSort}>
+          Voids
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="voidApprovalsCount" activeSort={activeSort} onSort={onSort}>
+          Void approvals
+        </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="returnApprovalsCount" activeSort={activeSort} onSort={onSort}>
+          Return approvals
+        </Table.HeaderCell>
       </Table.Head>
       <Table.Body>
-        {query.data.rows.map((r) => (
+        {sortedRows.map((r) => (
           <Table.Row key={r.cashierUserId}>
             <Table.Cell>{r.cashierName}</Table.Cell>
             <Table.Cell align="right">{formatMoney(r.netSales)}</Table.Cell>
@@ -428,6 +535,8 @@ function CashierPerformanceTab({ filters }: { filters: ReportFiltersState }) {
             <Table.Cell align="right">
               {r.voidedSalesCount} ({formatMoney(r.voidedSalesValue)})
             </Table.Cell>
+            <Table.Cell align="right">{r.voidApprovalsCount}</Table.Cell>
+            <Table.Cell align="right">{r.returnApprovalsCount}</Table.Cell>
           </Table.Row>
         ))}
       </Table.Body>

@@ -381,7 +381,14 @@ public sealed record RegisterSessionReconciliationRowDto(
 /// by design (see <c>ReportsService.GetCashierPerformanceAsync</c>). <see cref="Discounts"/> is
 /// amount/count only — this codebase does not persist who APPROVED a discount anywhere, so no approver
 /// identity is exposed or implied here, only the total already carried on
-/// <see cref="Negosio.Domain.Entities.Sale.DiscountTotal"/>.</summary>
+/// <see cref="Negosio.Domain.Entities.Sale.DiscountTotal"/>. <see cref="VoidApprovalsCount"/>/
+/// <see cref="ReturnApprovalsCount"/> are a THIRD, independently-keyed bucket — grouped by
+/// <see cref="Negosio.Domain.Entities.Sale.ApprovedByUserId"/>/
+/// <see cref="Negosio.Domain.Entities.SaleReturn.ApprovedByUserId"/> (the approver, null when the actor
+/// acted under their own direct authority), never conflated with the actor's own
+/// <see cref="VoidedSalesCount"/>/<see cref="ReturnsCount"/> — an approver who never personally voided or
+/// returned anything still gets their own row via these counts. Count-only, not value: an approver isn't
+/// financially "responsible" for the voided/refunded amount the way the actor is.</summary>
 public sealed record CashierPerformanceRowDto(
     Guid CashierUserId,
     string CashierName,
@@ -393,7 +400,9 @@ public sealed record CashierPerformanceRowDto(
     int ReturnsCount,
     decimal ReturnsValue,
     int VoidedSalesCount,
-    decimal VoidedSalesValue);
+    decimal VoidedSalesValue,
+    int VoidApprovalsCount,
+    int ReturnApprovalsCount);
 
 public sealed record CashierPerformanceResultDto(
     DateTime FromUtc,

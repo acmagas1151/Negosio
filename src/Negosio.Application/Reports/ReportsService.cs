@@ -326,8 +326,12 @@ public sealed class ReportsService : IReportsService
             .Where(r => r.TenantId == tenantId && registerIds.Contains(r.Id))
             .Select(r => new { r.Id, r.Name, r.BranchId })
             .ToDictionaryAsync(r => r.Id, cancellationToken);
+        // Scoped to the branches these in-scope registers actually belong to — same convention as
+        // GetBranchPerformanceAsync's own branchNames lookup (branchIds.Contains(b.Id)), rather than
+        // loading every tenant branch's name unconditionally.
+        var inScopeBranchIds = registerInfo.Values.Select(i => i.BranchId).Distinct().ToList();
         var branchNames = await _db.Branches.AsNoTracking()
-            .Where(b => b.TenantId == tenantId)
+            .Where(b => b.TenantId == tenantId && inScopeBranchIds.Contains(b.Id))
             .ToDictionaryAsync(b => b.Id, b => b.Name, cancellationToken);
 
         var rows = registerIds.Select(id =>
@@ -382,7 +386,10 @@ public sealed class ReportsService : IReportsService
     /// person's void bucket, in the same report. Return activity is similarly re-grouped by
     /// <see cref="SaleReturn.CreatedByUserId"/> — whoever processed the return, not the original
     /// cashier. No role filter anywhere: a Manager/Owner's own checkout, void, or return shows up here
-    /// exactly like a Cashier's would — this report attributes by ACTION, never by role.</summary>
+    /// exactly like a Cashier's would — this report attributes by ACTION, never by role. A FOURTH and
+    /// FIFTH bucket cover the distinct APPROVER identity (<see cref="Sale.ApprovedByUserId"/>/
+    /// <see cref="SaleReturn.ApprovedByUserId"/>, null when the actor acted under their own direct
+    /// authority) — never conflated with the actor's own void/return count, per spec.</summary>
     public async Task<CashierPerformanceResultDto> GetCashierPerformanceAsync(
         ReportFilter filter, CancellationToken cancellationToken = default)
     {
@@ -426,9 +433,31 @@ public sealed class ReportsService : IReportsService
             .Select(g => new { ActorUserId = g.Key, Count = g.Count(), Value = g.Sum(r => r.TotalRefund) })
             .ToListAsync(cancellationToken);
 
+        // Approver activity — a SIBLING bucket to voidedByActor/returnsByActor above, grouped by
+        // ApprovedByUserId instead of the actor's own id, and filtered to non-null (null means the actor
+        // acted under their own direct authority, no separate approver involved). Spec requirement: actor
+        // and approver "must not be conflated into one field" — a Manager who approves a Cashier's void
+        // must show up as an approval on the MANAGER's row, distinct from the Cashier's own void count,
+        // even if that Manager never personally voided or returned anything themselves (hence the
+        // separate union into userIds below, same as the two actor buckets already do).
+        var voidApprovalsByApprover = await salesBase
+            .Where(s => s.Status == SaleStatus.Voided && s.VoidedAtUtc != null
+                && s.VoidedAtUtc >= range.FromUtc && s.VoidedAtUtc < range.ToUtc && s.ApprovedByUserId != null)
+            .GroupBy(s => s.ApprovedByUserId!.Value)
+            .Select(g => new { ApproverUserId = g.Key, Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
+        var returnApprovalsByApprover = await returnsBase
+            .Where(r => r.CreatedAtUtc >= range.FromUtc && r.CreatedAtUtc < range.ToUtc && r.ApprovedByUserId != null)
+            .GroupBy(r => r.ApprovedByUserId!.Value)
+            .Select(g => new { ApproverUserId = g.Key, Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
         var userIds = salesByCashier.Select(r => r.CashierUserId)
             .Union(voidedByActor.Select(r => r.ActorUserId))
             .Union(returnsByActor.Select(r => r.ActorUserId))
+            .Union(voidApprovalsByApprover.Select(r => r.ApproverUserId))
+            .Union(returnApprovalsByApprover.Select(r => r.ApproverUserId))
             .Distinct()
             .ToList();
 
@@ -441,6 +470,8 @@ public sealed class ReportsService : IReportsService
             var s = salesByCashier.FirstOrDefault(r => r.CashierUserId == id);
             var v = voidedByActor.FirstOrDefault(r => r.ActorUserId == id);
             var r = returnsByActor.FirstOrDefault(r => r.ActorUserId == id);
+            var va = voidApprovalsByApprover.FirstOrDefault(x => x.ApproverUserId == id);
+            var ra = returnApprovalsByApprover.FirstOrDefault(x => x.ApproverUserId == id);
             var netSales = s?.NetSales ?? 0m;
             var count = s?.CompletedTransactions ?? 0;
             return new CashierPerformanceRowDto(
@@ -454,7 +485,9 @@ public sealed class ReportsService : IReportsService
                 r?.Count ?? 0,
                 r?.Value ?? 0m,
                 v?.Count ?? 0,
-                v?.Value ?? 0m);
+                v?.Value ?? 0m,
+                va?.Count ?? 0,
+                ra?.Count ?? 0);
         })
         .OrderByDescending(r => r.NetSales)
         .ToList();
@@ -508,7 +541,9 @@ public sealed class ReportsService : IReportsService
             join openedBy in _db.Users.AsNoTracking() on s.OpenedByUserId equals openedBy.Id
             join closedBy in _db.Users.AsNoTracking() on s.ClosedByUserId equals closedBy.Id into closedByJoin
             from closedBy in closedByJoin.DefaultIfEmpty()
-            orderby s.ClosedAtUtc descending
+            // Secondary key breaks ties between sessions closed in the exact same instant — without it,
+            // two such sessions could shuffle order between page requests (unstable paging).
+            orderby s.ClosedAtUtc descending, s.Id
             select new RegisterSessionReconciliationRowDto(
                 s.Id, r.Id, r.Name, b.Id, b.Name,
                 s.OpenedAtUtc, s.ClosedAtUtc!.Value,

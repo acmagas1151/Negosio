@@ -744,6 +744,47 @@ public class ReportsTests : IntegrationTest
     }
 
     [Fact]
+    public async Task GetCashierPerformanceAsync_VoidApprovalIsAttributedToTheApprovingManagerNotTheVoidingCashier()
+    {
+        // Actor (who voided) and approver (who authorized it) must not be conflated into one field —
+        // a Cashier with no void grant voids their own sale under a Manager's approval: the Cashier's row
+        // must show the void itself (VoidedSalesCount), while the Manager's row must show the APPROVAL
+        // (VoidApprovalsCount) — distinctly, even though the Manager never personally voided anything.
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(
+            branchId, category.Id, name: "Approval Item", sku: "APPROVAL-SKU", sellingPrice: 150m, openingStock: 10m);
+
+        var cashierToken = await AddTenantUserTokenAsync("approvalcashier@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+        var managerId = await CreateManagerAsync("approvalmanager@example.com", "Manager123!", branchId);
+
+        Authorize(cashierToken);
+        var session = await OpenSessionAsync(register.Id);
+        var sale = await SellAsync(branchId, session.Id, variantId, 1m, 150m);
+
+        // This Cashier has no void grant, so the void requires a Manager's approval credentials.
+        var voidRes = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/void",
+            new VoidSaleRequest("Test void", new VoidSaleApprovalInput("approvalmanager@example.com", "Manager123!")));
+        voidRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Authorize(owner.AccessToken);
+        var result = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            "/api/reports/cashier-performance?period=Last30Days", TestJson.Options);
+
+        var cashierRow = result!.Rows.Single(r => r.CashierUserId == cashierId);
+        cashierRow.VoidedSalesCount.Should().Be(1, "the Cashier is the ACTOR who voided their own sale");
+        cashierRow.VoidApprovalsCount.Should().Be(0, "the Cashier was not the approver of their own void");
+
+        var managerRow = result.Rows.Single(r => r.CashierUserId == managerId);
+        managerRow.VoidApprovalsCount.Should().Be(1, "the Manager approved the void — a distinct bucket from who performed it");
+        managerRow.VoidedSalesCount.Should().Be(0, "the Manager did not perform the void themselves, only approved it");
+        managerRow.NetSales.Should().Be(0m, "the Manager never rang up a sale — only shows up here as an approver");
+    }
+
+    [Fact]
     public async Task GetCashierPerformanceAsync_ReturnActivityIsAttributedToWhoeverProcessedIt()
     {
         var owner = await RegisterLoginAndAuthorizeAsync();

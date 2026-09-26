@@ -1337,6 +1337,10 @@ export interface CashierPerformanceRowDto {
   returnsValue: number
   voidedSalesCount: number
   voidedSalesValue: number
+  // Approver identity, distinct from the actor above (VoidedSalesCount/ReturnsCount) — null approver
+  // means the actor acted under their own direct authority. Count-only, not value, per spec.
+  voidApprovalsCount: number
+  returnApprovalsCount: number
 }
 
 export interface CashierPerformanceResultDto {
