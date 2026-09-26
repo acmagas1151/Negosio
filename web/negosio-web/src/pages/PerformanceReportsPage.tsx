@@ -67,6 +67,7 @@ export default function PerformanceReportsPage() {
 
         {tab === 'branches' && <BranchPerformanceTab filters={filters} />}
         {tab === 'registers' && <RegisterPerformanceTab filters={filters} />}
+        {tab === 'cashiers' && <CashierPerformanceTab filters={filters} />}
       </div>
     </DashboardLayout>
   )
@@ -345,5 +346,91 @@ function RegisterSessionsView({ filters }: { filters: ReportFiltersState }) {
         onPageChange={setPage}
       />
     </>
+  )
+}
+
+// ---- Cashiers tab: a single flat table, grouped by whoever actually performed each action
+// (checkout/void/return), not by role — a Manager or Owner who personally rings up a sale shows up
+// here exactly like a Cashier would, by design. No "Approved by" column for discounts: this
+// codebase doesn't persist who approved one, so that identity is never implied here either.
+
+function CashierPerformanceTab({ filters }: { filters: ReportFiltersState }) {
+  const query = useQuery({
+    queryKey: ['reports', 'cashier-performance', filters.params],
+    queryFn: () => reportsApi.cashierPerformance(filters.params),
+  })
+
+  if (query.isError) {
+    return (
+      <ErrorState
+        message={query.error instanceof Error ? query.error.message : 'Could not load cashier performance.'}
+        onRetry={() => query.refetch()}
+      />
+    )
+  }
+
+  if (query.isPending) {
+    return (
+      <Table>
+        <Table.Head>
+          <Table.HeaderCell>Cashier</Table.HeaderCell>
+          <Table.HeaderCell align="right">Net sales</Table.HeaderCell>
+          <Table.HeaderCell align="right">Gross sales</Table.HeaderCell>
+          <Table.HeaderCell align="right">Transactions</Table.HeaderCell>
+          <Table.HeaderCell align="right">Average sale</Table.HeaderCell>
+          <Table.HeaderCell align="right">Discounts</Table.HeaderCell>
+          <Table.HeaderCell align="right">Returns</Table.HeaderCell>
+          <Table.HeaderCell align="right">Voids</Table.HeaderCell>
+        </Table.Head>
+        <Table.Body>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Table.Row key={i}>
+              {Array.from({ length: 8 }).map((__, j) => (
+                <Table.Cell key={j}>
+                  <SkeletonText className={j === 0 ? 'w-24' : 'w-16'} />
+                </Table.Cell>
+              ))}
+            </Table.Row>
+          ))}
+        </Table.Body>
+      </Table>
+    )
+  }
+
+  if (query.data.rows.length === 0) {
+    return <EmptyState title="No cashier activity" description="No sales in this date range." />
+  }
+
+  return (
+    <Table>
+      <Table.Head>
+        <Table.HeaderCell>Cashier</Table.HeaderCell>
+        <Table.HeaderCell align="right">Net sales</Table.HeaderCell>
+        <Table.HeaderCell align="right">Gross sales</Table.HeaderCell>
+        <Table.HeaderCell align="right">Transactions</Table.HeaderCell>
+        <Table.HeaderCell align="right">Average sale</Table.HeaderCell>
+        <Table.HeaderCell align="right">Discounts</Table.HeaderCell>
+        <Table.HeaderCell align="right">Returns</Table.HeaderCell>
+        <Table.HeaderCell align="right">Voids</Table.HeaderCell>
+      </Table.Head>
+      <Table.Body>
+        {query.data.rows.map((r) => (
+          <Table.Row key={r.cashierUserId}>
+            <Table.Cell>{r.cashierName}</Table.Cell>
+            <Table.Cell align="right">{formatMoney(r.netSales)}</Table.Cell>
+            <Table.Cell align="right">{formatMoney(r.grossSales)}</Table.Cell>
+            <Table.Cell align="right">{r.completedTransactions}</Table.Cell>
+            <Table.Cell align="right">{formatMoney(r.averageTransactionValue)}</Table.Cell>
+            <Table.Cell align="right">{formatMoney(r.discounts)}</Table.Cell>
+            <Table.Cell align="right">
+              {r.returnsCount} ({formatMoney(r.returnsValue)})
+            </Table.Cell>
+            <Table.Cell align="right">
+              {r.voidedSalesCount} ({formatMoney(r.voidedSalesValue)})
+            </Table.Cell>
+          </Table.Row>
+        ))}
+      </Table.Body>
+    </Table>
   )
 }

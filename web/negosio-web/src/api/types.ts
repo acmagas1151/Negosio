@@ -1317,3 +1317,30 @@ export interface RegisterSessionReconciliationRowDto {
   cashIn: number
   cashOut: number
 }
+
+// ---- Cashier performance ----
+
+/** One user's KPI slice for the resolved range, attributed by whoever actually performed each
+ * action rather than by role — a Manager or Owner who personally completes a checkout, voids a
+ * sale, or processes a return shows up here exactly like a Cashier would, by design. No role
+ * filter is applied. `discounts` is amount-only — this codebase does not persist who approved a
+ * discount anywhere, so no approver identity is exposed or implied here. */
+export interface CashierPerformanceRowDto {
+  cashierUserId: string
+  cashierName: string
+  grossSales: number
+  netSales: number
+  completedTransactions: number
+  averageTransactionValue: number
+  discounts: number
+  returnsCount: number
+  returnsValue: number
+  voidedSalesCount: number
+  voidedSalesValue: number
+}
+
+export interface CashierPerformanceResultDto {
+  fromUtc: string
+  toUtc: string
+  rows: CashierPerformanceRowDto[]
+}

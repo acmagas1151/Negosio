@@ -2,6 +2,7 @@ import { apiRequest } from './client'
 import { qs } from './query-string'
 import type {
   BranchPerformanceResultDto,
+  CashierPerformanceResultDto,
   CategoryPerformanceDto,
   DeliveryFulfillmentReportParams,
   DeliveryFulfillmentReportResultDto,
@@ -48,4 +49,7 @@ export const reportsApi = {
     apiRequest<PagedResult<RegisterSessionReconciliationRowDto>>(
       `/api/reports/register-sessions${qs({ ...params })}`,
     ),
+
+  cashierPerformance: (params: ReportFilterParams) =>
+    apiRequest<CashierPerformanceResultDto>(`/api/reports/cashier-performance${qs({ ...params })}`),
 }
