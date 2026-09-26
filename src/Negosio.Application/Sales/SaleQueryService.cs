@@ -119,7 +119,8 @@ public sealed class SaleQueryService : ISaleQueryService
             .Select(i => new SaleItemDto(
                 i.Id, i.ProductVariantId, i.ProductNameSnapshot, i.VariantNameSnapshot, i.SkuSnapshot, i.BarcodeSnapshot,
                 i.UnitPrice, i.Quantity, i.GrossAmount, i.DiscountAmount, i.TaxAmount, i.NetAmount,
-                canViewCost ? i.CostPriceSnapshot : null, i.ReturnedQuantity, i.DeliveryRequiredQuantity))
+                canViewCost ? i.CostPriceSnapshot : null, i.ReturnedQuantity, i.DeliveryRequiredQuantity,
+                i.PickupRequiredQuantity))
             .ToList();
 
         var payments = sale.Payments

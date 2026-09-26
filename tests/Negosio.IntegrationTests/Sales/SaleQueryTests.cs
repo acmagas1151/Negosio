@@ -91,4 +91,21 @@ public class SaleQueryTests : IntegrationTest
         detail!.DeliveryCharge.Should().Be(20m);
         detail.Sale.GrandTotal.Should().Be(60m); // 40 (price) + 20 delivery
     }
+
+    [Fact]
+    public async Task GetAsync_ReturnsPickupRequiredQuantityOnItems()
+    {
+        var (branchId, sessionId, variantId) = await ArrangeAsync();
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, sessionId, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 3m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 500m) },
+            Method: FulfillmentMethod.Pickup));
+
+        var detail = await Client.GetFromJsonAsync<SaleDetailDto>($"/api/sales/{sale.SaleId}", TestJson.Options);
+
+        var item = detail!.Items.Should().ContainSingle().Subject;
+        item.PickupRequiredQuantity.Should().Be(3m);
+        item.DeliveryRequiredQuantity.Should().Be(0m);
+    }
 }
