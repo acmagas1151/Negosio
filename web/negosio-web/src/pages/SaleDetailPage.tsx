@@ -9,17 +9,20 @@ import { salesApi } from '../api/pos'
 import type { FulfillmentScheduleDto } from '../api/types'
 import {
   CANCELLATION_DISPOSITION_LABELS,
+  emptyFulfillmentDetails,
   FULFILLMENT_METHOD_LABELS,
   PAYMENT_METHOD_LABELS,
   SALE_FULFILLMENT_STATUS_LABELS,
   VOID_INELIGIBLE_MESSAGES,
   saleFulfillmentStatusTone,
+  type FulfillmentDetails,
 } from '../lib/pos'
 import { formatMoney } from '../lib/format'
 import { hasReturnableQty } from '../lib/returns'
 import { useCan } from '../lib/useCan'
 import { CancelFulfillmentModal } from '../components/sales/CancelFulfillmentModal'
 import { ConversionHistoryList } from '../components/sales/ConversionHistoryList'
+import { FulfillmentDetailsFields } from '../components/pos/FulfillmentDetailsFields'
 import { FulfillmentStatusBadge } from '../components/sales/FulfillmentStatusBadge'
 import { ReturnModal } from '../components/sales/ReturnModal'
 import { SaleItemsTable } from '../components/sales/SaleItemsTable'
@@ -140,6 +143,9 @@ export default function SaleDetailPage() {
   const [cancelTarget, setCancelTarget] = useState<FulfillmentScheduleDto | null>(null)
   const [deliverTarget, setDeliverTarget] = useState<{ id: string; sequenceNumber: number } | null>(null)
   const [claimTarget, setClaimTarget] = useState<{ id: string; sequenceNumber: number } | null>(null)
+  const [schedulingOpen, setSchedulingOpen] = useState(false)
+  const [schedulingFields, setSchedulingFields] = useState<FulfillmentDetails>(emptyFulfillmentDetails())
+  const [schedulingAttempted, setSchedulingAttempted] = useState(false)
 
   const query = useQuery({
     queryKey: ['sales', id],
@@ -197,6 +203,39 @@ export default function SaleDetailPage() {
       }
       invalidateFulfillment()
       setClaimTarget(null)
+    },
+  })
+
+  // These fire only from the recovery flow below, after a Delivery/Pickup checkout succeeded but the
+  // schedule-creation call that should have followed it failed — so `id` (this page's own route
+  // param, already used for both queries above) is the sale to schedule against. `d.sale.id` isn't
+  // in scope here (it only exists inside the render IIFE further down), but it always equals `id`.
+  const createDeliveryMutation = useMutation({
+    mutationFn: (fields: FulfillmentDetails) =>
+      fulfillmentApi.createDelivery(id, {
+        scheduledDate: fields.scheduledDate,
+        recipientName: fields.recipientName.trim(),
+        deliveryAddress: fields.deliveryAddress.trim(),
+        contactNumber: fields.contactNumber.trim() || null,
+        notes: fields.notes.trim() || null,
+      }),
+    onSuccess: () => {
+      setSchedulingOpen(false)
+      invalidateFulfillment()
+    },
+  })
+
+  const createPickupMutation = useMutation({
+    mutationFn: (fields: FulfillmentDetails) =>
+      fulfillmentApi.createPickup(id, {
+        scheduledDate: fields.scheduledDate,
+        recipientName: fields.recipientName.trim(),
+        contactNumber: fields.contactNumber.trim() || null,
+        notes: fields.notes.trim() || null,
+      }),
+    onSuccess: () => {
+      setSchedulingOpen(false)
+      invalidateFulfillment()
     },
   })
 
@@ -361,14 +400,78 @@ export default function SaleDetailPage() {
                   </div>
                 )}
 
-                {summary && (
+                {summary && (() => {
+                  // A sale needs a schedule when its own items carry a required delivery/pickup
+                  // quantity but the sale has no active schedule covering it — this is exactly the
+                  // "checkout succeeded, the follow-up schedule-creation call failed" state, since a
+                  // normal Take-now sale never sets either required-quantity field.
+                  const needsDelivery = d.items.some((i) => i.deliveryRequiredQuantity > 0)
+                  const needsPickup = d.items.some((i) => i.pickupRequiredQuantity > 0)
+                  const needsSchedulingMethod: 'Delivery' | 'Pickup' | null =
+                    summary.activeSchedule == null && needsDelivery
+                      ? 'Delivery'
+                      : summary.activeSchedule == null && needsPickup
+                        ? 'Pickup'
+                        : null
+
+                  return (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <h2 className="text-lg font-bold text-text-primary">Fulfillment</h2>
-                      <Badge tone={saleFulfillmentStatusTone(summary.fulfillmentStatus)}>
-                        {SALE_FULFILLMENT_STATUS_LABELS[summary.fulfillmentStatus]}
+                      <Badge tone={needsSchedulingMethod ? 'warning' : saleFulfillmentStatusTone(summary.fulfillmentStatus)}>
+                        {needsSchedulingMethod
+                          ? `Needs ${needsSchedulingMethod === 'Delivery' ? 'delivery' : 'pickup'} scheduling`
+                          : SALE_FULFILLMENT_STATUS_LABELS[summary.fulfillmentStatus]}
                       </Badge>
                     </div>
+
+                    {needsSchedulingMethod && (
+                      <div className="space-y-3 rounded-xl border border-warning/20 bg-warning-light p-4">
+                        <p className="text-sm text-text-secondary">
+                          This sale was completed for {needsSchedulingMethod.toLowerCase()}, but scheduling it
+                          failed at checkout time. Schedule it now to avoid losing track of this order.
+                        </p>
+                        {!schedulingOpen ? (
+                          <Button variant="secondary" onClick={() => setSchedulingOpen(true)}>
+                            Schedule now
+                          </Button>
+                        ) : (
+                          <>
+                            <FulfillmentDetailsFields
+                              method={needsSchedulingMethod}
+                              values={schedulingFields}
+                              onChange={(patch) => setSchedulingFields((prev) => ({ ...prev, ...patch }))}
+                              errors={{}}
+                              attempted={schedulingAttempted}
+                            />
+                            <div className="flex gap-2">
+                              <Button
+                                onClick={() => {
+                                  setSchedulingAttempted(true)
+                                  if (!schedulingFields.scheduledDate || !schedulingFields.recipientName.trim()) return
+                                  if (needsSchedulingMethod === 'Delivery' && !schedulingFields.deliveryAddress.trim())
+                                    return
+                                  if (needsSchedulingMethod === 'Delivery') createDeliveryMutation.mutate(schedulingFields)
+                                  else createPickupMutation.mutate(schedulingFields)
+                                }}
+                                loading={createDeliveryMutation.isPending || createPickupMutation.isPending}
+                              >
+                                Confirm schedule
+                              </Button>
+                              <Button variant="secondary" onClick={() => setSchedulingOpen(false)}>
+                                Cancel
+                              </Button>
+                            </div>
+                            {(createDeliveryMutation.isError || createPickupMutation.isError) && (
+                              <p className="text-sm text-danger-strong">
+                                Could not create the schedule — it may already exist (try refreshing) or the
+                                details need correction above.
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
 
                     {(summary.deliveries.length > 0 || summary.pickups.length > 0) &&
                       (() => {
@@ -421,7 +524,8 @@ export default function SaleDetailPage() {
 
                     <ConversionHistoryList conversions={summary.conversions} />
                   </div>
-                )}
+                  )
+                })()}
 
                 <ReturnModal open={returnOpen} onClose={() => setReturnOpen(false)} sale={d} />
                 {cancelTarget && (

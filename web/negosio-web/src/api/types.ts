@@ -540,6 +540,7 @@ export interface SaleItemDto {
   costPriceSnapshot: number | null
   returnedQuantity: number
   deliveryRequiredQuantity: number
+  pickupRequiredQuantity: number
 }
 
 export interface SalePaymentDto {
