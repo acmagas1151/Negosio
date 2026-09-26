@@ -1,5 +1,6 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Negosio.Application.Abstractions;
 using Negosio.Application.Branches;
 using Negosio.Application.Common;
@@ -474,11 +475,43 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
 
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
 
+        var result = await CancelWithDispositionCoreAsync(
+            dr, transaction, tenantId, saleId, reason, disposition, expectedMethod, convertToMethod,
+            completeReplacementImmediately, buildReplacement, nowUtc, ct);
+
+        await transaction.CommitAsync(ct);
+        return result;
+    }
+
+    /// <summary>
+    /// The transactional guts shared by the public cancel-with-disposition path
+    /// (<see cref="CancelWithDispositionAsync"/>) and the void-triggered cascade
+    /// (<see cref="CancelActiveScheduleForVoidedSaleAsync"/>). Deliberately does NOT begin or commit
+    /// <paramref name="transaction"/> — that stays the caller's responsibility, since the void path
+    /// needs this to run inside a transaction it already owns and commits only after its own
+    /// subsequent write (voiding the sale itself). On a conflict this still rolls the transaction back
+    /// itself before throwing, exactly as before the split — that part is safe regardless of who
+    /// began the transaction.
+    /// </summary>
+    private async Task<CancellationResultDto> CancelWithDispositionCoreAsync(
+        DeliveryReceipt dr,
+        IDbContextTransaction transaction,
+        Guid tenantId,
+        Guid saleId,
+        string reason,
+        CancellationDisposition disposition,
+        FulfillmentMethod expectedMethod,
+        FulfillmentMethod convertToMethod,
+        bool completeReplacementImmediately,
+        ReplacementFactory? buildReplacement,
+        DateTime nowUtc,
+        CancellationToken ct)
+    {
         // The same lock every allocating path takes, so a conversion can never race an allocation.
         await LockSaleItemsAsync(tenantId, saleId, ct);
 
         // A concurrent mark-delivered / claim / cancel may have committed while we waited on the lock —
-        // the status we checked above is a pre-lock read and can already be stale.
+        // the status checked before entering this core is a pre-lock read and can already be stale.
         var currentStatus = await _db.DeliveryReceipts.AsNoTracking()
             .Where(d => d.Id == dr.Id)
             .Select(d => d.Status)
@@ -494,10 +527,13 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         // SAME sale-status gate CreateScheduleAsync does. Without this, a sale voided while one of its
         // schedules was still Pending could gain a fresh Pending schedule through the cancel-with-conversion
         // back door — a schedule the create endpoints would have refused outright.
-        // Since Task 3B, every disposition — including DeliverLater / PickupLater — builds an immediate
-        // same-method replacement schedule rather than releasing quantity back to "unscheduled", so
-        // buildReplacement is effectively never null here; the null branch is kept only as a defensive
-        // fallback, not because any current disposition takes it.
+        // Since Task 3B, every disposition reachable through the public cancel endpoints — including
+        // DeliverLater / PickupLater — builds an immediate same-method replacement schedule rather than
+        // releasing quantity back to "unscheduled", so buildReplacement is effectively never null here for
+        // those 5 dispositions. SaleVoided (Task 2 of the fulfillment-recovery-fixes plan) is the one
+        // caller that deliberately passes null: a voided sale has no replacement to create, so it takes
+        // the else branch below and is never blocked by this gate — correct, since by the time this runs
+        // the sale may already be (or is about to become) Voided.
         Sale sale;
         if (buildReplacement is not null)
         {
@@ -585,11 +621,43 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
                 "This schedule was already cancelled by someone else. Please refresh and try again.");
         }
 
-        await transaction.CommitAsync(ct);
-
         var cancelledDto = await MapToDtoAsync(dr, ct);
         var replacementDto = replacement is null ? null : await MapToDtoAsync(replacement, ct);
         return new CancellationResultDto(cancelledDto, replacementDto);
+    }
+
+    /// <summary>
+    /// Cancels the sale's active Pending fulfillment schedule, if it has one, as part of voiding the
+    /// sale. A no-op when the sale has no Pending schedule — the common case, since most voided sales
+    /// are Take-now. Deliberately scoped to Pending only: a schedule that already reached a terminal
+    /// state (Delivered/Claimed) is left untouched, since voiding a sale after its delivery/pickup
+    /// already happened is a different, unhandled scenario outside this fix's scope.
+    /// <para>Must run inside <paramref name="transaction"/>, a transaction the CALLER (VoidSaleService)
+    /// already began on the same <see cref="ITenantDbContext"/> — this method never begins or commits
+    /// one itself, since the caller commits only after its own subsequent write. Disposition is always
+    /// <see cref="CancellationDisposition.SaleVoided"/>, a value deliberately excluded from
+    /// <c>DeliveryReceiptValidators</c>'s allowed-dispositions lists so a cashier can never select it
+    /// through the public cancel endpoints — this method is the only caller that may ever pass it.</para>
+    /// </summary>
+    public async Task CancelActiveScheduleForVoidedSaleAsync(
+        Guid saleId, string voidReason, IDbContextTransaction transaction, CancellationToken ct = default)
+    {
+        var tenantId = RequireTenant();
+
+        var dr = await _db.DeliveryReceipts.Include(d => d.Items)
+            .SingleOrDefaultAsync(d => d.TenantId == tenantId && d.SaleId == saleId
+                && d.Status == FulfillmentStatus.Pending, ct);
+        if (dr is null)
+        {
+            return;
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+
+        await CancelWithDispositionCoreAsync(
+            dr, transaction, tenantId, saleId, $"Sale voided: {voidReason}", CancellationDisposition.SaleVoided,
+            expectedMethod: dr.Method, convertToMethod: dr.Method,
+            completeReplacementImmediately: false, buildReplacement: null, nowUtc, ct);
     }
 
     // ---- Shared helpers --------------------------------------------------------------------------

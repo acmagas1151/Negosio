@@ -277,4 +277,28 @@ public class DeliveryReceiptEntityTests
 
         act.Should().Throw<InvalidOperationException>();
     }
+
+    // Task 2 (fulfillment-recovery-fixes): SaleVoided is a system-only disposition, valid for either
+    // method — a stranded schedule from a voided sale can be either a Delivery or a Pickup.
+    [Fact]
+    public void Cancel_AllowsSaleVoidedDispositionForDelivery()
+    {
+        var dr = MakeDelivery();
+
+        dr.Cancel(Guid.NewGuid(), "Sale voided: test reason", CancellationDisposition.SaleVoided, DateTime.UtcNow);
+
+        dr.Status.Should().Be(FulfillmentStatus.Cancelled);
+        dr.CancellationDisposition.Should().Be(CancellationDisposition.SaleVoided);
+    }
+
+    [Fact]
+    public void Cancel_AllowsSaleVoidedDispositionForPickup()
+    {
+        var pickup = MakePickup();
+
+        pickup.Cancel(Guid.NewGuid(), "Sale voided: test reason", CancellationDisposition.SaleVoided, DateTime.UtcNow);
+
+        pickup.Status.Should().Be(FulfillmentStatus.Cancelled);
+        pickup.CancellationDisposition.Should().Be(CancellationDisposition.SaleVoided);
+    }
 }

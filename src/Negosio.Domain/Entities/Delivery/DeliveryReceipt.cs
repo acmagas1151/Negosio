@@ -288,10 +288,12 @@ public class DeliveryReceipt : Entity
             FulfillmentMethod.Delivery =>
                 disposition is Enums.CancellationDisposition.DeliverLater
                     or Enums.CancellationDisposition.ConvertToPickup
-                    or Enums.CancellationDisposition.CustomerPickedUpInstead,
+                    or Enums.CancellationDisposition.CustomerPickedUpInstead
+                    or Enums.CancellationDisposition.SaleVoided,
             FulfillmentMethod.Pickup =>
                 disposition is Enums.CancellationDisposition.PickupLater
-                    or Enums.CancellationDisposition.ConvertToDelivery,
+                    or Enums.CancellationDisposition.ConvertToDelivery
+                    or Enums.CancellationDisposition.SaleVoided,
             _ => false,
         };
 

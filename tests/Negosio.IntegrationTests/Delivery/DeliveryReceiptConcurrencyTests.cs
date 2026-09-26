@@ -3,8 +3,12 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Negosio.Application.Abstractions;
+using Negosio.Application.Auth;
+using Negosio.Application.Branches;
 using Negosio.Application.Delivery;
 using Negosio.Application.Pos;
+using Negosio.Application.Settings;
 using Negosio.Domain.Enums;
 using Negosio.IntegrationTests.Infrastructure;
 using Xunit;
@@ -14,6 +18,47 @@ namespace Negosio.IntegrationTests.Delivery;
 public class DeliveryReceiptConcurrencyTests : IntegrationTest
 {
     public DeliveryReceiptConcurrencyTests(NegosioApiFactory factory) : base(factory) { }
+
+    /// <summary>Minimal <see cref="ICurrentUser"/> for constructing an application service directly
+    /// against a scoped <c>TenantDbContext</c> outside of an HTTP request — used only by the tests for
+    /// <see cref="IDeliveryReceiptService.CancelActiveScheduleForVoidedSaleAsync"/>, which deliberately has
+    /// no HTTP endpoint (Task 3 wires it into <c>VoidSaleService</c>'s own request pipeline instead).</summary>
+    private sealed class FakeCurrentUser(Guid tenantId, Guid userId, string email, UserRole role) : ICurrentUser
+    {
+        public Guid UserId { get; } = userId;
+        public Guid TenantId { get; } = tenantId;
+        public string Email { get; } = email;
+        public UserRole Role { get; } = role;
+        public bool IsAuthenticated => true;
+    }
+
+    /// <summary>
+    /// Invokes <see cref="IDeliveryReceiptService.CancelActiveScheduleForVoidedSaleAsync"/> directly
+    /// against the tenant database, standing in for Task 3's <c>VoidSaleService</c> caller (not yet
+    /// wired up). Builds a real <see cref="DeliveryReceiptService"/> by hand — every one of its
+    /// dependencies only needs <c>ITenantDbContext</c>/<c>ICurrentUser</c>, neither of which requires an
+    /// HTTP request — and opens/commits the transaction the method requires the caller to own.
+    /// </summary>
+    private Task InvokeCancelActiveScheduleForVoidedSaleAsync(LoginResponse owner, Guid saleId, string voidReason) =>
+        InTenantScopeAsync(owner.User.TenantId, async db =>
+        {
+            var currentUser = new FakeCurrentUser(owner.User.TenantId, owner.User.Id, owner.User.Email, owner.User.Role);
+            IDeliveryReceiptService service = new DeliveryReceiptService(
+                db,
+                currentUser,
+                new CreateDeliveryReceiptRequestValidator(),
+                new CreatePickupRequestValidator(),
+                new CancelDeliveryRequestValidator(),
+                new CancelPickupRequestValidator(),
+                new BranchAccessResolver(db, currentUser),
+                new ReceiptSettingsResolver(db, currentUser),
+                TimeProvider.System);
+
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            await service.CancelActiveScheduleForVoidedSaleAsync(saleId, voidReason, transaction);
+            await transaction.CommitAsync();
+            return true;
+        });
 
     private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
 
@@ -449,5 +494,74 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
             (await db.DeliveryReceipts.CountAsync(d => d.SaleId == sale1.SaleId && d.Method == FulfillmentMethod.Pickup)).Should().Be(0);
             return true;
         });
+    }
+
+    // ================================================================================================
+    // Task 2 (fulfillment-recovery-fixes) — IDeliveryReceiptService.CancelActiveScheduleForVoidedSaleAsync,
+    // the void-cascade method itself. Tested directly (see InvokeCancelActiveScheduleForVoidedSaleAsync
+    // above) since it has no HTTP endpoint of its own — Task 3 wires it into VoidSaleService, which will
+    // test the end-to-end void-cancels-the-schedule behavior separately.
+    // ================================================================================================
+
+    [Fact]
+    public async Task CancelActiveScheduleForVoidedSaleAsync_CancelsThePendingSchedule()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 20m);
+
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 2000m) },
+            Method: FulfillmentMethod.Delivery));
+
+        var created = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts", DeliveryReq());
+        created.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var before = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
+            $"/api/sales/{sale.SaleId}/fulfillment", TestJson.Options);
+        before!.ActiveSchedule.Should().NotBeNull();
+        before.ActiveSchedule!.Status.Should().Be(FulfillmentStatus.Pending);
+
+        await InvokeCancelActiveScheduleForVoidedSaleAsync(owner, sale.SaleId, "Test void reason");
+
+        var after = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
+            $"/api/sales/{sale.SaleId}/fulfillment", TestJson.Options);
+        after!.ActiveSchedule.Should().BeNull();
+        after.Deliveries.Should().ContainSingle();
+        after.Deliveries[0].Status.Should().Be(FulfillmentStatus.Cancelled);
+        after.Deliveries[0].CancellationDisposition.Should().Be(CancellationDisposition.SaleVoided);
+
+        after.Conversions.Should().Contain(c => c.Reason.Contains("Sale voided"));
+    }
+
+    [Fact]
+    public async Task CancelActiveScheduleForVoidedSaleAsync_IsNoOpWhenNoActiveSchedule()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 20m);
+
+        // Take-now (the default Method) — no delivery/pickup schedule was ever created for this sale.
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 5m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1000m) }));
+
+        // Must not throw even though there is nothing to cancel.
+        await InvokeCancelActiveScheduleForVoidedSaleAsync(owner, sale.SaleId, "Test void reason");
+
+        var summary = await Client.GetFromJsonAsync<SaleFulfillmentSummaryDto>(
+            $"/api/sales/{sale.SaleId}/fulfillment", TestJson.Options);
+        summary!.ActiveSchedule.Should().BeNull();
+        summary.Deliveries.Should().BeEmpty();
+        summary.Pickups.Should().BeEmpty();
     }
 }

@@ -31,5 +31,13 @@ public enum CancellationDisposition
     /// <summary>Delivery only. The customer already collected the items: the Delivery is cancelled and a
     /// new, immediately-Completed (Claimed) Pickup records what actually happened. The Delivery is never
     /// marked Completed — it did not happen.</summary>
-    CustomerPickedUpInstead = 5
+    CustomerPickedUpInstead = 5,
+
+    /// <summary>System-only. Set when the sale itself was voided while this schedule was still Pending —
+    /// the schedule is released with no replacement, since there is no sale left to fulfill. Unlike every
+    /// other disposition, this one is never selectable through the public cancel endpoints
+    /// (<c>CancelDeliveryRequest</c>/<c>CancelPickupRequest</c> validators deliberately exclude it from
+    /// their allowed-dispositions lists) — the only caller that may ever pass this value is
+    /// <c>VoidSaleService</c>, via <c>IDeliveryReceiptService.CancelActiveScheduleForVoidedSaleAsync</c>.</summary>
+    SaleVoided = 6
 }

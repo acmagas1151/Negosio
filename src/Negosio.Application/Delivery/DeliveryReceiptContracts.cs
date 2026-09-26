@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore.Storage;
 using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Delivery;
@@ -191,4 +192,12 @@ public interface IDeliveryReceiptService
 
     Task<CancellationResultDto> CancelDeliveryAsync(Guid id, CancelDeliveryRequest request, CancellationToken ct = default);
     Task<CancellationResultDto> CancelPickupAsync(Guid id, CancelPickupRequest request, CancellationToken ct = default);
+
+    /// <summary>Cancels the sale's active Pending fulfillment schedule (if any) as part of voiding the
+    /// sale, with disposition <see cref="Negosio.Domain.Enums.CancellationDisposition.SaleVoided"/>. Must
+    /// run inside <paramref name="transaction"/>, a transaction the caller (<c>VoidSaleService</c>) already
+    /// began — this method never begins or commits one itself. A no-op when the sale has no Pending
+    /// schedule.</summary>
+    Task CancelActiveScheduleForVoidedSaleAsync(
+        Guid saleId, string voidReason, IDbContextTransaction transaction, CancellationToken ct = default);
 }
