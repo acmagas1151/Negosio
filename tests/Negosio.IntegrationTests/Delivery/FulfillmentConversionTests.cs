@@ -398,12 +398,14 @@ public class FulfillmentConversionTests : IntegrationTest
 
     /// <summary>
     /// A disposition that builds a replacement creates a brand-new schedule, so it must clear the same
-    /// sale-status gate the create endpoints enforce. Voiding a sale does not currently block it from
-    /// having a still-Pending schedule, so without this guard a voided sale could gain a fresh Pending
-    /// pickup through the cancel-with-conversion back door — one that
-    /// <c>POST /api/sales/{id}/pickups</c> would have refused outright.
-    /// <para>The whole attempt must be a no-op, not a partial one: same all-or-nothing guarantee as a
-    /// failed replacement, reached from a different trigger.</para>
+    /// sale-status gate the create endpoints enforce. Before Task 3 (fulfillment-recovery-fixes), voiding
+    /// a sale did not touch its still-Pending schedule, so this test exercised the voided-sale gate in
+    /// <c>LoadFulfillableSaleAsync</c> directly. Since Task 3, <c>VoidSaleService</c> cancels the sale's
+    /// active Pending schedule itself (disposition SaleVoided) as part of voiding — so by the time this
+    /// call runs, the schedule is already Cancelled, and the ordinary "must be Pending" gate in
+    /// <c>CancelWithDispositionAsync</c> now catches it first. The end state is the same either way (no
+    /// replacement pickup, no additional conversion, the sale is left with exactly the void's own
+    /// same-method release event) — only which gate reports it changed.
     /// </summary>
     [Fact]
     public async Task Cancelling_into_a_replacement_is_rejected_when_the_sale_was_voided()
@@ -420,9 +422,10 @@ public class FulfillmentConversionTests : IntegrationTest
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await response.Content.ReadFromJsonAsync<ApiErrorBody>(TestJson.Options))!
-            .Code.Should().Be(ErrorCodes.DeliveryReceiptNotAllowed);
+            .Code.Should().Be(ErrorCodes.DeliveryReceiptNotPending);
 
-        // Nothing was written: no replacement pickup, no conversion row, no intent movement.
+        // Nothing new was written by the rejected call: still just the one conversion row, which is the
+        // void cascade's own same-method release event — no replacement pickup was ever created.
         await InScopeAsync(async db =>
         {
             (await db.DeliveryReceipts.CountAsync(d => d.SaleId == scene.SaleId)).Should().Be(1);
@@ -430,23 +433,28 @@ public class FulfillmentConversionTests : IntegrationTest
                 d.SaleId == scene.SaleId && d.Method == FulfillmentMethod.Pickup)).Should().Be(0);
             return true;
         });
-        (await GetConversionsAsync(scene.SaleId)).Should().BeEmpty();
+        var conversion = (await GetConversionsAsync(scene.SaleId)).Should().ContainSingle().Subject;
+        conversion.FromMethod.Should().Be(FulfillmentMethod.Delivery);
+        conversion.ToMethod.Should().Be(FulfillmentMethod.Delivery); // same-method — the void cascade never converts
+        conversion.SourceRecordId.Should().Be(delivery.Id);
+        conversion.ReplacementRecordId.Should().BeNull();
+        conversion.Reason.Should().Contain("Sale voided");
 
         var intent = await GetIntentAsync(scene.SaleItemId);
         intent.Delivery.Should().Be(6m);
         intent.Pickup.Should().Be(0m);
 
-        // And the delivery itself was not cancelled — the cancellation is part of the same transaction.
+        // The delivery was already cancelled by the void itself, not by this (rejected) call.
         var reloaded = await Client.GetFromJsonAsync<FulfillmentScheduleDto>(
             $"/api/delivery-receipts/{delivery.Id}", TestJson.Options);
-        reloaded!.Status.Should().Be(FulfillmentStatus.Pending);
-        reloaded.CancellationDisposition.Should().BeNull();
+        reloaded!.Status.Should().Be(FulfillmentStatus.Cancelled);
+        reloaded.CancellationDisposition.Should().Be(CancellationDisposition.SaleVoided);
     }
 
-    /// <summary>Since Task 3B, DeliverLater/PickupLater build a replacement exactly like ConvertTo* does,
-    /// so they now correctly inherit the same voided-sale gate (<c>LoadFulfillableSaleAsync</c>) that
-    /// <c>Cancelling_into_a_replacement_is_rejected_when_the_sale_was_voided</c> above exercises for
-    /// ConvertToPickup — there is no longer a "release-only, ungated" disposition at all.</summary>
+    /// <summary>Since Task 3B, DeliverLater/PickupLater build a replacement exactly like ConvertTo* does.
+    /// Since Task 3 (fulfillment-recovery-fixes), voiding a sale cancels its schedule immediately (see the
+    /// sibling ConvertToPickup test above for why this now fails at the ordinary "must be Pending" gate
+    /// rather than the voided-sale-specific one it used to exercise).</summary>
     [Fact]
     public async Task Cancelling_with_DeliverLater_is_rejected_when_the_sale_was_voided()
     {
@@ -462,15 +470,15 @@ public class FulfillmentConversionTests : IntegrationTest
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await response.Content.ReadFromJsonAsync<ApiErrorBody>(TestJson.Options))!
-            .Code.Should().Be(ErrorCodes.DeliveryReceiptNotAllowed);
+            .Code.Should().Be(ErrorCodes.DeliveryReceiptNotPending);
 
-        // Nothing was written: no replacement delivery, no conversion row, and the original delivery
-        // was not cancelled either — the cancellation is part of the same transaction.
+        // Nothing new was written: no replacement delivery, no additional conversion row beyond the void
+        // cascade's own — and the original delivery was already Cancelled by the void, not by this call.
         var reloaded = await Client.GetFromJsonAsync<FulfillmentScheduleDto>(
             $"/api/delivery-receipts/{delivery.Id}", TestJson.Options);
-        reloaded!.Status.Should().Be(FulfillmentStatus.Pending);
-        reloaded.CancellationDisposition.Should().BeNull();
-        (await GetConversionsAsync(scene.SaleId)).Should().BeEmpty();
+        reloaded!.Status.Should().Be(FulfillmentStatus.Cancelled);
+        reloaded.CancellationDisposition.Should().Be(CancellationDisposition.SaleVoided);
+        (await GetConversionsAsync(scene.SaleId)).Should().ContainSingle();
     }
 
     /// <summary>Spec test 22 — Delivered is terminal.</summary>

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
 using Negosio.Application.Branches;
 using Negosio.Application.Common;
+using Negosio.Application.Delivery;
 using Negosio.Application.Inventory;
 using Negosio.Domain.Entities;
 using Negosio.Domain.Enums;
@@ -18,12 +19,14 @@ public sealed class VoidSaleService : IVoidSaleService
     private readonly IVoidAuthorizationResolver _authResolver;
     private readonly IInventoryPosting _inventory;
     private readonly ISaleQueryService _saleQuery;
+    private readonly IDeliveryReceiptService _deliveryReceipts;
     private readonly TimeProvider _timeProvider;
 
     public VoidSaleService(
         ITenantDbContext db, ICurrentUser currentUser, IValidator<VoidSaleRequest> validator,
         IBranchAccessResolver branchAccess, IVoidAuthorizationResolver authResolver,
-        IInventoryPosting inventory, ISaleQueryService saleQuery, TimeProvider timeProvider)
+        IInventoryPosting inventory, ISaleQueryService saleQuery, IDeliveryReceiptService deliveryReceipts,
+        TimeProvider timeProvider)
     {
         _db = db;
         _currentUser = currentUser;
@@ -32,6 +35,7 @@ public sealed class VoidSaleService : IVoidSaleService
         _authResolver = authResolver;
         _inventory = inventory;
         _saleQuery = saleQuery;
+        _deliveryReceipts = deliveryReceipts;
         _timeProvider = timeProvider;
     }
 
@@ -86,6 +90,14 @@ public sealed class VoidSaleService : IVoidSaleService
 
         // Authoritative re-check, now that the session row is locked for the rest of this transaction.
         await EnsureEligibleAsync(sale, tenantId, nowUtc, cancellationToken);
+
+        // A Pending delivery/pickup schedule on this sale must not survive the sale being voided as an
+        // orphaned, unstoppable-but-uncancellable row. A no-op for the common case (Take-now sales, or
+        // any sale with no active schedule). MUST run before sale.Void(...) below — see this task's
+        // ordering note for why (a Sale-level concurrency conflict must surface through THIS method's
+        // own SaveChangesAsync/catch block below, not get intercepted by the cascade's).
+        await _deliveryReceipts.CancelActiveScheduleForVoidedSaleAsync(
+            sale.Id, request.Reason, transaction, cancellationToken);
 
         var lineVariantIds = sale.Items.Select(i => i.ProductVariantId).ToList();
         var trackedVariantIds = (await _db.ProductVariants.AsNoTracking()
