@@ -1,6 +1,7 @@
 import { apiRequest } from './client'
 import { qs } from './query-string'
 import type {
+  BranchPerformanceResultDto,
   CategoryPerformanceDto,
   DeliveryFulfillmentReportParams,
   DeliveryFulfillmentReportResultDto,
@@ -33,4 +34,7 @@ export const reportsApi = {
 
   pickups: (params: PickupReportParams) =>
     apiRequest<PickupReportResultDto>(`/api/reports/pickup${qs({ ...params })}`),
+
+  branchPerformance: (params: ReportFilterParams) =>
+    apiRequest<BranchPerformanceResultDto>(`/api/reports/branch-performance${qs({ ...params })}`),
 }

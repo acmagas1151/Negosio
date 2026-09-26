@@ -1247,3 +1247,28 @@ export interface CategoryPerformanceDto {
   salesAmount: number
   percentageOfSales: number
 }
+
+// ---- Branch performance ----
+
+/** One branch's KPI slice for the resolved range — same formulas as `ReportKpiDto`, grouped by
+ * `branchId` instead of aggregated tenant-wide. Voided sales are never folded into
+ * `grossSales`/`netSales` — they get their own `voidedSalesCount`/`voidedSalesValue`. */
+export interface BranchPerformanceRowDto {
+  branchId: string
+  branchName: string
+  grossSales: number
+  netSales: number
+  completedTransactions: number
+  averageTransactionValue: number
+  discounts: number
+  returnsCount: number
+  returnsValue: number
+  voidedSalesCount: number
+  voidedSalesValue: number
+}
+
+export interface BranchPerformanceResultDto {
+  fromUtc: string
+  toUtc: string
+  rows: BranchPerformanceRowDto[]
+}

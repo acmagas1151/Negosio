@@ -10,6 +10,7 @@ import InventoryPage from './pages/InventoryPage'
 import InviteAcceptPage from './pages/InviteAcceptPage'
 import LoginPage from './pages/LoginPage'
 import MovementsPage from './pages/MovementsPage'
+import PerformanceReportsPage from './pages/PerformanceReportsPage'
 import PosCompletePage from './pages/PosCompletePage'
 import PosPage from './pages/PosPage'
 import ProductCreatePage from './pages/ProductCreatePage'
@@ -101,6 +102,14 @@ const protectedRoutes: Array<{ path: string; element: ReactNode }> = [
   },
   // Old name/path for this report page, from before it grew Pickups and All-fulfillment tabs.
   { path: '/reports/delivery', element: <FulfillmentReportsRedirect /> },
+  {
+    path: '/reports/performance',
+    element: (
+      <RequireCapability capability="reports:view" title="Performance Reports">
+        <PerformanceReportsPage />
+      </RequireCapability>
+    ),
+  },
   { path: '/settings', element: <Navigate to="/settings/tax" replace /> },
   { path: '/settings/tax', element: <SettingsPage /> },
   {
