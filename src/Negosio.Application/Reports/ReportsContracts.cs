@@ -292,6 +292,35 @@ public sealed record BranchPerformanceResultDto(
     DateTime ToUtc,
     IReadOnlyList<BranchPerformanceRowDto> Rows);
 
+// ---- Register performance ----
+
+/// <summary>One register's KPI slice for the resolved range, grouped by <see cref="RegisterId"/> (a
+/// register belongs to exactly one branch, so this still needs the same branch-access scoping as
+/// <see cref="BranchPerformanceRowDto"/> — see <c>ReportsService.GetRegisterPerformanceAsync</c>).
+/// <see cref="PaymentMethods"/> follows the same split-tender-safe, per-payment-record convention as
+/// the overview report's own breakdown — a split-tender sale contributes once per method, never once
+/// per sale. <see cref="CashIn"/>/<see cref="CashOut"/> are totals of
+/// <see cref="Negosio.Domain.Entities.RegisterCashMovement.Amount"/> for that register's
+/// <see cref="Negosio.Domain.Enums.CashMovementType.CashIn"/>/<see cref="Negosio.Domain.Enums.CashMovementType.CashOut"/>
+/// movements — always positive, summed separately, never subtracted (Amount itself carries no sign).</summary>
+public sealed record RegisterPerformanceRowDto(
+    Guid RegisterId,
+    string RegisterName,
+    Guid BranchId,
+    string BranchName,
+    decimal GrossSales,
+    decimal NetSales,
+    int CompletedTransactions,
+    decimal AverageTransactionValue,
+    IReadOnlyList<PaymentMethodBreakdownDto> PaymentMethods,
+    decimal CashIn,
+    decimal CashOut);
+
+public sealed record RegisterPerformanceResultDto(
+    DateTime FromUtc,
+    DateTime ToUtc,
+    IReadOnlyList<RegisterPerformanceRowDto> Rows);
+
 public interface IReportsService
 {
     Task<ReportsOverviewDto> GetOverviewAsync(ReportFilter filter, CancellationToken cancellationToken = default);
@@ -307,4 +336,6 @@ public interface IReportsService
     Task<PickupReportResultDto> GetPickupsAsync(PickupReportQuery query, CancellationToken cancellationToken = default);
 
     Task<BranchPerformanceResultDto> GetBranchPerformanceAsync(ReportFilter filter, CancellationToken cancellationToken = default);
+
+    Task<RegisterPerformanceResultDto> GetRegisterPerformanceAsync(ReportFilter filter, CancellationToken cancellationToken = default);
 }

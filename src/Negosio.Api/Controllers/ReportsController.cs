@@ -63,4 +63,10 @@ public sealed class ReportsController : ControllerBase
     public async Task<ActionResult<BranchPerformanceResultDto>> BranchPerformance(
         [FromQuery] ReportFilter filter, CancellationToken cancellationToken)
         => Ok(await _reports.GetBranchPerformanceAsync(filter, cancellationToken));
+
+    [HttpGet("register-performance")]
+    [ProducesResponseType(typeof(RegisterPerformanceResultDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RegisterPerformanceResultDto>> RegisterPerformance(
+        [FromQuery] ReportFilter filter, CancellationToken cancellationToken)
+        => Ok(await _reports.GetRegisterPerformanceAsync(filter, cancellationToken));
 }

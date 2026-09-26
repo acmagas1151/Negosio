@@ -244,6 +244,130 @@ public sealed class ReportsService : IReportsService
         return new BranchPerformanceResultDto(range.FromUtc, range.ToUtc, rows);
     }
 
+    /// <summary>Same KPI grouping as <see cref="GetBranchPerformanceAsync"/>, but by
+    /// <see cref="Register"/> instead of branch, plus a per-register payment-method breakdown and cash
+    /// movement totals. A register belongs to exactly one branch, so a registerId-grouped query still
+    /// needs the same branch/register/cashier access check as every other report — <see cref="BaseSalesAsync"/>
+    /// already applies it for the sales/payments side. <see cref="Registers"/> and
+    /// <see cref="RegisterCashMovement"/> aren't reachable through <see cref="BaseSalesAsync"/>/
+    /// <see cref="BaseReturnsAsync"/> at all, so they're scoped directly here via the same
+    /// <see cref="IBranchAccessResolver.ResolveListFilterAsync"/> call (Manager forced to their own
+    /// branch, same as everywhere else) plus the request's own register/cashier filters — otherwise an
+    /// out-of-scope register's cash movements could leak a phantom row into the result via the
+    /// registerId union below.</summary>
+    public async Task<RegisterPerformanceResultDto> GetRegisterPerformanceAsync(
+        ReportFilter filter, CancellationToken cancellationToken = default)
+    {
+        RequireAuthenticated();
+        var tenantId = _currentUser.TenantId;
+        var range = _periodResolver.Resolve(filter.Period, filter.FromDate, filter.ToDate);
+
+        var salesBase = await BaseSalesAsync(filter, cancellationToken);
+        var qualifying = Qualifying(salesBase, range.FromUtc, range.ToUtc);
+
+        var salesByRegister = await (
+            from s in qualifying
+            join rs in _db.RegisterSessions.AsNoTracking() on s.RegisterSessionId equals rs.Id
+            group s by rs.RegisterId into g
+            select new
+            {
+                RegisterId = g.Key,
+                GrossSales = g.Sum(s => s.Subtotal),
+                NetSales = g.Sum(s => s.GrandTotal),
+                CompletedTransactions = g.Count(),
+            })
+            .ToListAsync(cancellationToken);
+
+        var paymentRows = await (
+            from p in _db.Payments.AsNoTracking()
+            join s in qualifying on p.SaleId equals s.Id
+            join rs in _db.RegisterSessions.AsNoTracking() on s.RegisterSessionId equals rs.Id
+            group p by new { rs.RegisterId, p.Method } into g
+            select new { g.Key.RegisterId, g.Key.Method, Amount = g.Sum(x => x.Amount), Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
+        // Cash movements sit outside Sales/Payments entirely, so they're scoped here directly rather
+        // than inherited from BaseSalesAsync — same branch/register/cashier filters as the rest of this
+        // report, applied to this table's own columns (BranchId lives on the movement itself;
+        // register/cashier require the RegisterSession join, same as the sales side above).
+        var resolvedBranchId = await _branchAccess.ResolveListFilterAsync(filter.BranchId, cancellationToken);
+        var movementsBase = _db.RegisterCashMovements.AsNoTracking()
+            .Where(m => m.TenantId == tenantId && m.CreatedAtUtc >= range.FromUtc && m.CreatedAtUtc < range.ToUtc);
+        if (resolvedBranchId is { } scopedBranchId)
+        {
+            movementsBase = movementsBase.Where(m => m.BranchId == scopedBranchId);
+        }
+        if (filter.CashierId is { } scopedCashierId)
+        {
+            movementsBase = movementsBase.Where(m => m.CreatedByUserId == scopedCashierId);
+        }
+
+        var movementsJoined =
+            from m in movementsBase
+            join rs in _db.RegisterSessions.AsNoTracking() on m.RegisterSessionId equals rs.Id
+            select new { rs.RegisterId, m.Type, m.Amount };
+        if (filter.RegisterId is { } scopedRegisterId)
+        {
+            movementsJoined = movementsJoined.Where(x => x.RegisterId == scopedRegisterId);
+        }
+
+        var cashMovementsByRegister = await movementsJoined
+            .GroupBy(x => new { x.RegisterId, x.Type })
+            .Select(g => new { g.Key.RegisterId, g.Key.Type, Total = g.Sum(x => x.Amount) })
+            .ToListAsync(cancellationToken);
+
+        var registerIds = salesByRegister.Select(r => r.RegisterId)
+            .Union(paymentRows.Select(r => r.RegisterId))
+            .Union(cashMovementsByRegister.Select(r => r.RegisterId))
+            .Distinct()
+            .ToList();
+
+        var registerInfo = await _db.Registers.AsNoTracking()
+            .Where(r => r.TenantId == tenantId && registerIds.Contains(r.Id))
+            .Select(r => new { r.Id, r.Name, r.BranchId })
+            .ToDictionaryAsync(r => r.Id, cancellationToken);
+        var branchNames = await _db.Branches.AsNoTracking()
+            .Where(b => b.TenantId == tenantId)
+            .ToDictionaryAsync(b => b.Id, b => b.Name, cancellationToken);
+
+        var rows = registerIds.Select(id =>
+        {
+            var s = salesByRegister.FirstOrDefault(r => r.RegisterId == id);
+            var registerPayments = paymentRows.Where(p => p.RegisterId == id).ToList();
+            // Percentage mirrors ComputePaymentMethodsAsync's own convention, just scoped to this
+            // register's own total instead of the whole result set — "this method's share of THIS
+            // register's payments", never a share of the tenant-wide total.
+            var registerPaymentsTotal = registerPayments.Sum(p => p.Amount);
+            var payments = registerPayments
+                .OrderByDescending(p => p.Amount)
+                .Select(p => new PaymentMethodBreakdownDto(
+                    p.Method, p.Amount, p.Count,
+                    registerPaymentsTotal == 0m ? 0m : Math.Round(p.Amount / registerPaymentsTotal * 100m, 1, MidpointRounding.AwayFromZero)))
+                .ToList();
+            var cashIn = cashMovementsByRegister.FirstOrDefault(m => m.RegisterId == id && m.Type == CashMovementType.CashIn)?.Total ?? 0m;
+            var cashOut = cashMovementsByRegister.FirstOrDefault(m => m.RegisterId == id && m.Type == CashMovementType.CashOut)?.Total ?? 0m;
+            var netSales = s?.NetSales ?? 0m;
+            var count = s?.CompletedTransactions ?? 0;
+            var info = registerInfo.TryGetValue(id, out var i) ? i : null;
+            return new RegisterPerformanceRowDto(
+                id,
+                info?.Name ?? "(unknown register)",
+                info?.BranchId ?? Guid.Empty,
+                info != null && branchNames.TryGetValue(info.BranchId, out var bn) ? bn : "(unknown branch)",
+                s?.GrossSales ?? 0m,
+                netSales,
+                count,
+                count == 0 ? 0m : Money.Round(netSales / count),
+                payments,
+                cashIn,
+                cashOut);
+        })
+        .OrderByDescending(r => r.NetSales)
+        .ToList();
+
+        return new RegisterPerformanceResultDto(range.FromUtc, range.ToUtc, rows);
+    }
+
     public async Task<DeliveryReportResultDto> GetDeliveriesAsync(DeliveryReportQuery query, CancellationToken cancellationToken = default)
     {
         RequireAuthenticated();

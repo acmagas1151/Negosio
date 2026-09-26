@@ -493,4 +493,93 @@ public class ReportsTests : IntegrationTest
 
         report!.Page.Items.Should().NotContain(r => r.SaleId == sale.SaleId);
     }
+
+    // ---- Register performance ----
+
+    [Fact]
+    public async Task GetRegisterPerformanceAsync_GroupsByRegisterWithSplitTenderSafePaymentBreakdown()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 300m, openingStock: 10m);
+
+        // Split-tender sale: 200 Cash + 100 GCash = 300 total — must contribute once per method to the
+        // payment breakdown, but NetSales stays at the single sale's GrandTotal (never double-counted).
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 1m, null) },
+            new[]
+            {
+                new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 200m),
+                new CheckoutPaymentInput(PaymentMethod.GCash, Amount: 100m),
+            }));
+        sale.GrandTotal.Should().Be(300m);
+
+        var cashInRes = await Client.PostAsJsonAsync($"/api/register-sessions/{session.Id}/cash-movements",
+            new CreateCashMovementRequest(CashMovementType.CashIn, 50m, "Float top-up"));
+        cashInRes.StatusCode.Should().Be(HttpStatusCode.Created);
+        var cashOutRes = await Client.PostAsJsonAsync($"/api/register-sessions/{session.Id}/cash-movements",
+            new CreateCashMovementRequest(CashMovementType.CashOut, 20m, "Petty cash"));
+        cashOutRes.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var result = await Client.GetFromJsonAsync<RegisterPerformanceResultDto>(
+            "/api/reports/register-performance?period=Last30Days", TestJson.Options);
+
+        var row = Assert.Single(result!.Rows);
+        row.RegisterId.Should().Be(register.Id);
+        row.BranchId.Should().Be(branchId);
+        row.NetSales.Should().Be(300m);
+        row.CompletedTransactions.Should().Be(1);
+        row.PaymentMethods.Should().HaveCount(2, "Cash and GCash each contribute their own row");
+        row.PaymentMethods.Single(p => p.Method == PaymentMethod.Cash).Amount.Should().Be(200m);
+        row.PaymentMethods.Single(p => p.Method == PaymentMethod.GCash).Amount.Should().Be(100m);
+        row.PaymentMethods.Single(p => p.Method == PaymentMethod.Cash).Percentage.Should().Be(66.7m);
+        row.PaymentMethods.Single(p => p.Method == PaymentMethod.GCash).Percentage.Should().Be(33.3m);
+        row.CashIn.Should().Be(50m);
+        row.CashOut.Should().Be(20m);
+    }
+
+    [Fact]
+    public async Task Register_performance_manager_is_forced_to_their_own_branch_and_cash_movements_stay_scoped()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
+        var bgc = await CreateBranchAsync("BGC", "BGC");
+
+        var mainRegister = await CreateRegisterAsync(mainId, "M1", "M1");
+        var mainSession = await OpenSessionAsync(mainRegister.Id);
+        var category = await CreateCategoryAsync();
+        var (_, mainVariantId) = await SeedStockedProductAsync(mainId, category.Id, sku: "MAIN-SKU", sellingPrice: 100m, openingStock: 20m);
+        await SellAsync(mainId, mainSession.Id, mainVariantId, 1m, 100m);
+        (await Client.PostAsJsonAsync($"/api/register-sessions/{mainSession.Id}/cash-movements",
+            new CreateCashMovementRequest(CashMovementType.CashIn, 40m, "Main float"))).EnsureSuccessStatusCode();
+
+        (await Client.PostAsJsonAsync($"/api/register-sessions/{mainSession.Id}/close", new CloseRegisterSessionRequest(1200m)))
+            .EnsureSuccessStatusCode();
+
+        var bgcRegister = await CreateRegisterAsync(bgc.Id, "B1", "B1");
+        var bgcSession = await OpenSessionAsync(bgcRegister.Id);
+        var (_, bgcVariantId) = await SeedStockedProductAsync(bgc.Id, category.Id, sku: "BGC-SKU", sellingPrice: 150m, openingStock: 20m);
+        await SellAsync(bgc.Id, bgcSession.Id, bgcVariantId, 1m, 150m);
+        (await Client.PostAsJsonAsync($"/api/register-sessions/{bgcSession.Id}/cash-movements",
+            new CreateCashMovementRequest(CashMovementType.CashIn, 70m, "BGC float"))).EnsureSuccessStatusCode();
+
+        var managerToken = await AddTenantUserTokenAsync("regperf-mgr@example.com", UserRole.Manager, mainId);
+        Authorize(managerToken);
+
+        var managerResult = await Client.GetFromJsonAsync<RegisterPerformanceResultDto>(
+            "/api/reports/register-performance?period=Last30Days", TestJson.Options);
+        var managerRow = managerResult!.Rows.Should().ContainSingle().Subject;
+        managerRow.RegisterId.Should().Be(mainRegister.Id);
+        managerRow.CashIn.Should().Be(40m, "the manager must never see BGC's cash movements");
+
+        // Even explicitly requesting the other branch's id must not leak BGC's data to the Main manager.
+        var managerAttemptBgc = await Client.GetFromJsonAsync<RegisterPerformanceResultDto>(
+            $"/api/reports/register-performance?period=Last30Days&branchId={bgc.Id}", TestJson.Options);
+        managerAttemptBgc!.Rows.Should().ContainSingle().Which.RegisterId.Should().Be(mainRegister.Id,
+            "a branch-scoped Manager must always be forced to their own branch");
+    }
 }
