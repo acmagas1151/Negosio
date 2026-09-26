@@ -368,6 +368,65 @@ public sealed class ReportsService : IReportsService
         return new RegisterPerformanceResultDto(range.FromUtc, range.ToUtc, rows);
     }
 
+    /// <summary>Session-granular, not day-bucketed like every other report in this module — a
+    /// <see cref="RegisterSession"/>'s reconciliation figures (<see cref="RegisterSession.ClosingCash"/>,
+    /// <see cref="RegisterSession.ExpectedCash"/>, etc.) are computed exactly once, at close time, by
+    /// <c>RegisterSessionService.ReconcileAndCloseAsync</c>, and persisted directly on the session row —
+    /// they cannot be split across a date range the way a sale-level row can, so this returns one row
+    /// per CLOSED session, verbatim, never recomputed or proportionally split. An <c>Open</c> session
+    /// never appears: its reconciliation columns are all still null (see the entity), so the
+    /// <see cref="RegisterSessionStatus.Closed"/> filter below excludes it outright. That same filter is
+    /// what makes every <c>!.Value</c> on the nullable reconciliation columns below safe — the type
+    /// system doesn't know it, but a session in this result set was only ever transitioned to
+    /// <see cref="RegisterSessionStatus.Closed"/> by <see cref="RegisterSession.Close"/>, which sets
+    /// every one of those columns in the same call that flips the status, so a closed row can never carry
+    /// a null there. <see cref="RegisterSession"/> isn't reachable through <see cref="BaseSalesAsync"/>/
+    /// <see cref="BaseReturnsAsync"/>, so branch scoping is resolved directly here via
+    /// <see cref="IBranchAccessResolver.ResolveListFilterAsync"/>, same pattern as
+    /// <see cref="GetRegisterPerformanceAsync"/>'s own <see cref="RegisterCashMovement"/> handling.</summary>
+    public async Task<PagedResult<RegisterSessionReconciliationRowDto>> GetRegisterSessionReconciliationAsync(
+        RegisterSessionReconciliationQuery query, CancellationToken cancellationToken = default)
+    {
+        RequireAuthenticated();
+        var tenantId = _currentUser.TenantId;
+        var range = _periodResolver.Resolve(query.Period, query.FromDate, query.ToDate);
+        var resolvedBranchId = await _branchAccess.ResolveListFilterAsync(query.BranchId, cancellationToken);
+
+        var sessions = _db.RegisterSessions.AsNoTracking()
+            .Where(s => s.TenantId == tenantId
+                && s.Status == RegisterSessionStatus.Closed
+                && s.ClosedAtUtc != null
+                && s.ClosedAtUtc >= range.FromUtc && s.ClosedAtUtc < range.ToUtc);
+
+        if (resolvedBranchId is { } branchId)
+        {
+            sessions = sessions.Where(s => s.BranchId == branchId);
+        }
+        if (query.RegisterId is { } registerId)
+        {
+            sessions = sessions.Where(s => s.RegisterId == registerId);
+        }
+
+        var projected =
+            from s in sessions
+            join r in _db.Registers.AsNoTracking() on s.RegisterId equals r.Id
+            join b in _db.Branches.AsNoTracking() on s.BranchId equals b.Id
+            join openedBy in _db.Users.AsNoTracking() on s.OpenedByUserId equals openedBy.Id
+            join closedBy in _db.Users.AsNoTracking() on s.ClosedByUserId equals closedBy.Id into closedByJoin
+            from closedBy in closedByJoin.DefaultIfEmpty()
+            orderby s.ClosedAtUtc descending
+            select new RegisterSessionReconciliationRowDto(
+                s.Id, r.Id, r.Name, b.Id, b.Name,
+                s.OpenedAtUtc, s.ClosedAtUtc!.Value,
+                openedBy.FirstName + " " + openedBy.LastName,
+                closedBy != null ? closedBy.FirstName + " " + closedBy.LastName : "(unknown)",
+                s.OpeningCash, s.ClosingCash!.Value, s.ExpectedCash!.Value, s.CashDifference!.Value,
+                s.GrossCashSales!.Value, s.VoidedCashSales!.Value, s.RefundCashOut!.Value,
+                s.CashIn!.Value, s.CashOut!.Value);
+
+        return await PagedResult<RegisterSessionReconciliationRowDto>.CreateAsync(projected, query.Page, query.PageSize, cancellationToken);
+    }
+
     public async Task<DeliveryReportResultDto> GetDeliveriesAsync(DeliveryReportQuery query, CancellationToken cancellationToken = default)
     {
         RequireAuthenticated();

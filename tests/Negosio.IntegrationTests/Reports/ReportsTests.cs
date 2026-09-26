@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Negosio.Application.Common;
 using Negosio.Application.Delivery;
 using Negosio.Application.Pos;
 using Negosio.Application.Registers;
@@ -580,6 +581,79 @@ public class ReportsTests : IntegrationTest
         var managerAttemptBgc = await Client.GetFromJsonAsync<RegisterPerformanceResultDto>(
             $"/api/reports/register-performance?period=Last30Days&branchId={bgc.Id}", TestJson.Options);
         managerAttemptBgc!.Rows.Should().ContainSingle().Which.RegisterId.Should().Be(mainRegister.Id,
+            "a branch-scoped Manager must always be forced to their own branch");
+    }
+
+    // ---- Register session reconciliation (session-granular, closed sessions only) ----
+
+    [Fact]
+    public async Task GetRegisterSessionReconciliation_ReturnsOnlyClosedSessionsWithPersistedFigures()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id, openingCash: 1000m);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 200m, openingStock: 10m);
+
+        // Exact-cash sale so ExpectedCash comes out to a clean 1200 (1000 opening + 200 cash sales) —
+        // ClosingCash matches it exactly, so CashDifference should be 0.
+        await SellAsync(branchId, session.Id, variantId, 1m, 200m);
+        var closeRes = await Client.PostAsJsonAsync($"/api/register-sessions/{session.Id}/close",
+            new CloseRegisterSessionRequest(1200m));
+        closeRes.EnsureSuccessStatusCode();
+
+        // A second, still-OPEN session on another register must never appear in this report — it has
+        // no reconciliation figures yet (they're only set at Close).
+        var openRegister = await CreateRegisterAsync(branchId, "Second Counter", "R2");
+        await OpenSessionAsync(openRegister.Id, openingCash: 500m);
+
+        var result = await Client.GetFromJsonAsync<PagedResult<RegisterSessionReconciliationRowDto>>(
+            "/api/reports/register-sessions?period=Last30Days", TestJson.Options);
+
+        var row = Assert.Single(result!.Items);
+        row.SessionId.Should().Be(session.Id);
+        row.RegisterId.Should().Be(register.Id);
+        row.BranchId.Should().Be(branchId);
+        row.OpeningCash.Should().Be(1000m);
+        row.ClosingCash.Should().Be(1200m);
+        row.ExpectedCash.Should().Be(1200m);
+        row.CashDifference.Should().Be(0m);
+        row.GrossCashSales.Should().Be(200m);
+        row.VoidedCashSales.Should().Be(0m);
+        row.RefundCashOut.Should().Be(0m);
+        row.CashIn.Should().Be(0m);
+        row.CashOut.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task RegisterSessionReconciliation_ManagerIsForcedToTheirOwnBranch()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var mainId = await GetMainBranchIdAsync(owner);
+        var bgc = await CreateBranchAsync("BGC", "BGC");
+
+        var mainRegister = await CreateRegisterAsync(mainId, "M1", "M1");
+        var mainSession = await OpenSessionAsync(mainRegister.Id, openingCash: 1000m);
+        (await Client.PostAsJsonAsync($"/api/register-sessions/{mainSession.Id}/close",
+            new CloseRegisterSessionRequest(1000m))).EnsureSuccessStatusCode();
+
+        var bgcRegister = await CreateRegisterAsync(bgc.Id, "B1", "B1");
+        var bgcSession = await OpenSessionAsync(bgcRegister.Id, openingCash: 500m);
+        (await Client.PostAsJsonAsync($"/api/register-sessions/{bgcSession.Id}/close",
+            new CloseRegisterSessionRequest(500m))).EnsureSuccessStatusCode();
+
+        var managerToken = await AddTenantUserTokenAsync("regrecon-mgr@example.com", UserRole.Manager, mainId);
+        Authorize(managerToken);
+
+        var managerResult = await Client.GetFromJsonAsync<PagedResult<RegisterSessionReconciliationRowDto>>(
+            "/api/reports/register-sessions?period=Last30Days", TestJson.Options);
+        managerResult!.Items.Should().ContainSingle().Which.SessionId.Should().Be(mainSession.Id);
+
+        // Even explicitly requesting the other branch's id must not leak BGC's session to the Main manager.
+        var managerAttemptBgc = await Client.GetFromJsonAsync<PagedResult<RegisterSessionReconciliationRowDto>>(
+            $"/api/reports/register-sessions?period=Last30Days&branchId={bgc.Id}", TestJson.Options);
+        managerAttemptBgc!.Items.Should().ContainSingle().Which.SessionId.Should().Be(mainSession.Id,
             "a branch-scoped Manager must always be forced to their own branch");
     }
 }

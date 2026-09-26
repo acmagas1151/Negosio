@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Negosio.Api.Authorization;
+using Negosio.Application.Common;
 using Negosio.Application.Reports;
 
 namespace Negosio.Api.Controllers;
@@ -69,4 +70,10 @@ public sealed class ReportsController : ControllerBase
     public async Task<ActionResult<RegisterPerformanceResultDto>> RegisterPerformance(
         [FromQuery] ReportFilter filter, CancellationToken cancellationToken)
         => Ok(await _reports.GetRegisterPerformanceAsync(filter, cancellationToken));
+
+    [HttpGet("register-sessions")]
+    [ProducesResponseType(typeof(PagedResult<RegisterSessionReconciliationRowDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedResult<RegisterSessionReconciliationRowDto>>> RegisterSessionReconciliation(
+        [FromQuery] RegisterSessionReconciliationQuery query, CancellationToken cancellationToken)
+        => Ok(await _reports.GetRegisterSessionReconciliationAsync(query, cancellationToken));
 }

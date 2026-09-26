@@ -321,6 +321,47 @@ public sealed record RegisterPerformanceResultDto(
     DateTime ToUtc,
     IReadOnlyList<RegisterPerformanceRowDto> Rows);
 
+// ---- Register session reconciliation (session-granular, closed sessions only) ----
+
+/// <summary>Filter/paging shape for the closed-register-session reconciliation list. Deliberately its
+/// own query record rather than reusing <see cref="ReportFilter"/> — this report has no
+/// <c>CashierId</c> filter (a session's reconciliation figures belong to whoever closed it, not a
+/// single cashier) and is paged, unlike every <see cref="ReportFilter"/>-based report.</summary>
+public sealed record RegisterSessionReconciliationQuery(
+    ReportPeriod Period,
+    DateOnly? FromDate,
+    DateOnly? ToDate,
+    Guid? BranchId,
+    Guid? RegisterId,
+    int Page = 1,
+    int PageSize = PagedResult<RegisterSessionReconciliationRowDto>.DefaultPageSize);
+
+/// <summary>One CLOSED <see cref="Negosio.Domain.Entities.RegisterSession"/>, verbatim — every cash
+/// figure here is read directly off the session row exactly as <c>RegisterSessionService.ReconcileAndCloseAsync</c>
+/// computed and persisted it once, at close time. Never recomputed, never proportionally split across
+/// a date range: a session that stayed open for days, or crossed midnight, still contributes exactly
+/// one row here, dated by <see cref="ClosedAtUtc"/>. An <c>Open</c> session never appears — it has none
+/// of these figures yet (see <c>ReportsService.GetRegisterSessionReconciliationAsync</c>).</summary>
+public sealed record RegisterSessionReconciliationRowDto(
+    Guid SessionId,
+    Guid RegisterId,
+    string RegisterName,
+    Guid BranchId,
+    string BranchName,
+    DateTime OpenedAtUtc,
+    DateTime ClosedAtUtc,
+    string OpenedByName,
+    string ClosedByName,
+    decimal OpeningCash,
+    decimal ClosingCash,
+    decimal ExpectedCash,
+    decimal CashDifference,
+    decimal GrossCashSales,
+    decimal VoidedCashSales,
+    decimal RefundCashOut,
+    decimal CashIn,
+    decimal CashOut);
+
 public interface IReportsService
 {
     Task<ReportsOverviewDto> GetOverviewAsync(ReportFilter filter, CancellationToken cancellationToken = default);
@@ -338,4 +379,7 @@ public interface IReportsService
     Task<BranchPerformanceResultDto> GetBranchPerformanceAsync(ReportFilter filter, CancellationToken cancellationToken = default);
 
     Task<RegisterPerformanceResultDto> GetRegisterPerformanceAsync(ReportFilter filter, CancellationToken cancellationToken = default);
+
+    Task<PagedResult<RegisterSessionReconciliationRowDto>> GetRegisterSessionReconciliationAsync(
+        RegisterSessionReconciliationQuery query, CancellationToken cancellationToken = default);
 }
