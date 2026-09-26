@@ -15,6 +15,7 @@ import {
   SALE_FULFILLMENT_STATUS_LABELS,
   VOID_INELIGIBLE_MESSAGES,
   saleFulfillmentStatusTone,
+  todayLocalDateInput,
   type FulfillmentDetails,
 } from '../lib/pos'
 import { formatMoney } from '../lib/format'
@@ -404,15 +405,50 @@ export default function SaleDetailPage() {
                   // A sale needs a schedule when its own items carry a required delivery/pickup
                   // quantity but the sale has no active schedule covering it — this is exactly the
                   // "checkout succeeded, the follow-up schedule-creation call failed" state, since a
-                  // normal Take-now sale never sets either required-quantity field.
+                  // normal Take-now sale never sets either required-quantity field. But that same
+                  // input shape (activeSchedule == null, required quantity > 0) is ALSO produced by a
+                  // legitimate void: Task 3's VoidSaleService cancels the sale's active Pending
+                  // schedule on void, and SaleItem's required-quantity fields are a write-once
+                  // checkout snapshot that a void never resets. So this must only fire for a sale
+                  // status scheduling could actually succeed against — mirroring the backend's own
+                  // LoadFulfillableSaleAsync allow-list exactly — or a voided sale would show a
+                  // misleading "needs scheduling" badge and a dead-end "Schedule now" box.
+                  const canNeedScheduling =
+                    d.sale.status === 'Completed' ||
+                    d.sale.status === 'PartiallyRefunded' ||
+                    d.sale.status === 'Refunded'
                   const needsDelivery = d.items.some((i) => i.deliveryRequiredQuantity > 0)
                   const needsPickup = d.items.some((i) => i.pickupRequiredQuantity > 0)
                   const needsSchedulingMethod: 'Delivery' | 'Pickup' | null =
-                    summary.activeSchedule == null && needsDelivery
+                    canNeedScheduling && summary.activeSchedule == null && needsDelivery
                       ? 'Delivery'
-                      : summary.activeSchedule == null && needsPickup
+                      : canNeedScheduling && summary.activeSchedule == null && needsPickup
                         ? 'Pickup'
                         : null
+
+                  // Mirrors PaymentModal.tsx's deliveryErrors/pickupErrors exactly (message wording
+                  // included), so the recovery form on this page reads identically to the payment
+                  // modal's own fulfillment step rather than drifting into a second copy of the text.
+                  const today = todayLocalDateInput()
+                  const scheduleDateValid =
+                    !!schedulingFields.scheduledDate && schedulingFields.scheduledDate >= today
+                  const scheduleMethodLabel = needsSchedulingMethod === 'Pickup' ? 'pickup' : 'delivery'
+                  const schedulingErrors = {
+                    scheduledDate: !schedulingFields.scheduledDate
+                      ? `A ${scheduleMethodLabel} date is required.`
+                      : scheduleDateValid
+                        ? undefined
+                        : `The scheduled ${scheduleMethodLabel} date cannot be in the past.`,
+                    recipientName: schedulingFields.recipientName.trim()
+                      ? undefined
+                      : 'Recipient name is required.',
+                    deliveryAddress:
+                      needsSchedulingMethod === 'Delivery'
+                        ? schedulingFields.deliveryAddress.trim()
+                          ? undefined
+                          : 'Recipient address is required.'
+                        : undefined,
+                  }
 
                   return (
                   <div className="space-y-4">
@@ -441,14 +477,14 @@ export default function SaleDetailPage() {
                               method={needsSchedulingMethod}
                               values={schedulingFields}
                               onChange={(patch) => setSchedulingFields((prev) => ({ ...prev, ...patch }))}
-                              errors={{}}
+                              errors={schedulingErrors}
                               attempted={schedulingAttempted}
                             />
                             <div className="flex gap-2">
                               <Button
                                 onClick={() => {
                                   setSchedulingAttempted(true)
-                                  if (!schedulingFields.scheduledDate || !schedulingFields.recipientName.trim()) return
+                                  if (!scheduleDateValid || !schedulingFields.recipientName.trim()) return
                                   if (needsSchedulingMethod === 'Delivery' && !schedulingFields.deliveryAddress.trim())
                                     return
                                   if (needsSchedulingMethod === 'Delivery') createDeliveryMutation.mutate(schedulingFields)
