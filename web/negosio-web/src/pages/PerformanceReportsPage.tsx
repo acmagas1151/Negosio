@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { reportsApi } from '../api/reports'
@@ -8,7 +9,7 @@ import type { ReportFiltersState } from '../hooks/useReportFilters'
 import { formatMoney } from '../lib/format'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
 import { ReportFilterBar } from '../components/reports/ReportFilterBar'
-import { EmptyState, ErrorState, SkeletonText, Table } from '../components/ui'
+import { EmptyState, ErrorState, Pagination, SkeletonText, Table } from '../components/ui'
 
 type Tab = 'branches' | 'registers' | 'cashiers'
 
@@ -65,6 +66,7 @@ export default function PerformanceReportsPage() {
         <ReportFilterBar filters={filters} showBranchFilter={showBranchFilter} />
 
         {tab === 'branches' && <BranchPerformanceTab filters={filters} />}
+        {tab === 'registers' && <RegisterPerformanceTab filters={filters} />}
       </div>
     </DashboardLayout>
   )
@@ -148,5 +150,200 @@ function BranchPerformanceTab({ filters }: { filters: ReportFiltersState }) {
         ))}
       </Table.Body>
     </Table>
+  )
+}
+
+// ---- Registers tab: two granularities — a day-range sales/cash aggregate, and a paged list of
+// individually closed sessions with their reconciliation figures. Kept as sibling sub-views rather
+// than one table, same as the plan intends (Sales vs. Closed sessions are different row shapes).
+
+function RegisterPerformanceTab({ filters }: { filters: ReportFiltersState }) {
+  const [view, setView] = useState<'sales' | 'sessions'>('sales')
+
+  return (
+    <div className="space-y-5">
+      <div className="flex justify-end">
+        <div className="flex gap-1 rounded-lg border border-border-strong bg-surface-subtle p-1">
+          <TabButton active={view === 'sales'} onClick={() => setView('sales')}>
+            Sales
+          </TabButton>
+          <TabButton active={view === 'sessions'} onClick={() => setView('sessions')}>
+            Closed sessions
+          </TabButton>
+        </div>
+      </div>
+
+      {view === 'sales' ? <RegisterSalesView filters={filters} /> : <RegisterSessionsView filters={filters} />}
+    </div>
+  )
+}
+
+function RegisterSalesView({ filters }: { filters: ReportFiltersState }) {
+  const query = useQuery({
+    queryKey: ['reports', 'register-performance', filters.params],
+    queryFn: () => reportsApi.registerPerformance(filters.params),
+  })
+
+  if (query.isError) {
+    return (
+      <ErrorState
+        message={query.error instanceof Error ? query.error.message : 'Could not load register performance.'}
+        onRetry={() => query.refetch()}
+      />
+    )
+  }
+
+  if (query.isPending) {
+    return (
+      <Table>
+        <Table.Head>
+          <Table.HeaderCell>Register</Table.HeaderCell>
+          <Table.HeaderCell>Branch</Table.HeaderCell>
+          <Table.HeaderCell align="right">Net sales</Table.HeaderCell>
+          <Table.HeaderCell align="right">Transactions</Table.HeaderCell>
+          <Table.HeaderCell>Payment methods</Table.HeaderCell>
+          <Table.HeaderCell align="right">Cash in</Table.HeaderCell>
+          <Table.HeaderCell align="right">Cash out</Table.HeaderCell>
+        </Table.Head>
+        <Table.Body>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Table.Row key={i}>
+              {Array.from({ length: 7 }).map((__, j) => (
+                <Table.Cell key={j}>
+                  <SkeletonText className={j === 0 ? 'w-24' : 'w-16'} />
+                </Table.Cell>
+              ))}
+            </Table.Row>
+          ))}
+        </Table.Body>
+      </Table>
+    )
+  }
+
+  if (query.data.rows.length === 0) {
+    return <EmptyState title="No register activity" description="No sales in this date range." />
+  }
+
+  return (
+    <Table>
+      <Table.Head>
+        <Table.HeaderCell>Register</Table.HeaderCell>
+        <Table.HeaderCell>Branch</Table.HeaderCell>
+        <Table.HeaderCell align="right">Net sales</Table.HeaderCell>
+        <Table.HeaderCell align="right">Transactions</Table.HeaderCell>
+        <Table.HeaderCell>Payment methods</Table.HeaderCell>
+        <Table.HeaderCell align="right">Cash in</Table.HeaderCell>
+        <Table.HeaderCell align="right">Cash out</Table.HeaderCell>
+      </Table.Head>
+      <Table.Body>
+        {query.data.rows.map((r) => (
+          <Table.Row key={r.registerId}>
+            <Table.Cell>{r.registerName}</Table.Cell>
+            <Table.Cell>{r.branchName}</Table.Cell>
+            <Table.Cell align="right">{formatMoney(r.netSales)}</Table.Cell>
+            <Table.Cell align="right">{r.completedTransactions}</Table.Cell>
+            <Table.Cell>
+              {r.paymentMethods.length === 0
+                ? '—'
+                : r.paymentMethods.map((m) => `${m.method} ${formatMoney(m.amount)}`).join(' · ')}
+            </Table.Cell>
+            <Table.Cell align="right">{formatMoney(r.cashIn)}</Table.Cell>
+            <Table.Cell align="right">{formatMoney(r.cashOut)}</Table.Cell>
+          </Table.Row>
+        ))}
+      </Table.Body>
+    </Table>
+  )
+}
+
+function RegisterSessionsView({ filters }: { filters: ReportFiltersState }) {
+  const [page, setPage] = useState(1)
+  const pageSize = 20
+
+  // A filter change can leave `page` pointing past the new result set's last page (e.g. narrowing
+  // the date range while on page 3) — reset to page 1 whenever the shared filters change.
+  useEffect(() => {
+    setPage(1)
+  }, [filters.period, filters.fromDate, filters.toDate, filters.branchId, filters.registerId, filters.cashierId])
+
+  const query = useQuery({
+    queryKey: ['reports', 'register-sessions', filters.params, page],
+    queryFn: () => reportsApi.registerSessions({ ...filters.params, page, pageSize }),
+  })
+
+  if (query.isError) {
+    return (
+      <ErrorState
+        message={query.error instanceof Error ? query.error.message : 'Could not load session reconciliation.'}
+        onRetry={() => query.refetch()}
+      />
+    )
+  }
+
+  if (query.isPending) {
+    return (
+      <Table>
+        <Table.Head>
+          <Table.HeaderCell>Register</Table.HeaderCell>
+          <Table.HeaderCell>Closed</Table.HeaderCell>
+          <Table.HeaderCell>Closed by</Table.HeaderCell>
+          <Table.HeaderCell align="right">Opening cash</Table.HeaderCell>
+          <Table.HeaderCell align="right">Closing cash</Table.HeaderCell>
+          <Table.HeaderCell align="right">Expected</Table.HeaderCell>
+          <Table.HeaderCell align="right">Difference</Table.HeaderCell>
+        </Table.Head>
+        <Table.Body>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Table.Row key={i}>
+              {Array.from({ length: 7 }).map((__, j) => (
+                <Table.Cell key={j}>
+                  <SkeletonText className={j === 0 ? 'w-24' : 'w-16'} />
+                </Table.Cell>
+              ))}
+            </Table.Row>
+          ))}
+        </Table.Body>
+      </Table>
+    )
+  }
+
+  if (query.data.items.length === 0) {
+    return <EmptyState title="No closed sessions" description="No sessions were closed in this date range." />
+  }
+
+  return (
+    <>
+      <Table>
+        <Table.Head>
+          <Table.HeaderCell>Register</Table.HeaderCell>
+          <Table.HeaderCell>Closed</Table.HeaderCell>
+          <Table.HeaderCell>Closed by</Table.HeaderCell>
+          <Table.HeaderCell align="right">Opening cash</Table.HeaderCell>
+          <Table.HeaderCell align="right">Closing cash</Table.HeaderCell>
+          <Table.HeaderCell align="right">Expected</Table.HeaderCell>
+          <Table.HeaderCell align="right">Difference</Table.HeaderCell>
+        </Table.Head>
+        <Table.Body>
+          {query.data.items.map((r) => (
+            <Table.Row key={r.sessionId}>
+              <Table.Cell>{r.registerName}</Table.Cell>
+              <Table.Cell>{new Date(r.closedAtUtc).toLocaleString()}</Table.Cell>
+              <Table.Cell>{r.closedByName}</Table.Cell>
+              <Table.Cell align="right">{formatMoney(r.openingCash)}</Table.Cell>
+              <Table.Cell align="right">{formatMoney(r.closingCash)}</Table.Cell>
+              <Table.Cell align="right">{formatMoney(r.expectedCash)}</Table.Cell>
+              <Table.Cell align="right">{formatMoney(r.cashDifference)}</Table.Cell>
+            </Table.Row>
+          ))}
+        </Table.Body>
+      </Table>
+      <Pagination
+        page={query.data.page}
+        pageSize={query.data.pageSize}
+        totalCount={query.data.totalCount}
+        totalPages={query.data.totalPages}
+        onPageChange={setPage}
+      />
+    </>
   )
 }

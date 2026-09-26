@@ -1272,3 +1272,48 @@ export interface BranchPerformanceResultDto {
   toUtc: string
   rows: BranchPerformanceRowDto[]
 }
+
+// ---- Register performance ----
+
+export interface RegisterPerformanceRowDto {
+  registerId: string
+  registerName: string
+  branchId: string
+  branchName: string
+  grossSales: number
+  netSales: number
+  completedTransactions: number
+  averageTransactionValue: number
+  paymentMethods: PaymentMethodBreakdownDto[]
+  cashIn: number
+  cashOut: number
+}
+
+export interface RegisterPerformanceResultDto {
+  fromUtc: string
+  toUtc: string
+  rows: RegisterPerformanceRowDto[]
+}
+
+// ---- Register session reconciliation (session-granular, closed sessions only) ----
+
+export interface RegisterSessionReconciliationRowDto {
+  sessionId: string
+  registerId: string
+  registerName: string
+  branchId: string
+  branchName: string
+  openedAtUtc: string
+  closedAtUtc: string
+  openedByName: string
+  closedByName: string
+  openingCash: number
+  closingCash: number
+  expectedCash: number
+  cashDifference: number
+  grossCashSales: number
+  voidedCashSales: number
+  refundCashOut: number
+  cashIn: number
+  cashOut: number
+}

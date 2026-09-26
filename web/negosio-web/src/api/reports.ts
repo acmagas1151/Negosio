@@ -7,8 +7,11 @@ import type {
   DeliveryFulfillmentReportResultDto,
   DeliveryReportParams,
   DeliveryReportResultDto,
+  PagedResult,
   PickupReportParams,
   PickupReportResultDto,
+  RegisterPerformanceResultDto,
+  RegisterSessionReconciliationRowDto,
   ReportFilterParams,
   ReportsOverviewDto,
   TopProductDto,
@@ -37,4 +40,12 @@ export const reportsApi = {
 
   branchPerformance: (params: ReportFilterParams) =>
     apiRequest<BranchPerformanceResultDto>(`/api/reports/branch-performance${qs({ ...params })}`),
+
+  registerPerformance: (params: ReportFilterParams) =>
+    apiRequest<RegisterPerformanceResultDto>(`/api/reports/register-performance${qs({ ...params })}`),
+
+  registerSessions: (params: ReportFilterParams & { page: number; pageSize: number }) =>
+    apiRequest<PagedResult<RegisterSessionReconciliationRowDto>>(
+      `/api/reports/register-sessions${qs({ ...params })}`,
+    ),
 }
