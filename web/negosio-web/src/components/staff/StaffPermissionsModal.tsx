@@ -12,7 +12,7 @@ interface Props {
   member: StaffMemberDto | null
 }
 
-type PermissionKey = 'salesVoid' | 'salesReturn' | 'discountApply' | 'cashDrawerOpen'
+type PermissionKey = 'salesVoid' | 'salesReturn' | 'discountApply' | 'cashDrawerOpen' | 'fulfillmentCancel'
 
 interface PermissionDef {
   key: PermissionKey
@@ -22,8 +22,9 @@ interface PermissionDef {
 
 // Every entry here has a real, server-enforced grant-or-approval path (VoidAuthorizationResolver,
 // ReturnAuthorizationResolver, CheckoutService.EnsureDiscountAuthorizedAsync,
-// CashDrawerService.ResolveAuthorizationAsync) — this list is deliberately not a wish list of every
-// button in the POS; a toggle only exists here because a matching backend check exists.
+// CashDrawerService.ResolveAuthorizationAsync, FulfillmentCancelAuthorizationResolver) — this list is
+// deliberately not a wish list of every button in the POS; a toggle only exists here because a
+// matching backend check exists.
 const SALES_PERMISSIONS: PermissionDef[] = [
   {
     key: 'salesVoid',
@@ -47,6 +48,14 @@ const CASH_PERMISSIONS: PermissionDef[] = [
     key: 'cashDrawerOpen',
     label: 'Open cash drawer',
     description: 'Allow this cashier to open the cash drawer without supervisor approval.',
+  },
+]
+
+const FULFILLMENT_PERMISSIONS: PermissionDef[] = [
+  {
+    key: 'fulfillmentCancel',
+    label: 'Cancel delivery/pickup',
+    description: 'Allow this cashier to cancel or reschedule a delivery or pickup without supervisor approval.',
   },
 ]
 
@@ -136,6 +145,7 @@ export function StaffPermissionsModal({ open, onClose, member }: Props) {
     salesReturn: false,
     discountApply: false,
     cashDrawerOpen: false,
+    fulfillmentCancel: false,
   })
   const [error, setError] = useState('')
 
@@ -147,6 +157,7 @@ export function StaffPermissionsModal({ open, onClose, member }: Props) {
       salesReturn: member.salesReturn,
       discountApply: member.discountApply,
       cashDrawerOpen: member.cashDrawerOpen,
+      fulfillmentCancel: member.fulfillmentCancel,
     })
     setError('')
   }, [open, member])
@@ -171,7 +182,8 @@ export function StaffPermissionsModal({ open, onClose, member }: Props) {
     values.salesVoid === member.salesVoid &&
     values.salesReturn === member.salesReturn &&
     values.discountApply === member.discountApply &&
-    values.cashDrawerOpen === member.cashDrawerOpen
+    values.cashDrawerOpen === member.cashDrawerOpen &&
+    values.fulfillmentCancel === member.fulfillmentCancel
 
   return (
     <Modal
@@ -216,6 +228,13 @@ export function StaffPermissionsModal({ open, onClose, member }: Props) {
         <PermissionGroup
           title="Cash operations"
           permissions={CASH_PERMISSIONS}
+          values={values}
+          disabled={mutation.isPending}
+          onToggle={(key, next) => setValues((prev) => ({ ...prev, [key]: next }))}
+        />
+        <PermissionGroup
+          title="Fulfillment"
+          permissions={FULFILLMENT_PERMISSIONS}
           values={values}
           disabled={mutation.isPending}
           onToggle={(key, next) => setValues((prev) => ({ ...prev, [key]: next }))}

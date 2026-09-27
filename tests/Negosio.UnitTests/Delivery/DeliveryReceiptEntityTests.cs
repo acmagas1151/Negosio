@@ -118,7 +118,7 @@ public class DeliveryReceiptEntityTests
         var cancelledBy = Guid.NewGuid();
         var cancelledAt = new DateTime(2026, 9, 16, 11, 0, 0, DateTimeKind.Utc);
 
-        dr.Cancel(cancelledBy, "  Customer rescheduled  ", CancellationDisposition.DeliverLater, cancelledAt);
+        dr.Cancel(cancelledBy, "  Customer rescheduled  ", CancellationDisposition.DeliverLater, null, cancelledAt);
 
         dr.Status.Should().Be(FulfillmentStatus.Cancelled);
         dr.CancelledByUserId.Should().Be(cancelledBy);
@@ -131,7 +131,7 @@ public class DeliveryReceiptEntityTests
     {
         var dr = MakeDelivery();
 
-        var act = () => dr.Cancel(Guid.NewGuid(), "   ", CancellationDisposition.DeliverLater, DateTime.UtcNow);
+        var act = () => dr.Cancel(Guid.NewGuid(), "   ", CancellationDisposition.DeliverLater, null, DateTime.UtcNow);
 
         act.Should().Throw<ArgumentException>();
     }
@@ -142,7 +142,7 @@ public class DeliveryReceiptEntityTests
         var dr = MakeDelivery();
         dr.MarkDelivered(Guid.NewGuid(), DateTime.UtcNow);
 
-        var act = () => dr.Cancel(Guid.NewGuid(), "Too late", CancellationDisposition.DeliverLater, DateTime.UtcNow);
+        var act = () => dr.Cancel(Guid.NewGuid(), "Too late", CancellationDisposition.DeliverLater, null, DateTime.UtcNow);
 
         act.Should().Throw<InvalidOperationException>();
     }
@@ -151,7 +151,7 @@ public class DeliveryReceiptEntityTests
     public void MarkDelivered_after_cancelled_throws()
     {
         var dr = MakeDelivery();
-        dr.Cancel(Guid.NewGuid(), "Changed mind", CancellationDisposition.DeliverLater, DateTime.UtcNow);
+        dr.Cancel(Guid.NewGuid(), "Changed mind", CancellationDisposition.DeliverLater, null, DateTime.UtcNow);
 
         var act = () => dr.MarkDelivered(Guid.NewGuid(), DateTime.UtcNow);
 
@@ -162,9 +162,9 @@ public class DeliveryReceiptEntityTests
     public void Cancel_twice_throws()
     {
         var dr = MakeDelivery();
-        dr.Cancel(Guid.NewGuid(), "First reason", CancellationDisposition.DeliverLater, DateTime.UtcNow);
+        dr.Cancel(Guid.NewGuid(), "First reason", CancellationDisposition.DeliverLater, null, DateTime.UtcNow);
 
-        var act = () => dr.Cancel(Guid.NewGuid(), "Second reason", CancellationDisposition.DeliverLater, DateTime.UtcNow);
+        var act = () => dr.Cancel(Guid.NewGuid(), "Second reason", CancellationDisposition.DeliverLater, null, DateTime.UtcNow);
 
         act.Should().Throw<InvalidOperationException>();
     }
@@ -243,10 +243,31 @@ public class DeliveryReceiptEntityTests
     {
         var dr = MakeDelivery();
 
-        dr.Cancel(Guid.NewGuid(), "Customer rescheduled", CancellationDisposition.DeliverLater, DateTime.UtcNow);
+        dr.Cancel(Guid.NewGuid(), "Customer rescheduled", CancellationDisposition.DeliverLater, null, DateTime.UtcNow);
 
         dr.Status.Should().Be(FulfillmentStatus.Cancelled);
         dr.CancellationDisposition.Should().Be(CancellationDisposition.DeliverLater);
+    }
+
+    [Fact]
+    public void Cancel_stamps_the_approver_when_one_was_needed()
+    {
+        var dr = MakeDelivery();
+        var approvedBy = Guid.NewGuid();
+
+        dr.Cancel(Guid.NewGuid(), "Customer rescheduled", CancellationDisposition.DeliverLater, approvedBy, DateTime.UtcNow);
+
+        dr.ApprovedByUserId.Should().Be(approvedBy);
+    }
+
+    [Fact]
+    public void Cancel_leaves_the_approver_null_when_the_canceller_acted_directly()
+    {
+        var dr = MakeDelivery();
+
+        dr.Cancel(Guid.NewGuid(), "Customer rescheduled", CancellationDisposition.DeliverLater, null, DateTime.UtcNow);
+
+        dr.ApprovedByUserId.Should().BeNull();
     }
 
     [Fact]
@@ -256,11 +277,11 @@ public class DeliveryReceiptEntityTests
         var pickup = MakePickup();
 
         var deliveryWithPickupDisposition =
-            () => dr.Cancel(Guid.NewGuid(), "x", CancellationDisposition.PickupLater, DateTime.UtcNow);
+            () => dr.Cancel(Guid.NewGuid(), "x", CancellationDisposition.PickupLater, null, DateTime.UtcNow);
         var pickupWithDeliveryDisposition =
-            () => pickup.Cancel(Guid.NewGuid(), "x", CancellationDisposition.DeliverLater, DateTime.UtcNow);
+            () => pickup.Cancel(Guid.NewGuid(), "x", CancellationDisposition.DeliverLater, null, DateTime.UtcNow);
         var pickupPickedUpInstead =
-            () => pickup.Cancel(Guid.NewGuid(), "x", CancellationDisposition.CustomerPickedUpInstead, DateTime.UtcNow);
+            () => pickup.Cancel(Guid.NewGuid(), "x", CancellationDisposition.CustomerPickedUpInstead, null, DateTime.UtcNow);
 
         deliveryWithPickupDisposition.Should().Throw<InvalidOperationException>();
         pickupWithDeliveryDisposition.Should().Throw<InvalidOperationException>();
@@ -285,7 +306,7 @@ public class DeliveryReceiptEntityTests
     {
         var dr = MakeDelivery();
 
-        dr.Cancel(Guid.NewGuid(), "Sale voided: test reason", CancellationDisposition.SaleVoided, DateTime.UtcNow);
+        dr.Cancel(Guid.NewGuid(), "Sale voided: test reason", CancellationDisposition.SaleVoided, null, DateTime.UtcNow);
 
         dr.Status.Should().Be(FulfillmentStatus.Cancelled);
         dr.CancellationDisposition.Should().Be(CancellationDisposition.SaleVoided);
@@ -296,7 +317,7 @@ public class DeliveryReceiptEntityTests
     {
         var pickup = MakePickup();
 
-        pickup.Cancel(Guid.NewGuid(), "Sale voided: test reason", CancellationDisposition.SaleVoided, DateTime.UtcNow);
+        pickup.Cancel(Guid.NewGuid(), "Sale voided: test reason", CancellationDisposition.SaleVoided, null, DateTime.UtcNow);
 
         pickup.Status.Should().Be(FulfillmentStatus.Cancelled);
         pickup.CancellationDisposition.Should().Be(CancellationDisposition.SaleVoided);

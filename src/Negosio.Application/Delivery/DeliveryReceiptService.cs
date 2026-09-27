@@ -5,6 +5,7 @@ using Negosio.Application.Abstractions;
 using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Application.Reports;
+using Negosio.Application.Sales;
 using Negosio.Application.Settings;
 using Negosio.Domain.Entities;
 using Negosio.Domain.Enums;
@@ -34,6 +35,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
     private readonly IBranchAccessResolver _branchAccess;
     private readonly IReceiptSettingsResolver _settingsResolver;
     private readonly TimeProvider _timeProvider;
+    private readonly IFulfillmentCancelAuthorizationResolver _cancelAuth;
 
     public DeliveryReceiptService(
         ITenantDbContext db,
@@ -44,7 +46,8 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         IValidator<CancelPickupRequest> cancelPickupValidator,
         IBranchAccessResolver branchAccess,
         IReceiptSettingsResolver settingsResolver,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IFulfillmentCancelAuthorizationResolver cancelAuth)
     {
         _db = db;
         _currentUser = currentUser;
@@ -55,6 +58,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         _branchAccess = branchAccess;
         _settingsResolver = settingsResolver;
         _timeProvider = timeProvider;
+        _cancelAuth = cancelAuth;
     }
 
     // ---- Create ----------------------------------------------------------------------------------
@@ -341,7 +345,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
                     id, FulfillmentMethod.Delivery, request.Reason, request.Disposition,
                     convertToMethod: FulfillmentMethod.Delivery,
                     completeReplacementImmediately: false,
-                    buildReplacement: DeliveryReplacementFactory(replacement), ct);
+                    buildReplacement: DeliveryReplacementFactory(replacement), request.Approval, ct);
             }
 
             case CancellationDisposition.ConvertToPickup:
@@ -353,7 +357,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
                     id, FulfillmentMethod.Delivery, request.Reason, request.Disposition,
                     convertToMethod: FulfillmentMethod.Pickup,
                     completeReplacementImmediately: false,
-                    buildReplacement: PickupReplacementFactory(replacement), ct);
+                    buildReplacement: PickupReplacementFactory(replacement), request.Approval, ct);
             }
 
             case CancellationDisposition.CustomerPickedUpInstead:
@@ -365,7 +369,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
                     id, FulfillmentMethod.Delivery, request.Reason, request.Disposition,
                     convertToMethod: FulfillmentMethod.Pickup,
                     completeReplacementImmediately: true,
-                    buildReplacement: PickupReplacementFactory(replacement), ct);
+                    buildReplacement: PickupReplacementFactory(replacement), request.Approval, ct);
             }
 
             default:
@@ -390,7 +394,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
                     id, FulfillmentMethod.Pickup, request.Reason, request.Disposition,
                     convertToMethod: FulfillmentMethod.Pickup,
                     completeReplacementImmediately: false,
-                    buildReplacement: PickupReplacementFactory(replacement), ct);
+                    buildReplacement: PickupReplacementFactory(replacement), request.Approval, ct);
             }
 
             case CancellationDisposition.ConvertToDelivery:
@@ -401,7 +405,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
                     id, FulfillmentMethod.Pickup, request.Reason, request.Disposition,
                     convertToMethod: FulfillmentMethod.Delivery,
                     completeReplacementImmediately: false,
-                    buildReplacement: DeliveryReplacementFactory(replacement), ct);
+                    buildReplacement: DeliveryReplacementFactory(replacement), request.Approval, ct);
             }
 
             default:
@@ -442,6 +446,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         FulfillmentMethod convertToMethod,      // == expectedMethod when the quantities just go back to unscheduled
         bool completeReplacementImmediately,    // true only for CustomerPickedUpInstead
         ReplacementFactory? buildReplacement,   // null means "no replacement is created" (a plain release). Every disposition reachable through the public cancel endpoints — including DeliverLater/PickupLater, since Task 3B — passes one, but SaleVoided (the void cascade) always passes null, and that's the real, load-bearing path, not a defensive fallback.
+        VoidSaleApprovalInput? approval,
         CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -471,13 +476,17 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
                 ErrorCodes.DeliveryReceiptNotAllowed, "This schedule is not linked to a sale and has no quantities to release.");
         }
 
+        // Fast-fails the common eligibility cases above before resolving approver credentials or
+        // opening a transaction — same ordering as VoidSaleService.VoidAsync.
+        var approvedByUserId = await _cancelAuth.ResolveAsync(dr.BranchId, approval, ct);
+
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
 
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
 
         var result = await CancelWithDispositionCoreAsync(
             dr, transaction, tenantId, saleId, reason, disposition, expectedMethod, convertToMethod,
-            completeReplacementImmediately, buildReplacement, nowUtc, ct);
+            completeReplacementImmediately, buildReplacement, approvedByUserId, nowUtc, ct);
 
         await transaction.CommitAsync(ct);
         return result;
@@ -504,6 +513,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         FulfillmentMethod convertToMethod,
         bool completeReplacementImmediately,
         ReplacementFactory? buildReplacement,
+        Guid? approvedByUserId,
         DateTime nowUtc,
         CancellationToken ct)
     {
@@ -549,7 +559,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             .ToListAsync(ct);
 
         // The domain re-validates the method/disposition pairing; take-now is never accepted.
-        dr.Cancel(_currentUser.UserId, reason, disposition, nowUtc);
+        dr.Cancel(_currentUser.UserId, reason, disposition, approvedByUserId, nowUtc);
 
         DeliveryReceipt? replacement = null;
         if (buildReplacement is not null)
@@ -654,7 +664,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
         await CancelWithDispositionCoreAsync(
             dr, transaction, tenantId, saleId, $"Sale voided: {voidReason}", CancellationDisposition.SaleVoided,
             expectedMethod: dr.Method, convertToMethod: dr.Method,
-            completeReplacementImmediately: false, buildReplacement: null, nowUtc, ct);
+            completeReplacementImmediately: false, buildReplacement: null, approvedByUserId: null, nowUtc, ct);
     }
 
     // ---- Shared helpers --------------------------------------------------------------------------
@@ -807,7 +817,8 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
                 ? await _db.Sales.AsNoTracking().Where(s => s.Id == saleId).Select(s => s.DeliveryCharge).FirstOrDefaultAsync(ct)
                 : 0m;
 
-        var actorIds = new[] { dr.CompletedByUserId, dr.CancelledByUserId }.Where(id => id is not null).Select(id => id!.Value).ToList();
+        var actorIds = new[] { dr.CompletedByUserId, dr.CancelledByUserId, dr.ApprovedByUserId }
+            .Where(id => id is not null).Select(id => id!.Value).ToList();
         var actorNames = actorIds.Count == 0
             ? new Dictionary<Guid, string>()
             : await _db.Users.AsNoTracking().Where(u => actorIds.Contains(u.Id))
@@ -839,6 +850,7 @@ public sealed class DeliveryReceiptService : IDeliveryReceiptService
             dr.CompletedAtUtc, dr.CompletedByUserId is { } cbu ? actorNames.GetValueOrDefault(cbu) : null,
             dr.CancelledAtUtc, dr.CancelledByUserId is { } xbu ? actorNames.GetValueOrDefault(xbu) : null,
             dr.CancellationReason, dr.CancellationDisposition,
+            dr.ApprovedByUserId is { } apu ? actorNames.GetValueOrDefault(apu) : null,
             items, deliveryCharge,
             HeaderText: settings.DeliveryHeaderText,
             FooterText: settings.DeliveryFooterText,

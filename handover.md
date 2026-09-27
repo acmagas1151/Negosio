@@ -1,255 +1,111 @@
 # Handover Summary
 
-> Session date: 2026-09-01 · Supersedes the Phase 4 handover. Phase 5 is complete and merged.
+_Generated: 2026-09-27 (updated same day — fulfillment-cancel authorization fix)_
 
 ## Project Context
 
-- **Project:** Negosio — a multi-tenant SaaS platform for retail and food & beverage
-  businesses, database-per-tenant. Owner registers → picks a business type → describes a
-  first branch → creates an owner account → lands in a tenant-scoped dashboard. Commercial
-  surface: product catalog, inventory, retail POS (registers, sessions, sales, payments,
-  returns), staff & access management, and now branch management.
+- **Project:** Negosio — a multi-tenant retail/POS management platform (registers, inventory, staff, delivery/pickup fulfillment, reporting).
 - **Tech stack:**
-  - **Backend:** C# / .NET 9, ASP.NET Core Web API, EF Core 9, SQL Server (LocalDB dev),
-    JWT bearer auth, ASP.NET Core `PasswordHasher` (PBKDF2), FluentValidation, Serilog.
-    Modular monolith: `Api → Infrastructure → Application → Domain`.
-  - **Frontend:** React 19, TypeScript (strict), Vite 8, React Router 7, TanStack Query v5,
-    Tailwind v4, lucide-react. Lint = `oxlint`. Path: `web/negosio-web/`. No frontend test
-    runner — verified via `npm run lint` + `npm run build` + headless-Chrome/CDP walkthroughs.
-  - **Tests:** xUnit, FluentAssertions, `WebApplicationFactory`.
-- **Main goal of this session:** implement **Phase 5 — Branch Management & Branch-Scoped
-  Access**, i.e. make the pre-existing multi-branch architecture reachable through the API
-  and UI, and lock every non-Owner/Admin staff member to exactly one branch.
+  - Backend: .NET 9 / ASP.NET Core Web API / EF Core 9 / SQL Server (LocalDB). Modular monolith: `Api → Infrastructure → Application → Domain`. Database-per-tenant (separate Platform DB + one DB per tenant, per-request connection routing). JWT auth with role-based policies (Owner/Admin/Manager/Cashier/InventoryStaff/KitchenStaff/Viewer). Currency fixed to PHP.
+  - Frontend: React 19 / TypeScript (strict) / Vite / React Router 7 / TanStack Query v5 / Tailwind v4 / Recharts.
+- **Working directory:** `C:\Users\Ace\Documents\Negosio`. Git repo, currently on `master`.
+- **IMPORTANT — uncommitted state:** as of this handover, `master`'s working tree has real, verified, but **uncommitted** changes (see "Current State" below). A fresh session must not assume a clean tree.
 
 ## Current Task
 
-Phase 5 is **done and merged**. There is no open task right now — the session ended with a
-merge to `master` and an explicit instruction not to start Phase 6 automatically. The next
-session's job is to **pick the next feature with the user**, not to continue Phase 5 work.
+The user reported a live bug while testing the previously-merged Reports Phase C / fulfillment-fixes work (see "Prior completed work" below): **a Cashier could not cancel a delivery/pickup schedule at checkout time — only a Manager could.**
 
-- **Feature implemented:** Branch Management v1 (CRUD, lifecycle) + a branch-scoped access
-  model applied across the whole backend and the POS/Staff frontend.
-- **User requirements (locked rules, verbatim intent):**
-  - Role = *what* a user may do; branch assignment = *where*; branch active-status =
-    *whether* a branch-scoped user may use Negosio at all.
-  - All-branch roles: `Owner`, `Admin` (no `BranchId`). Branch-scoped: `Manager`, `Cashier`,
-    `InventoryStaff`, `KitchenStaff`, `Viewer` (exactly one `BranchId`).
-  - A branch-scoped user whose branch is deactivated is locked out **immediately** — at
-    login and on the very next request with an already-issued JWT (no waiting for expiry).
-  - A Cashier selects/opens a register **only from the POS flow**, never via `/registers`
-    (management page — Owner/Admin/Manager only).
-  - Register-session model: one open session per register **and** per user (DB-enforced);
-    checkout/close require session ownership; **Owner/Admin-only** force-close (not Manager)
-    with the same cash reconciliation.
-  - Visible Sale/Return numbers are exactly **7 digits** (`0000001`), one shared
-    atomic per-`(tenant, branch)` sequence — narrowed from 8 digits mid-phase.
-  - `DO NOT MERGE` was in force for most of the session; the user explicitly approved the
-    merge in the final message of this session.
+Investigation confirmed this was a real permission-system gap, not a false alarm: every other sensitive POS action (Void sale, Process return, Apply discount, Open cash drawer) follows a "Owner/Admin/Manager act directly; a Cashier needs either a granted permission or live Manager/Admin/Owner approval" pattern — but the dedicated "Cancel" button on a pending delivery/pickup schedule was hardcoded to Manager+ only, with **no grant and no approval escape hatch at all** for a Cashier. The user chose to fix it (option: "Add grant + approval (recommended)") so Cashiers get the same pattern as everywhere else.
+
+**This fix is now complete and verified, but sits uncommitted on `master`'s working tree** — the user has not yet been asked/asked to commit it.
 
 ## Completed Work
 
-**Backend — new/changed (all now on `master`, merge commit `621aa8e`):**
+### This session's fix: Fulfillment-cancel authorization (Cashier grant + approval)
 
-- 4 EF Core migrations: `AddUserBranch` (tenant — `User.BranchId` + backfill),
-  `AddStaffInvitationBranch` (platform), `PerBranchDocumentNumberUniqueness` (tenant —
-  `Sale`/`SaleReturn` unique indexes moved to `(TenantId, BranchId, Number)`),
-  `SessionOwnerOpenIndex` (tenant — one open session per user).
-- `Branch` domain: `UpdateDetails`, `Deactivate`, `Reactivate` (code stays immutable).
-- New `BranchManagementService`, `BranchAccessResolver`, `BranchValidators`,
-  `PosContextService`.
-- `BranchAccessResolver` wired into `DashboardService`, `InventoryService`,
-  `RegisterService`, `PosCatalogService`, `CheckoutService`, `SaleQueryService`,
-  `ReceiptService`, `ReturnService`.
-- `AuthService.LoginAsync` — branch-active login gate. New
-  `Negosio.Api/Middleware/BranchAccessMiddleware.cs` — per-request branch-active gate.
-- `RegisterSessionService` — `CASHIER_SESSION_OPEN`, ownership checks, `ForceCloseAsync`.
-  `RegisterService.ListAsync/GetAsync` now include each register's open-session state.
-- `StaffService` — branch on invite, role↔branch reconciliation, new `ChangeBranchAsync`.
-- `DocumentNumberService` — `D8` → `D7` format.
-- New policies: `BranchManage`, `RegisterForceClose` (both Owner/Admin).
-- New endpoints: full `/api/branches` CRUD, `GET /api/pos/context`,
-  `GET /api/pos/registers`, `POST /api/register-sessions/{id}/force-close`,
-  `POST /api/staff/{id}/branch`.
-- New error codes: `LAST_ACTIVE_BRANCH`, `BRANCH_INACTIVE`, `BRANCH_FORBIDDEN`,
-  `SESSION_NOT_OWNED`, `CASHIER_SESSION_OPEN`, `STAFF_HAS_OPEN_REGISTER_SESSION`.
+**Backend:**
+- `src/Negosio.Domain/Enums/UserPermission.cs` — added `FulfillmentCancel = 5`.
+- `src/Negosio.Application/Common/ErrorCodes.cs` — added `FulfillmentCancelApprovalRequired`.
+- `src/Negosio.Domain/Entities/Delivery/DeliveryReceipt.cs` — added `ApprovedByUserId` property; `Cancel(...)` signature gained a `Guid? approvedByUserId` parameter (inserted before the timestamp, mirroring `Sale.Void`'s `approvedByUserId` param).
+- `src/Negosio.Infrastructure/Persistence/Configurations/DeliveryReceiptConfiguration.cs` + new migration `20260927025105_AddFulfillmentCancelApprovedByUserId` — clean additive nullable-column migration, no data changes.
+- **New file** `src/Negosio.Application/Delivery/FulfillmentCancelAuthorizationResolver.cs` (`IFulfillmentCancelAuthorizationResolver`) — mirrors `VoidAuthorizationResolver`/`ReturnAuthorizationResolver` exactly: Owner/Admin/Manager act directly; Cashier with the `FulfillmentCancel` grant acts directly; Cashier without it gets `FulfillmentCancelApprovalRequired` and can retry with `VoidSaleApprovalInput` (manager email+password).
+- `src/Negosio.Application/Delivery/DeliveryReceiptService.cs` — injected the resolver; `CancelWithDispositionAsync` now resolves authorization **after** the existing eligibility checks (branch/method/status/saleId) but **before** opening the transaction — same ordering as `VoidSaleService.VoidAsync`. The resolved `approvedByUserId` flows through `CancelWithDispositionCoreAsync` into `dr.Cancel(...)` and into `MapToDtoAsync`'s actor-name lookup (new `ApprovedByName` field on `FulfillmentScheduleDto`). The void cascade (`CancelActiveScheduleForVoidedSaleAsync`) always passes `approvedByUserId: null` and never consults this resolver — it's already authorized one layer up by `VoidAuthorizationResolver`.
+- `src/Negosio.Application/Delivery/DeliveryReceiptContracts.cs` — added `Approval` field to `CancelDeliveryRequest`/`CancelPickupRequest`; added `ApprovedByName` to `FulfillmentScheduleDto`.
+- `src/Negosio.Api/Authorization/AuthorizationPolicies.cs` — broadened the `FulfillmentCancel` policy from `ManagementRoles` to `PosRoles` (every POS role may attempt; the resolver enforces the real split) — same precedent as `RefundManage`/`SalesView`.
+- `src/Negosio.Application/DependencyInjection.cs` — registered the new resolver.
+- Staff permission-grant plumbing extended with the new permission (5 call sites): `StaffContracts.cs` (`StaffMemberDto`/`ChangeStaffPermissionsRequest` gained `FulfillmentCancel`), `StaffController.cs`, `StaffService.cs` (3 `StaffMemberDto` construction sites), `UserPermissionGrantService.cs`.
 
-**Frontend — new/changed:**
+**Frontend:**
+- `web/negosio-web/src/lib/useCan.ts` — `'delivery:cancel'` capability now admits Cashier (server resolves the grant-vs-approval split).
+- `web/negosio-web/src/components/sales/CancelFulfillmentModal.tsx` — added the same approval UI pattern as `VoidSaleModal.tsx`: reveals manager-credential fields on first `FULFILLMENT_CANCEL_APPROVAL_REQUIRED` denial, handles `INVALID_APPROVER_CREDENTIALS`/`VOID_APPROVER_WRONG_BRANCH`.
+- `web/negosio-web/src/components/staff/StaffPermissionsModal.tsx` — new "Fulfillment" permission group with a "Cancel delivery/pickup" toggle.
+- `web/negosio-web/src/pages/SaleDetailPage.tsx` — cancelled-schedule display now shows "Approved by X" when applicable; refreshed a stale comment about the `delivery:cancel` capability key.
+- `web/negosio-web/src/api/types.ts` — mirrored all the above DTO/request shape changes.
 
-- `pages/BranchesPage.tsx`, `components/branches/BranchFormModal.tsx` /
-  `BranchStatusBadge.tsx`, `api/branches.ts` — `/branches` management screen.
-- `pages/PosPage.tsx` rewritten around `GET /api/pos/context`; new
-  `components/pos/BranchPicker.tsx`; `components/pos/RegisterPicker.tsx` reworked for
-  Available / "In use by \<name\>" / "Your open session — Continue"; `PosSessionGate.tsx`
-  gained "← Back to registers" + "Exit POS".
-- `components/registers/RegisterSessionCell.tsx` + `CloseSessionModal.tsx` — Owner/Admin
-  force-close UI on `/registers`.
-- Staff: `ChangeBranchModal.tsx` (new), `InviteStaffModal.tsx` / `ChangeRoleModal.tsx`
-  gained a branch field, `StaffPage.tsx` gained a Branch column.
-- `lib/nav.ts` / `App.tsx` — `/registers` route + nav gated on `register:manage` (was
-  `pos:operate`) so a Cashier can no longer reach it; Reports placeholder and the Dashboard
-  "Manage registers" quick action gated the same way.
-- `pages/SalesPage.tsx` / `SaleDetailPage.tsx` — branch filter/column, conditional on
-  `branches.length > 1`; transaction numbers render as `#0000001` / "Sale #0000001" /
-  "Return 0000002 · for sale 0000001".
+**Tests:**
+- `tests/Negosio.UnitTests/Delivery/DeliveryReceiptEntityTests.cs` — updated all 11 `dr.Cancel(...)` call sites for the new parameter; added 2 new tests for the approver-stamping behavior.
+- `tests/Negosio.IntegrationTests/Delivery/DeliveryReceiptStatusTests.cs` and `PickupTests.cs` — replaced the now-obsolete `Cashier_cannot_cancel_a_delivery`/`_pickup` tests (which asserted the old, buggy 403-Forbidden behavior) with `Cashier_without_grant_requires_approval_then_succeeds_with_valid_manager_credentials` and `Cashier_with_a_direct_grant_cancels_without_any_approval`, mirroring `VoidSaleTests.cs`'s pattern.
+- `tests/Negosio.IntegrationTests/Platform/TenantMigrationTests.cs` — a pre-existing migration round-trip test hardcoded "2 pending migrations" after a rollback checkpoint; bumped to 3 to account for the new migration (not a regression — an expected update).
+- `tests/Negosio.IntegrationTests/Delivery/DeliveryReceiptConcurrencyTests.cs` — added a throwing `UnusedFulfillmentCancelAuthorizationResolver` stub for its hand-built `DeliveryReceiptService` (the void-cascade path it tests never consults the resolver, so a throwing stub proves that invariant).
+- 8 other integration test files needed a 5th positional argument added to existing `ChangeStaffPermissionsRequest(...)` calls: `CashDrawerOpenTests.cs`, `VoidSaleTests.cs`, `CheckoutTests.cs`, `SalesVoidPermissionTests.cs`, `ReturnTests.cs`.
 
-**Tests:** 88 unit / 162 integration, all green (was 76 / 114 before this phase). New test
-files under `tests/Negosio.IntegrationTests/Branches/`:
-`BranchManagementTests`, `BranchAuthTests`, `BranchScopedAccessTests`,
-`RegisterSessionModelTests`, `StaffBranchTests`, `PosContextTests`; unit
-`BranchDomainTests`, `BranchRolesTests`.
-
-**Docs:** `docs/superpowers/specs/2026-09-01-branch-management-design.md`,
-`docs/superpowers/plans/2026-09-01-branch-management.md`, `docs/phase-5-status.md` (the
-full 9-section final report), `docs/adr/0007-sale-numbering-strategy.md` updated.
+### Prior completed work (already merged to `master` as commit `8039d44`, still not pushed to `origin/master`)
+Two subagent-driven plans: (1) fulfillment recovery fixes — a "Schedule now" recovery action on Sale Detail for a checkout-succeeded-but-schedule-failed sale, and a void-cascade that cleanly cancels a pending schedule when its sale is voided; (2) Reports Phase C — new Branch/Register/Cashier performance tabs at `/reports/performance`. Full detail, metric definitions, and the rulings made during that work are in `C:\Users\Ace\Desktop\negosio-status.md` under "#13 in detail" — not repeated here to avoid drift between the two files.
 
 ## Current State
 
-- **Working:** everything listed above, verified on `master` post-merge:
-  `dotnet build` 0/0, `dotnet test Negosio.sln` = **88 unit / 162 integration, 0 failed**,
-  `npm run lint` clean, `npm run build` clean (474.67 kB js / 132.29 kB gz).
-- **Merged & pushed:** `feature/branch-management` → `master` via `--no-ff` merge
-  (`621aa8e`), pushed to `origin/master`. Working tree clean. The feature branch was **not**
-  deleted.
-- **Partially working / not fully polished:** register/session availability on the POS
-  picker is a snapshot per fetch, not live-pushed (acceptable per the phase's scope; refetch
-  on conflict covers it). No dedicated UI to see "N staff currently locked out" beyond the
-  deactivate-confirmation staff count.
-- **Dev data residue:** the "Inv UI Test" tenant DB now also contains disposable
-  `Verify A / Verify B` branches and `ca.*@ex.com` / `mgr.*@ex.com` test accounts created by
-  the verification scripts — harmless, not cleaned up. **Needs verification** whether the
-  user wants these purged before further manual testing.
+**Working (verified, but uncommitted):**
+- Backend: **182/182 unit tests + 337/338 integration tests** passing. The 1 apparent integration failure is the pre-existing `DeliveryReceiptConcurrencyTests.Two_concurrent_mark_delivered_calls_on_the_same_delivery_only_one_succeeds` flake (a genuine concurrency-race test sensitive to full-suite load, unrelated to this change, untouched code path) — confirmed passing in isolation.
+- Frontend: `tsc -b` and `npm run build` both zero-error.
+- Both dev servers restarted and confirmed live: API at `http://localhost:5170` (401 on a protected route = up), frontend at `http://localhost:5173` (200 = up).
+- The fix was verified via 4 new/rewritten integration tests exercising the full denied→approved-with-manager-credentials and direct-grant-no-approval-needed flows for both Delivery and Pickup. No separate manual browser click-through was done for this specific fix (the API-level integration tests already cover the exact scenario end-to-end, and the fix is UI-thin — the modal changes are a near-verbatim copy of `VoidSaleModal.tsx`'s already-proven pattern).
+
+**Git state — this is the important part for a fresh session:**
+- `git status` on `master` shows **30 files changed, 2 new files** (`FulfillmentCancelAuthorizationResolver.cs` and the 2 migration files), all uncommitted.
+- This was done directly on `master`'s working tree, NOT on a feature branch — unlike every prior body of work in this project's history.
+- **Needs verification:** whether the user has since asked for (or the assistant has made) a commit. If `git status` still shows this many uncommitted changes when a new session starts, the fix described above is what's sitting there uncommitted.
+
+**Nothing currently known to be broken.**
 
 ## Known Issues / Bugs
 
-None outstanding that were left unresolved — every scenario the phase's spec asked for was
-implemented and verified (either via the API/browser walkthrough or an integration test).
-Two soft notes carried into the final report as deliberate, not bugs:
-
-- Force-close is intentionally Owner/Admin only, not exposed to Manager — confirmed
-  behavior, not a gap.
-- The concurrent double-open register race and the Manager-hides-force-close-button UI path
-  were verified via integration tests / API status codes rather than a live two-browser
-  session — noted explicitly in the final report as "not run in a live browser session".
-
-No screenshots are attached to this handover; the verification screenshots
-(`p5-01`…`p5-10`, plus earlier `b*`/staff/POS screenshots) live only in this session's local
-scratchpad directory (not committed to the repo) and are not guaranteed to exist for the
-next session.
+- Same pre-existing flaky test as before (see above) — not a regression.
+- Carried-over, still-open, out-of-scope-for-this-fix items are listed in `C:\Users\Ace\Desktop\negosio-status.md`'s "#13 in detail" section (stale delivery-report columns, missing drill-down links, a few Reports sessions-view UX polish items). None of them relate to this session's fix.
 
 ## Important Decisions
 
-- **Branch code is immutable after creation** — chosen over editable because it seeds the
-  (frozen, one-time) tenant-DB-name suffix and reserved future PO/transfer number prefixes;
-  name/address remain editable.
-- **Branch-scoped role set is fixed:** `Manager, Cashier, InventoryStaff, KitchenStaff,
-  Viewer`. `Owner, Admin` are the only all-branch roles. This mirrors backend
-  (`BranchRoles.cs`) and frontend (`lib/roles.ts`) — keep them in sync if ever revisited.
-  Do not invent additional all-branch or branch-scoped roles.
-- **Branch is enforced everywhere, not just POS** — inventory, movements, registers,
-  catalog, checkout, sales, sale detail/receipt, returns, dashboard all go through the same
-  `BranchAccessResolver`. Do not bypass it with ad-hoc branch checks in a new feature.
-- **No operate-through-another's-session override** — only force-close (Owner/Admin) exists.
-  An explicit "manager can operate a subordinate's session" feature was considered and
-  rejected for this phase; do not add it without a fresh design discussion.
-- **JWT does not carry branch** — branch is resolved fresh from the tenant DB on every
-  request (`BranchAccessResolver`, `BranchAccessMiddleware`). This is why a branch
-  reassignment or a branch deactivation take effect immediately without forcing re-login (a
-  role change still needs re-login, since role *is* in the JWT — that's an older, separate
-  decision from Phase 4, left unchanged).
-- **Transaction number format was changed mid-phase** from 8 digits to 7 digits
-  (`0000001`) by explicit user instruction after the numbering architecture already
-  shipped. The architecture (atomic per-branch counter, shared sale/return sequence, never
-  `COUNT(*)+1`) was **not** re-litigated — only the `D8`→`D7` format string and the
-  now-per-branch unique index.
-- **Do not weaken tests/lint/TypeScript/authorization to make things pass** — repeated
-  instruction throughout the phase; every fix in this session was a real fix, never a
-  weakened assertion.
+- **Authorization-resolve ordering mirrors `VoidSaleService.VoidAsync` exactly:** eligibility checks (branch guard, method match, Pending status, has-a-sale-id) run first and fast-fail before the authorization resolver is even consulted; the resolver runs before the transaction opens. Don't reorder this without re-checking why Void does it this way (avoids resolving/verifying manager credentials for a request that was going to fail anyway).
+- **`ApprovedByUserId` was added as a real persisted column**, not just an in-memory check, because every other grant-or-approval action in this codebase (`Sale.ApprovedByUserId`, `SaleReturn.ApprovedByUserId`, `CashDrawerOpenEvent.ApprovedByUserId`) persists it — 3/3 precedent, so this was treated as the established convention rather than a judgment call.
+- **The void cascade never consults the new resolver.** `CancelActiveScheduleForVoidedSaleAsync` always passes `approvedByUserId: null` — voiding a sale is already authorized by `VoidAuthorizationResolver` one layer up, and re-checking fulfillment-cancel authorization on top would be double-gating the same action. A throwing stub in the concurrency test file enforces this invariant.
+- **`FulfillmentCancel` authorization policy was broadened from Manager+ to every POS role** (`PosRoles`), with the real Cashier-vs-Manager split now enforced entirely by the new resolver — this is the same pattern `SalesView`/`RefundManage` already use, not a new pattern invented for this fix.
+- **No new "cancel fulfillment" report/attribution field was added to Reports** (e.g., to `CashierPerformanceRowDto`'s existing `VoidApprovalsCount`/`ReturnApprovalsCount` pattern). The user's request was scoped to fixing the permission gap itself; extending Reports Phase C's approval-attribution to also cover fulfillment-cancel approvals was not asked for and would be a reasonable follow-up, not something silently skipped by oversight.
 
 ## Files to Review
 
-Start with these, in order:
-
-1. `handover.md` (this file, repo root).
-2. `docs/phase-5-status.md` — the full 9-section final report (architecture, backend,
-   frontend, correctness matrix, security, tests, browser verification, git state,
-   remaining limitations).
-3. `docs/superpowers/specs/2026-09-01-branch-management-design.md` — the approved design.
-4. `docs/superpowers/plans/2026-09-01-branch-management.md` — the 12-task implementation
-   plan that was executed (plus its "Addendum — locked changes" section for the mid-phase
-   D7/cashier-lockout changes).
-5. `src/Negosio.Application/Branches/BranchAccessResolver.cs` — the enforcement core; any
-   new branch-aware feature should call through this.
-6. `src/Negosio.Application/Branches/BranchRoles.cs` and
-   `web/negosio-web/src/lib/roles.ts` — the role↔branch-scope mapping (keep in sync).
-7. `src/Negosio.Api/Middleware/BranchAccessMiddleware.cs` and
-   `src/Negosio.Application/Auth/AuthService.cs` — the branch-active authentication gate.
-8. `web/negosio-web/src/pages/PosPage.tsx` — the branch/register resolution flow, if
-   touching POS again.
+- `src/Negosio.Application/Delivery/FulfillmentCancelAuthorizationResolver.cs` — the new resolver (read this first — it's the whole fix in miniature).
+- `src/Negosio.Application/Delivery/DeliveryReceiptService.cs` — `CancelWithDispositionAsync`/`CancelWithDispositionCoreAsync` for how it's wired in.
+- `src/Negosio.Domain/Entities/Delivery/DeliveryReceipt.cs` — the `Cancel(...)` signature change and `ApprovedByUserId`.
+- `web/negosio-web/src/components/sales/CancelFulfillmentModal.tsx` — the approval UI.
+- `tests/Negosio.IntegrationTests/Delivery/DeliveryReceiptStatusTests.cs` and `PickupTests.cs` — the end-to-end proof the fix works.
+- `C:\Users\Ace\Desktop\negosio-status.md` — full project history across all phases; this handover only covers this session's fix in depth.
 
 ## Next Steps
 
-1. **Ask the user what to build next** — do not start a new phase automatically. Phase 5's
-   own final report suggested candidates: Void/refund-without-return, Reporting v1 (X/Z,
-   sales by day/branch/cashier), Purchasing & supplier receiving (the
-   `DocumentNumberCounter` table already reserves a `PurchaseOrder` type), stock transfers
-   between branches, or the F&B vertical (tables, KDS, `KitchenStaff` becomes real).
-2. If the user wants to keep testing Phase 5 manually first: decide whether to purge the
-   disposable `Verify A/B` branches and `ca.*@ex.com`/`mgr.*@ex.com` test accounts from the
-   dev tenant DB, or leave them (harmless either way).
-3. For whatever comes next: if it's a new feature area, run it through
-   `superpowers:brainstorming` before writing code (per this repo's established workflow —
-   see the skill listing), work on a fresh feature branch off `master`, and do not merge
-   without the user's explicit go-ahead (this session's merge was explicitly requested by
-   the user in their final message — that approval does not carry forward to future work).
-4. Before any `dotnet build`/`dotnet test`, kill stale `Negosio.Api`/`vite` processes first
-   (repo convention — LocalDB file locks otherwise).
+1. **Ask the user whether to commit this fix.** It is fully verified but was never committed — per this project's standing rule ("only commit when explicitly asked"), a fresh session should not assume it's safe to commit without checking in first, even though the work is done.
+2. Once committed (or if already committed by the time a new session reads this — check `git log`/`git status` first), decide whether to push `master` to `origin/master` along with the other unpushed work from `8039d44` — this is a user decision.
+3. Consider whether to extend Reports Phase C's `VoidApprovalsCount`/`ReturnApprovalsCount` pattern to also track fulfillment-cancel approvals now that they're persisted (`ApprovedByUserId` on `DeliveryReceipt`) — flagged above as a reasonable follow-up, not committed to.
+4. The other known limitations tracked in `negosio-status.md` (stale delivery-report columns, drill-down links, sessions-view UX polish) remain open and unrelated to this fix.
 
 ## Prompt for Next Claude Session
 
 ```
-You are continuing work on Negosio — a multi-tenant .NET 9 / EF Core / SQL Server + React 19
-SaaS platform (modular monolith, database-per-tenant) for retail & F&B. Read handover.md
-(repo root) first, then docs/phase-5-status.md for full detail if needed.
+I'm continuing work on Negosio, a multi-tenant retail POS platform (.NET 9 / EF Core 9 / SQL Server backend, React 19 / TypeScript / Vite frontend). Read C:\Users\Ace\Documents\Negosio\handover.md for full context on the most recent fix (Cashiers previously couldn't cancel a delivery/pickup schedule at all — fixed by adding the same grant-or-approval pattern Void/Return/Discount/CashDrawer already use). That fix is verified (backend + frontend tests green, both dev servers confirmed live) but was left UNCOMMITTED on master's working tree — check `git status` first before assuming anything about commit state.
 
-STATE (2026-09-01):
-  - Phase 5 (Branch Management & Branch-Scoped Access) is COMPLETE and MERGED to master
-    (merge commit 621aa8e, pushed to origin/master). feature/branch-management still exists
-    locally (not deleted) but master is now ahead-equivalent — work from master.
-  - Verified on master: dotnet build 0/0, dotnet test Negosio.sln = 88 unit + 162
-    integration (0 failed), npm run lint clean, npm run build clean.
-  - Every non-Owner/Admin role is now bound to exactly one branch (User.BranchId); every
-    branch-aware endpoint goes through BranchAccessResolver; branch-scoped users are locked
-    out immediately (login + per-request) when their branch is deactivated; POS register
-    sessions are ownership-enforced with Owner/Admin-only force-close; Sale/Return numbers
-    are 7 digits (0000001), one shared per-branch sequence.
+Before doing anything else:
+1. Run `git status` and `git log -3` to see whether the fulfillment-cancel fix described in the handover has since been committed.
+2. Check whether the API (localhost:5170) and frontend dev server (localhost:5173) are still running; restart them if not (commands are in the handover's Current State section notes and Desktop status file).
+3. Read C:\Users\Ace\Desktop\negosio-status.md for the full project history/status across all phases.
+4. Do not push to origin/master, merge, or commit anything without asking me first — that's an explicit standing rule on this project.
 
-DO NOW:
-  1. Ask the user what to build next — do NOT start a new phase automatically. Candidates
-     from the Phase 5 report: Void, Reporting v1, Purchasing & receiving, stock transfers,
-     F&B vertical.
-  2. For any new feature: use superpowers:brainstorming first, work on a fresh feature
-     branch off master, and do not merge without the user's explicit go-ahead in that
-     conversation (do not assume a prior merge approval carries forward).
-
-GUARDRAILS — do not undo:
-  - Branch-scoped roles are fixed: Manager, Cashier, InventoryStaff, KitchenStaff, Viewer.
-    All-branch: Owner, Admin only. Don't invent new categories without a design discussion.
-  - Every branch-aware read/write must go through BranchAccessResolver
-    (src/Negosio.Application/Branches/BranchAccessResolver.cs) — don't hand-roll new
-    branch-filtering logic.
-  - Branch code is immutable after creation; only name/address are editable.
-  - JWT does not carry branch (resolved fresh per request) — role changes still require
-    re-login (Phase 4 decision, unchanged); branch changes/deactivations do not.
-  - Force-close is Owner/Admin only, never Manager, even though Manager has RegisterManage.
-  - Sale/Return numbers are exactly 7 digits (0000001) — do not change the format again
-    without an explicit new instruction.
-  - No "Co-Authored-By: Claude" / "Generated with Claude Code" trailer on commits.
-  - Run the API: ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Negosio.Api
-    --launch-profile http
-  - Kill any stale Negosio.Api / vite process before building or running dotnet test.
-
-If something is uncertain, verify against the repo — it is the source of truth. Do not
-assume dev-data (e.g. the "Verify A/B" branches or test cashier accounts left in the
-Inv UI Test tenant) is meaningful; it is disposable verification residue unless the user
-says otherwise.
+Then [describe what you want done next].
 ```

@@ -106,6 +106,7 @@ public sealed class StaffController : ControllerBase
             [UserPermission.SalesReturn] = request.SalesReturn,
             [UserPermission.DiscountApply] = request.DiscountApply,
             [UserPermission.CashDrawerOpen] = request.CashDrawerOpen,
+            [UserPermission.FulfillmentCancel] = request.FulfillmentCancel,
         };
         return Ok(await _permissions.SetAsync(id, grants, cancellationToken));
     }

@@ -32,6 +32,16 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
         public bool IsAuthenticated => true;
     }
 
+    /// <summary>The void cascade (<see cref="IDeliveryReceiptService.CancelActiveScheduleForVoidedSaleAsync"/>)
+    /// always passes <c>approvedByUserId: null</c> straight through and never consults this resolver —
+    /// it's already authorized by <c>VoidAuthorizationResolver</c> one layer up. Throwing here would
+    /// catch it immediately if that ever changed.</summary>
+    private sealed class UnusedFulfillmentCancelAuthorizationResolver : IFulfillmentCancelAuthorizationResolver
+    {
+        public Task<Guid?> ResolveAsync(Guid branchId, Application.Sales.VoidSaleApprovalInput? approval, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The void cascade must never consult the fulfillment-cancel authorization resolver.");
+    }
+
     /// <summary>
     /// Invokes <see cref="IDeliveryReceiptService.CancelActiveScheduleForVoidedSaleAsync"/> directly
     /// against the tenant database, standing in for Task 3's <c>VoidSaleService</c> caller (not yet
@@ -52,7 +62,8 @@ public class DeliveryReceiptConcurrencyTests : IntegrationTest
                 new CancelPickupRequestValidator(),
                 new BranchAccessResolver(db, currentUser),
                 new ReceiptSettingsResolver(db, currentUser),
-                TimeProvider.System);
+                TimeProvider.System,
+                new UnusedFulfillmentCancelAuthorizationResolver());
 
             await using var transaction = await db.Database.BeginTransactionAsync();
             await service.CancelActiveScheduleForVoidedSaleAsync(saleId, voidReason, transaction);

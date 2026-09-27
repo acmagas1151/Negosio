@@ -101,7 +101,8 @@ public sealed class StaffService : IStaffService
                 SalesVoid: isCashier && (granted?.Contains(UserPermission.SalesVoid) ?? false),
                 SalesReturn: isCashier && (granted?.Contains(UserPermission.SalesReturn) ?? false),
                 DiscountApply: isCashier && (granted?.Contains(UserPermission.DiscountApply) ?? false),
-                CashDrawerOpen: isCashier && (granted?.Contains(UserPermission.CashDrawerOpen) ?? false));
+                CashDrawerOpen: isCashier && (granted?.Contains(UserPermission.CashDrawerOpen) ?? false),
+                FulfillmentCancel: isCashier && (granted?.Contains(UserPermission.FulfillmentCancel) ?? false));
         });
 
         var now = UtcNow;
@@ -116,7 +117,7 @@ public sealed class StaffService : IStaffService
             InvitedByName: names.GetValueOrDefault(i.InvitedByUserId),
             BranchId: i.BranchId,
             BranchName: i.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null,
-            SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false));
+            SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false, FulfillmentCancel: false));
 
         var assigned = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
         if (assigned is { } branchId)
@@ -542,7 +543,8 @@ public sealed class StaffService : IStaffService
             SalesVoid: granted.Contains(UserPermission.SalesVoid),
             SalesReturn: granted.Contains(UserPermission.SalesReturn),
             DiscountApply: granted.Contains(UserPermission.DiscountApply),
-            CashDrawerOpen: granted.Contains(UserPermission.CashDrawerOpen));
+            CashDrawerOpen: granted.Contains(UserPermission.CashDrawerOpen),
+            FulfillmentCancel: granted.Contains(UserPermission.FulfillmentCancel));
     }
 
     /// <summary>Branch-scoped role → an active branch id is required; Owner/Admin → must be null.</summary>

@@ -121,6 +121,7 @@ function ScheduleRow({
           {schedule.cancellationDisposition
             ? CANCELLATION_DISPOSITION_LABELS[schedule.cancellationDisposition]
             : '—'}
+          {schedule.approvedByName && <> · Approved by {schedule.approvedByName}</>}
         </p>
       )}
     </div>
@@ -133,11 +134,11 @@ export default function SaleDetailPage() {
   const qc = useQueryClient()
   const canRefund = useCan('sales:return')
   const canVoidCapability = useCan('sales:void')
-  // Mirrors AuthorizationPolicies.FulfillmentCancel (Owner/Admin/Manager) on the backend. The
-  // capability key itself is still named 'delivery:cancel' in useCan.ts — it predates the backend's
-  // DeliveryCancel -> FulfillmentCancel rename and covers the same role set for both Delivery and
-  // Pickup cancellation. Renaming the key is out of scope here (useCan.ts isn't touched in this
-  // change); flagged for whoever next edits useCan.ts.
+  // Mirrors DeliveryReceiptsController's class-level SalesView policy (every POS role may attempt
+  // this) — the Cashier direct-grant-vs-approval split is resolved server-side by
+  // FulfillmentCancelAuthorizationResolver, same as sales:void/sales:return above. The capability key
+  // itself is still named 'delivery:cancel' in useCan.ts, predating the backend's
+  // DeliveryCancel -> FulfillmentCancel rename.
   const canCancelFulfillment = useCan('delivery:cancel')
   const [returnOpen, setReturnOpen] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)

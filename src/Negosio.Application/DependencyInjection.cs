@@ -59,6 +59,7 @@ public static class DependencyInjection
         services.AddScoped<ITenantSettingsService, TenantSettingsService>();
 
         // Delivery receipts
+        services.AddScoped<Delivery.IFulfillmentCancelAuthorizationResolver, Delivery.FulfillmentCancelAuthorizationResolver>();
         services.AddScoped<Delivery.IDeliveryReceiptService, Delivery.DeliveryReceiptService>();
 
         // Receipt settings

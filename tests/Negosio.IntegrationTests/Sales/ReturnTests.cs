@@ -253,7 +253,7 @@ public class ReturnTests : IntegrationTest
 
         (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions")
         {
-            Content = JsonContent.Create(new ChangeStaffPermissionsRequest(SalesVoid: false, SalesReturn: true, DiscountApply: false, CashDrawerOpen: false)),
+            Content = JsonContent.Create(new ChangeStaffPermissionsRequest(SalesVoid: false, SalesReturn: true, DiscountApply: false, CashDrawerOpen: false, FulfillmentCancel: false)),
         })).StatusCode.Should().Be(HttpStatusCode.OK);
 
         Authorize(cashierToken);
@@ -274,11 +274,11 @@ public class ReturnTests : IntegrationTest
         var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, scene.BranchId);
         var cashierId = await GetUserIdFromTokenAsync(cashierToken);
 
-        var grantRequest = new ChangeStaffPermissionsRequest(SalesVoid: false, SalesReturn: true, DiscountApply: false, CashDrawerOpen: false);
+        var grantRequest = new ChangeStaffPermissionsRequest(SalesVoid: false, SalesReturn: true, DiscountApply: false, CashDrawerOpen: false, FulfillmentCancel: false);
         (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions") { Content = JsonContent.Create(grantRequest) }))
             .StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var revokeRequest = new ChangeStaffPermissionsRequest(SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false);
+        var revokeRequest = new ChangeStaffPermissionsRequest(SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false, FulfillmentCancel: false);
         (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions") { Content = JsonContent.Create(revokeRequest) }))
             .StatusCode.Should().Be(HttpStatusCode.OK);
 

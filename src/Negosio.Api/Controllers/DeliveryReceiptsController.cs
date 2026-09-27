@@ -30,8 +30,9 @@ public sealed class DeliveryReceiptsController : ControllerBase
     public async Task<ActionResult<FulfillmentScheduleDto>> MarkClaimed(Guid id, CancellationToken ct)
         => Ok(await _deliveryReceipts.MarkClaimedAsync(id, ct));
 
-    // Narrower than the class-level SalesView — Owner/Admin/Manager only (see the plan's Global
-    // Constraints / recommended authorization levels).
+    // Same effective role set as the class-level SalesView (every POS role may attempt this) —
+    // FulfillmentCancelAuthorizationResolver (service-enforced) requires Owner/Admin/Manager, a
+    // direct grant, or Manager/Admin/Owner approval for a Cashier.
     [HttpPost("{id:guid}/cancel")]
     [Authorize(Policy = AuthorizationPolicies.FulfillmentCancel)]
     [ProducesResponseType(typeof(CancellationResultDto), StatusCodes.Status200OK)]
@@ -53,7 +54,7 @@ public sealed class DeliveryReceiptsController : ControllerBase
         return Created($"/api/delivery-receipts/{created.Id}", created);
     }
 
-    // Narrower than the class-level SalesView — same policy as the delivery-side Cancel above.
+    // Same policy as the delivery-side Cancel above.
     [HttpPost("~/api/pickups/{id:guid}/cancel")]
     [Authorize(Policy = AuthorizationPolicies.FulfillmentCancel)]
     [ProducesResponseType(typeof(CancellationResultDto), StatusCodes.Status200OK)]

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '../../api/client'
 import { fulfillmentApi } from '../../api/fulfillment'
@@ -84,6 +84,17 @@ export function CancelFulfillmentModal({ open, onClose, saleId, schedule }: Prop
   const [notes, setNotes] = useState(schedule.notes ?? '')
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [error, setError] = useState('')
+  const [needsApproval, setNeedsApproval] = useState(false)
+  const [approverEmail, setApproverEmail] = useState('')
+  const [approverPassword, setApproverPassword] = useState('')
+
+  useEffect(() => {
+    if (!open) return
+    // oxlint-disable-next-line set-state-in-effect
+    setNeedsApproval(false)
+    setApproverEmail('')
+    setApproverPassword('')
+  }, [open])
 
   const isCustomerPickedUp = disposition === 'CustomerPickedUpInstead'
   const scheduleLabel = `${FULFILLMENT_METHOD_LABELS[schedule.method]} ${schedule.sequenceNumber}`
@@ -103,6 +114,7 @@ export function CancelFulfillmentModal({ open, onClose, saleId, schedule }: Prop
   const mutation = useMutation({
     mutationFn: (): Promise<CancellationResultDto> => {
       const trimmedReason = reason.trim()
+      const approval = needsApproval ? { approverEmail, approverPassword } : undefined
       if (isDelivery) {
         const replacementFields = {
           scheduledDate,
@@ -122,6 +134,7 @@ export function CancelFulfillmentModal({ open, onClose, saleId, schedule }: Prop
           // reschedule, which needs an address the Pickup-shaped `replacement` field has no room for.
           rescheduledDelivery:
             disposition === 'DeliverLater' ? { ...replacementFields, deliveryAddress: deliveryAddress.trim() } : null,
+          approval,
         }
         return fulfillmentApi.cancelDelivery(schedule.id, body)
       }
@@ -139,6 +152,7 @@ export function CancelFulfillmentModal({ open, onClose, saleId, schedule }: Prop
           disposition === 'ConvertToDelivery' ? { ...replacementFields, deliveryAddress: deliveryAddress.trim() } : null,
         // Pickup-shaped `rescheduledPickup` (Task 3B) — only for PickupLater's same-method reschedule.
         rescheduledPickup: disposition === 'PickupLater' ? replacementFields : null,
+        approval,
       }
       return fulfillmentApi.cancelPickup(schedule.id, body)
     },
@@ -175,6 +189,20 @@ export function CancelFulfillmentModal({ open, onClose, saleId, schedule }: Prop
         setFieldErrors(next)
         return
       }
+      if (err instanceof ApiError && err.code === 'FULFILLMENT_CANCEL_APPROVAL_REQUIRED') {
+        // First submit from a Cashier without the grant: reveal the approval fields, keep everything else.
+        setNeedsApproval(true)
+        setError('')
+        return
+      }
+      if (err instanceof ApiError && err.code === 'INVALID_APPROVER_CREDENTIALS') {
+        setError('Invalid manager credentials.')
+        return
+      }
+      if (err instanceof ApiError && err.code === 'VOID_APPROVER_WRONG_BRANCH') {
+        setError('This manager cannot approve cancellations for this branch.')
+        return
+      }
       if (err instanceof ApiError && err.code === 'DELIVERY_RECEIPT_CONCURRENCY_CONFLICT') {
         setError('This record was changed by someone else. Close this dialog and try again.')
         return
@@ -204,6 +232,10 @@ export function CancelFulfillmentModal({ open, onClose, saleId, schedule }: Prop
       setFieldErrors(next)
       return
     }
+    if (needsApproval && (!approverEmail.trim() || !approverPassword)) {
+      setError('Manager account and password are required.')
+      return
+    }
     mutation.mutate()
   }
 
@@ -222,15 +254,42 @@ export function CancelFulfillmentModal({ open, onClose, saleId, schedule }: Prop
             variant="destructive"
             onClick={submit}
             loading={mutation.isPending}
-            disabled={!reason.trim()}
+            disabled={!reason.trim() || (needsApproval && (!approverEmail.trim() || !approverPassword))}
           >
-            Confirm
+            {needsApproval ? 'Approve & confirm' : 'Confirm'}
           </Button>
         </>
       }
     >
       <form onSubmit={submit} className="max-h-[62vh] space-y-4 overflow-y-auto pr-1">
         {error && <Callout tone="error">{error}</Callout>}
+
+        {needsApproval && (
+          <Callout tone="info">
+            Manager approval required. You don&rsquo;t have permission to cancel this schedule — an
+            authorized Manager, Admin, or Owner must approve this cancellation.
+          </Callout>
+        )}
+
+        {needsApproval && (
+          <>
+            <TextField
+              label="Manager account"
+              name="approverEmail"
+              type="email"
+              value={approverEmail}
+              onChange={(e) => setApproverEmail(e.target.value)}
+              autoFocus
+            />
+            <TextField
+              label="Password"
+              name="approverPassword"
+              type="password"
+              value={approverPassword}
+              onChange={(e) => setApproverPassword(e.target.value)}
+            />
+          </>
+        )}
 
         <Select
           label="What happens to these items?"

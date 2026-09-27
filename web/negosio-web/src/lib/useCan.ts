@@ -61,8 +61,10 @@ const CAPABILITY_ROLES: Record<Capability, ReadonlySet<UserRole>> = {
   'reports:view': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
   // Mirrors AuthorizationPolicies.ReceiptSettingsManage — Owner/Admin/Manager.
   'receipt:settings': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
-  // Mirrors AuthorizationPolicies.DeliveryCancel — Owner/Admin/Manager only.
-  'delivery:cancel': new Set<UserRole>(['Owner', 'Admin', 'Manager']),
+  // Mirrors DeliveryReceiptsController's class-level SalesView policy (Owner/Admin/Manager/Cashier) —
+  // the Cashier direct-grant-vs-approval split is resolved server-side by
+  // FulfillmentCancelAuthorizationResolver, not by this capability.
+  'delivery:cancel': new Set<UserRole>(['Owner', 'Admin', 'Manager', 'Cashier']),
 }
 
 /**

@@ -760,6 +760,9 @@ export interface FulfillmentScheduleDto {
   cancelledByName: string | null
   cancellationReason: string | null
   cancellationDisposition: CancellationDisposition | null
+  /** The Manager/Admin/Owner who approved a Cashier's cancellation — null when the canceller acted
+   * directly (a privileged role, a Cashier with the grant, or the void cascade). */
+  approvedByName: string | null
   items: FulfillmentItemDto[]
   /** Read from the Sale; always 0 for a pickup. Never stored on the schedule. */
   deliveryCharge: number
@@ -813,6 +816,8 @@ export interface CancelDeliveryRequest {
   /** Required for DeliverLater — the new Delivery to create, replacing the cancelled one. Null for
    * every other disposition. */
   rescheduledDelivery?: DeliveryReplacementInput | null
+  /** Supplied only on a retry after the server returns FULFILLMENT_CANCEL_APPROVAL_REQUIRED. */
+  approval?: VoidSaleApprovalInput
 }
 
 export interface CancelPickupRequest {
@@ -823,6 +828,8 @@ export interface CancelPickupRequest {
   /** Required for PickupLater — the new Pickup to create, replacing the cancelled one. Null for
    * every other disposition. */
   rescheduledPickup?: PickupReplacementInput | null
+  /** Supplied only on a retry after the server returns FULFILLMENT_CANCEL_APPROVAL_REQUIRED. */
+  approval?: VoidSaleApprovalInput
 }
 
 export interface CancellationResultDto {
@@ -973,6 +980,7 @@ export interface StaffMemberDto {
   salesReturn: boolean
   discountApply: boolean
   cashDrawerOpen: boolean
+  fulfillmentCancel: boolean
 }
 
 /** One flag per grantable permission — always sent together, so "Save changes" in the permissions
@@ -982,6 +990,7 @@ export interface ChangeStaffPermissionsRequest {
   salesReturn: boolean
   discountApply: boolean
   cashDrawerOpen: boolean
+  fulfillmentCancel: boolean
 }
 
 export interface InviteStaffRequest {

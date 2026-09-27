@@ -101,8 +101,9 @@ public class TenantMigrationTests : IntegrationTest
 
         await using (var db = await factory.CreateAsync(tenantId))
         {
-            // Confirms the rollback actually took the two Pickup-plan migrations back out.
-            (await db.Database.GetPendingMigrationsAsync()).Should().HaveCount(2);
+            // Confirms the rollback actually took the two Pickup-plan migrations and the later
+            // FulfillmentCancel-approver migration back out.
+            (await db.Database.GetPendingMigrationsAsync()).Should().HaveCount(3);
 
             await db.Database.MigrateAsync(); // forward again to latest — what a real deploy does
             (await db.Database.GetPendingMigrationsAsync()).Should().BeEmpty();

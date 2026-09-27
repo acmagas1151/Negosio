@@ -104,6 +104,12 @@ public class DeliveryReceipt : Entity
 
     public string? CancellationReason { get; private set; }
 
+    /// <summary>Set only when the canceller needed Manager/Admin/Owner approval to cancel this
+    /// schedule (a Cashier without the FulfillmentCancel grant) — null when Owner/Admin/Manager acted
+    /// directly, or a Cashier held the grant, or the void cascade cancelled it. Same shape as
+    /// <see cref="Sale.ApprovedByUserId"/>/<see cref="SaleReturn.ApprovedByUserId"/>.</summary>
+    public Guid? ApprovedByUserId { get; private set; }
+
     /// <summary>Where this row's quantities went when it was cancelled. Null unless
     /// <see cref="Status"/> is Cancelled.</summary>
     public CancellationDisposition? CancellationDisposition { get; private set; }
@@ -276,7 +282,8 @@ public class DeliveryReceipt : Entity
     /// <para><paramref name="disposition"/> must be valid for this row's <see cref="Method"/>; take-now
     /// is never a valid disposition.</para>
     /// </summary>
-    public void Cancel(Guid cancelledByUserId, string reason, CancellationDisposition disposition, DateTime cancelledAtUtc)
+    public void Cancel(
+        Guid cancelledByUserId, string reason, CancellationDisposition disposition, Guid? approvedByUserId, DateTime cancelledAtUtc)
     {
         if (Status != FulfillmentStatus.Pending)
         {
@@ -313,6 +320,7 @@ public class DeliveryReceipt : Entity
         CancelledByUserId = cancelledByUserId;
         CancellationReason = trimmedReason;
         CancellationDisposition = disposition;
+        ApprovedByUserId = approvedByUserId;
         Touch();
     }
 }

@@ -242,7 +242,7 @@ public class CheckoutTests : IntegrationTest
         (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions")
         {
             Content = JsonContent.Create(new Negosio.Application.Staff.ChangeStaffPermissionsRequest(
-                SalesVoid: false, SalesReturn: false, DiscountApply: true, CashDrawerOpen: false)),
+                SalesVoid: false, SalesReturn: false, DiscountApply: true, CashDrawerOpen: false, FulfillmentCancel: false)),
         })).StatusCode.Should().Be(HttpStatusCode.OK);
 
         Authorize(cashierToken);

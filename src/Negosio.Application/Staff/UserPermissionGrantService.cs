@@ -106,6 +106,7 @@ public sealed class UserPermissionGrantService : IUserPermissionGrantService
             SalesVoid: grants.GetValueOrDefault(UserPermission.SalesVoid),
             SalesReturn: grants.GetValueOrDefault(UserPermission.SalesReturn),
             DiscountApply: grants.GetValueOrDefault(UserPermission.DiscountApply),
-            CashDrawerOpen: grants.GetValueOrDefault(UserPermission.CashDrawerOpen));
+            CashDrawerOpen: grants.GetValueOrDefault(UserPermission.CashDrawerOpen),
+            FulfillmentCancel: grants.GetValueOrDefault(UserPermission.FulfillmentCancel));
     }
 }

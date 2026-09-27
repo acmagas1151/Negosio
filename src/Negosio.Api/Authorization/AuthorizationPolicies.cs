@@ -66,9 +66,11 @@ public static class AuthorizationPolicies
     /// Manager only their own branch (service-enforced via IBranchAccessResolver).</summary>
     public const string ReceiptSettingsManage = "ReceiptSettingsManage";
 
-    /// <summary>Cancel or convert a Pending delivery or pickup — Owner/Admin/Manager only (spec: "Owner,
-    /// Admin, Manager, or equivalent"). View/Create/MarkDelivered/MarkClaimed stay on the broader
-    /// SalesView (PosRoles) policy — only cancellation/conversion gets its own gate.</summary>
+    /// <summary>Cancel or convert a Pending delivery or pickup — every POS role may attempt one;
+    /// FulfillmentCancelAuthorizationResolver (service-enforced) then requires Owner/Admin/Manager, a
+    /// direct FulfillmentCancel grant, or approval, matching the RefundManage/SalesVoid precedent.
+    /// View/Create/MarkDelivered/MarkClaimed stay on the broader SalesView (PosRoles) policy — only
+    /// cancellation/conversion ever needed its own gate.</summary>
     public const string FulfillmentCancel = "FulfillmentCancel";
 
     private static readonly UserRole[] OwnerAdmin = [UserRole.Owner, UserRole.Admin];
@@ -136,7 +138,7 @@ public static class AuthorizationPolicies
 
         options.AddPolicy(FulfillmentCancel, policy =>
             policy.RequireAuthenticatedUser()
-                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(ManagementRoles)));
+                  .RequireClaim(JwtTokenGenerator.RoleClaimType, RoleNames(PosRoles)));
 
         options.AddPolicy(BranchManage, policy =>
             policy.RequireAuthenticatedUser()

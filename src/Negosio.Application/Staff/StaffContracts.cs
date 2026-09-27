@@ -39,7 +39,8 @@ public sealed record StaffMemberDto(
     bool SalesVoid,
     bool SalesReturn,
     bool DiscountApply,
-    bool CashDrawerOpen);
+    bool CashDrawerOpen,
+    bool FulfillmentCancel);
 
 /// <summary>Branch is required for a branch-scoped role, and must be absent for Owner/Admin.</summary>
 public sealed record InviteStaffRequest(string Email, string Role, string? BranchId = null);
@@ -55,7 +56,8 @@ public sealed record ChangeStaffBranchRequest(string BranchId);
 /// self-documenting. Extend this record (and <see cref="IUserPermissionGrantService.SetAsync"/>'s
 /// caller in StaffController) when a new permission is added; the write path itself needs no change.
 /// </summary>
-public sealed record ChangeStaffPermissionsRequest(bool SalesVoid, bool SalesReturn, bool DiscountApply, bool CashDrawerOpen);
+public sealed record ChangeStaffPermissionsRequest(
+    bool SalesVoid, bool SalesReturn, bool DiscountApply, bool CashDrawerOpen, bool FulfillmentCancel);
 
 /// <summary>
 /// Returned after creating / resending an invitation. <see cref="AcceptPath"/> is populated in

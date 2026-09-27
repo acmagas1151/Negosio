@@ -41,6 +41,7 @@ public sealed class DeliveryReceiptConfiguration : IEntityTypeConfiguration<Deli
         b.Property(x => x.CancelledByUserId);
         b.Property(x => x.CancellationReason).HasMaxLength(500);
         b.Property(x => x.CancellationDisposition).HasConversion<int>();
+        b.Property(x => x.ApprovedByUserId);
         b.Property(x => x.BatchRequestId);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.Property(x => x.CreatedAtUtc).IsRequired();

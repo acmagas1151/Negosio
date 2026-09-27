@@ -1,8 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Negosio.Application.Common;
 using Negosio.Application.Delivery;
 using Negosio.Application.Pos;
+using Negosio.Application.Sales;
+using Negosio.Application.Staff;
 using Negosio.Domain.Enums;
 using Negosio.IntegrationTests.Infrastructure;
 using Xunit;
@@ -228,16 +231,50 @@ public class PickupTests : IntegrationTest
     }
 
     [Fact]
-    public async Task Cashier_cannot_cancel_a_pickup()
+    public async Task Cashier_without_grant_requires_approval_then_succeeds_with_valid_manager_credentials()
     {
         var scene = await ArrangeSaleAsync();
         var pickup = await CreatePickupAsync(scene);
-        Authorize(await AddTenantUserTokenAsync("pickup-cashier2@example.com", UserRole.Cashier, scene.BranchId));
+        var cashierToken = await AddTenantUserTokenAsync("pickup-cashier2@example.com", UserRole.Cashier, scene.BranchId);
+        await CreateManagerAsync("pickup-mgr@example.com", "Manager123!", scene.BranchId);
 
+        Authorize(cashierToken);
+        var replacement = new PickupReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "0917 111 2222", null);
+
+        var denied = await Client.PostAsJsonAsync($"/api/pickups/{pickup.Id}/cancel",
+            new CancelPickupRequest("Changed mind", CancellationDisposition.PickupLater, null, RescheduledPickup: replacement));
+        denied.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await denied.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be(ErrorCodes.FulfillmentCancelApprovalRequired);
+
+        var approved = await Client.PostAsJsonAsync($"/api/pickups/{pickup.Id}/cancel",
+            new CancelPickupRequest("Changed mind", CancellationDisposition.PickupLater, null, RescheduledPickup: replacement,
+                Approval: new VoidSaleApprovalInput("pickup-mgr@example.com", "Manager123!")));
+        approved.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = (await approved.Content.ReadFromJsonAsync<CancellationResultDto>(TestJson.Options))!;
+        result.Cancelled.ApprovedByName.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Cashier_with_a_direct_grant_cancels_a_pickup_without_any_approval()
+    {
+        var scene = await ArrangeSaleAsync();
+        var pickup = await CreatePickupAsync(scene);
+        var cashierToken = await AddTenantUserTokenAsync("pickup-cashier3@example.com", UserRole.Cashier, scene.BranchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+
+        (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions")
+        {
+            Content = JsonContent.Create(new ChangeStaffPermissionsRequest(
+                SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false, FulfillmentCancel: true)),
+        })).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Authorize(cashierToken);
         var response = await Client.PostAsJsonAsync($"/api/pickups/{pickup.Id}/cancel",
             new CancelPickupRequest("Changed mind", CancellationDisposition.PickupLater, null,
                 RescheduledPickup: new PickupReplacementInput(Today.AddDays(1), "Juan Dela Cruz", "0917 111 2222", null)));
 
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = (await response.Content.ReadFromJsonAsync<CancellationResultDto>(TestJson.Options))!;
+        result.Cancelled.ApprovedByName.Should().BeNull("the cashier acted on their own direct grant — no approval was used");
     }
 }

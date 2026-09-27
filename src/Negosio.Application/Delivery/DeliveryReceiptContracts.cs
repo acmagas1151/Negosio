@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore.Storage;
+using Negosio.Application.Sales;
 using Negosio.Domain.Enums;
 
 namespace Negosio.Application.Delivery;
@@ -41,7 +42,11 @@ public sealed record CancelDeliveryRequest(
     PickupReplacementInput? Replacement,
     /// <summary>Required for DeliverLater — the new Delivery to create, replacing the cancelled
     /// one. Must be null for every other disposition.</summary>
-    DeliveryReplacementInput? RescheduledDelivery = null);
+    DeliveryReplacementInput? RescheduledDelivery = null,
+    /// <summary>Supplied only on a retry after the server returns FULFILLMENT_CANCEL_APPROVAL_REQUIRED
+    /// — a Cashier without the FulfillmentCancel grant needs a verified Manager/Admin/Owner approval.
+    /// Null (the common case) for Owner/Admin/Manager or a Cashier holding the grant.</summary>
+    VoidSaleApprovalInput? Approval = null);
 
 /// <summary>
 /// Cancel a pending PICKUP. <see cref="Disposition"/> must be PickupLater or ConvertToDelivery.
@@ -56,7 +61,10 @@ public sealed record CancelPickupRequest(
     DeliveryReplacementInput? Replacement,
     /// <summary>Required for PickupLater — the new Pickup to create, replacing the cancelled one.
     /// Must be null for every other disposition.</summary>
-    PickupReplacementInput? RescheduledPickup = null);
+    PickupReplacementInput? RescheduledPickup = null,
+    /// <summary>Supplied only on a retry after the server returns FULFILLMENT_CANCEL_APPROVAL_REQUIRED.
+    /// Null (the common case) for Owner/Admin/Manager or a Cashier holding the grant.</summary>
+    VoidSaleApprovalInput? Approval = null);
 
 /// <summary>The pickup to create when a delivery is cancelled into one. For
 /// CustomerPickedUpInstead the date is the collection date (today or earlier is fine — it already
@@ -113,6 +121,9 @@ public sealed record FulfillmentScheduleDto(
     string? CancelledByName,
     string? CancellationReason,
     CancellationDisposition? CancellationDisposition,
+    /// <summary>The Manager/Admin/Owner who approved a Cashier's cancellation — null when the canceller
+    /// acted directly (a privileged role, a Cashier with the grant, or the void cascade).</summary>
+    string? ApprovedByName,
     IReadOnlyList<FulfillmentItemDto> Items,
     /// <summary>Read live from the linked Sale, never stored here. Always 0 for a pickup — a pickup
     /// never carries a delivery charge.</summary>

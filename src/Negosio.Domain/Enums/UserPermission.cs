@@ -11,4 +11,5 @@ public enum UserPermission
     CashDrawerOpen = 2,
     DiscountApply = 3,
     SalesReturn = 4,
+    FulfillmentCancel = 5,
 }
