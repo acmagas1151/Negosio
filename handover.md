@@ -1,6 +1,6 @@
 # Handover Summary
 
-_Generated: 2026-09-27 (updated same day — fulfillment-cancel authorization fix)_
+_Generated: 2026-09-27 (updated same day — fulfillment-cancel authorization fix, now committed)_
 
 ## Project Context
 
@@ -9,7 +9,7 @@ _Generated: 2026-09-27 (updated same day — fulfillment-cancel authorization fi
   - Backend: .NET 9 / ASP.NET Core Web API / EF Core 9 / SQL Server (LocalDB). Modular monolith: `Api → Infrastructure → Application → Domain`. Database-per-tenant (separate Platform DB + one DB per tenant, per-request connection routing). JWT auth with role-based policies (Owner/Admin/Manager/Cashier/InventoryStaff/KitchenStaff/Viewer). Currency fixed to PHP.
   - Frontend: React 19 / TypeScript (strict) / Vite / React Router 7 / TanStack Query v5 / Tailwind v4 / Recharts.
 - **Working directory:** `C:\Users\Ace\Documents\Negosio`. Git repo, currently on `master`.
-- **IMPORTANT — uncommitted state:** as of this handover, `master`'s working tree has real, verified, but **uncommitted** changes (see "Current State" below). A fresh session must not assume a clean tree.
+- **Git state:** the fulfillment-cancel fix described below is now **committed** to local `master` as `74a07a7` (the user explicitly asked for the commit this session). It is **not pushed** to `origin/master` (see "Current State" below).
 
 ## Current Task
 
@@ -17,7 +17,7 @@ The user reported a live bug while testing the previously-merged Reports Phase C
 
 Investigation confirmed this was a real permission-system gap, not a false alarm: every other sensitive POS action (Void sale, Process return, Apply discount, Open cash drawer) follows a "Owner/Admin/Manager act directly; a Cashier needs either a granted permission or live Manager/Admin/Owner approval" pattern — but the dedicated "Cancel" button on a pending delivery/pickup schedule was hardcoded to Manager+ only, with **no grant and no approval escape hatch at all** for a Cashier. The user chose to fix it (option: "Add grant + approval (recommended)") so Cashiers get the same pattern as everywhere else.
 
-**This fix is now complete and verified, but sits uncommitted on `master`'s working tree** — the user has not yet been asked/asked to commit it.
+**This fix is now complete, verified, and committed** to local `master` as `74a07a7`. It has not been pushed to `origin/master`.
 
 ## Completed Work
 
@@ -49,21 +49,21 @@ Investigation confirmed this was a real permission-system gap, not a false alarm
 - `tests/Negosio.IntegrationTests/Delivery/DeliveryReceiptConcurrencyTests.cs` — added a throwing `UnusedFulfillmentCancelAuthorizationResolver` stub for its hand-built `DeliveryReceiptService` (the void-cascade path it tests never consults the resolver, so a throwing stub proves that invariant).
 - 8 other integration test files needed a 5th positional argument added to existing `ChangeStaffPermissionsRequest(...)` calls: `CashDrawerOpenTests.cs`, `VoidSaleTests.cs`, `CheckoutTests.cs`, `SalesVoidPermissionTests.cs`, `ReturnTests.cs`.
 
-### Prior completed work (already merged to `master` as commit `8039d44`, still not pushed to `origin/master`)
+### Prior completed work (already merged to `master` as commit `8039d44`, confirmed already pushed to `origin/master`)
 Two subagent-driven plans: (1) fulfillment recovery fixes — a "Schedule now" recovery action on Sale Detail for a checkout-succeeded-but-schedule-failed sale, and a void-cascade that cleanly cancels a pending schedule when its sale is voided; (2) Reports Phase C — new Branch/Register/Cashier performance tabs at `/reports/performance`. Full detail, metric definitions, and the rulings made during that work are in `C:\Users\Ace\Desktop\negosio-status.md` under "#13 in detail" — not repeated here to avoid drift between the two files.
 
 ## Current State
 
-**Working (verified, but uncommitted):**
+**Working (verified and committed):**
 - Backend: **182/182 unit tests + 337/338 integration tests** passing. The 1 apparent integration failure is the pre-existing `DeliveryReceiptConcurrencyTests.Two_concurrent_mark_delivered_calls_on_the_same_delivery_only_one_succeeds` flake (a genuine concurrency-race test sensitive to full-suite load, unrelated to this change, untouched code path) — confirmed passing in isolation.
 - Frontend: `tsc -b` and `npm run build` both zero-error.
 - Both dev servers restarted and confirmed live: API at `http://localhost:5170` (401 on a protected route = up), frontend at `http://localhost:5173` (200 = up).
 - The fix was verified via 4 new/rewritten integration tests exercising the full denied→approved-with-manager-credentials and direct-grant-no-approval-needed flows for both Delivery and Pickup. No separate manual browser click-through was done for this specific fix (the API-level integration tests already cover the exact scenario end-to-end, and the fix is UI-thin — the modal changes are a near-verbatim copy of `VoidSaleModal.tsx`'s already-proven pattern).
 
 **Git state — this is the important part for a fresh session:**
-- `git status` on `master` shows **30 files changed, 2 new files** (`FulfillmentCancelAuthorizationResolver.cs` and the 2 migration files), all uncommitted.
-- This was done directly on `master`'s working tree, NOT on a feature branch — unlike every prior body of work in this project's history.
-- **Needs verification:** whether the user has since asked for (or the assistant has made) a commit. If `git status` still shows this many uncommitted changes when a new session starts, the fix described above is what's sitting there uncommitted.
+- Committed to local `master` as `74a07a7` — "fix(delivery): allow Cashier to cancel fulfillment via grant or manager approval" (33 files changed, including `handover.md` itself; working tree is clean).
+- This was done directly on `master`, NOT on a feature branch — unlike every prior body of work in this project's history.
+- **Not pushed.** `git rev-list --count origin/master..master` confirms local `master` is exactly **1 commit ahead** of `origin/master` — just this fix (`74a07a7`). Everything through `8039d44` (#1–13) is already on `origin/master`; the earlier belief that local `master` was ~140 commits ahead was stale/inaccurate and has been corrected. Pushing this one commit is a user decision, not yet made.
 
 **Nothing currently known to be broken.**
 
@@ -91,21 +91,21 @@ Two subagent-driven plans: (1) fulfillment recovery fixes — a "Schedule now" r
 
 ## Next Steps
 
-1. **Ask the user whether to commit this fix.** It is fully verified but was never committed — per this project's standing rule ("only commit when explicitly asked"), a fresh session should not assume it's safe to commit without checking in first, even though the work is done.
-2. Once committed (or if already committed by the time a new session reads this — check `git log`/`git status` first), decide whether to push `master` to `origin/master` along with the other unpushed work from `8039d44` — this is a user decision.
+1. **Ask the user whether to push.** The fix is committed (`74a07a7`) but not pushed — per the standing "only commit/push when explicitly asked" rule, a fresh session should not push `master` to `origin/master` without checking in first, even though the work is done and verified.
+2. Note the standing branch-workflow preference: **do not delete a feature/working branch after it's merged** — leave it in place going forward, unlike earlier phases in this project's history where merged branches were deleted.
 3. Consider whether to extend Reports Phase C's `VoidApprovalsCount`/`ReturnApprovalsCount` pattern to also track fulfillment-cancel approvals now that they're persisted (`ApprovedByUserId` on `DeliveryReceipt`) — flagged above as a reasonable follow-up, not committed to.
 4. The other known limitations tracked in `negosio-status.md` (stale delivery-report columns, drill-down links, sessions-view UX polish) remain open and unrelated to this fix.
 
 ## Prompt for Next Claude Session
 
 ```
-I'm continuing work on Negosio, a multi-tenant retail POS platform (.NET 9 / EF Core 9 / SQL Server backend, React 19 / TypeScript / Vite frontend). Read C:\Users\Ace\Documents\Negosio\handover.md for full context on the most recent fix (Cashiers previously couldn't cancel a delivery/pickup schedule at all — fixed by adding the same grant-or-approval pattern Void/Return/Discount/CashDrawer already use). That fix is verified (backend + frontend tests green, both dev servers confirmed live) but was left UNCOMMITTED on master's working tree — check `git status` first before assuming anything about commit state.
+I'm continuing work on Negosio, a multi-tenant retail POS platform (.NET 9 / EF Core 9 / SQL Server backend, React 19 / TypeScript / Vite frontend). Read C:\Users\Ace\Documents\Negosio\handover.md for full context on the most recent fix (Cashiers previously couldn't cancel a delivery/pickup schedule at all — fixed by adding the same grant-or-approval pattern Void/Return/Discount/CashDrawer already use). That fix is verified and COMMITTED to local master as 74a07a7, but NOT PUSHED to origin/master — check `git status`/`git log` first before assuming anything about push state.
 
 Before doing anything else:
-1. Run `git status` and `git log -3` to see whether the fulfillment-cancel fix described in the handover has since been committed.
+1. Run `git status` and `git log -3` to confirm the fulfillment-cancel fix (commit 74a07a7) is still there and see if anything's changed since.
 2. Check whether the API (localhost:5170) and frontend dev server (localhost:5173) are still running; restart them if not (commands are in the handover's Current State section notes and Desktop status file).
 3. Read C:\Users\Ace\Desktop\negosio-status.md for the full project history/status across all phases.
-4. Do not push to origin/master, merge, or commit anything without asking me first — that's an explicit standing rule on this project.
+4. Do not push to origin/master, merge, or commit anything without asking me first — that's an explicit standing rule on this project. Also: don't delete a feature/working branch after merging it — leave it in place.
 
 Then [describe what you want done next].
 ```
