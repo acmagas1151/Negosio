@@ -71,6 +71,7 @@ const cashierSortAccessors: Record<string, (r: CashierPerformanceRowDto) => numb
   voidedValue: (r) => r.voidedSalesValue,
   voidApprovalsCount: (r) => r.voidApprovalsCount,
   returnApprovalsCount: (r) => r.returnApprovalsCount,
+  fulfillmentCancelApprovalsCount: (r) => r.fulfillmentCancelApprovalsCount,
 }
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
@@ -468,11 +469,12 @@ function CashierPerformanceTab({ filters }: { filters: ReportFiltersState }) {
           <Table.HeaderCell align="right">Voids</Table.HeaderCell>
           <Table.HeaderCell align="right">Void approvals</Table.HeaderCell>
           <Table.HeaderCell align="right">Return approvals</Table.HeaderCell>
+          <Table.HeaderCell align="right">Fulfillment cancel approvals</Table.HeaderCell>
         </Table.Head>
         <Table.Body>
           {Array.from({ length: 4 }).map((_, i) => (
             <Table.Row key={i}>
-              {Array.from({ length: 10 }).map((__, j) => (
+              {Array.from({ length: 11 }).map((__, j) => (
                 <Table.Cell key={j}>
                   <SkeletonText className={j === 0 ? 'w-24' : 'w-16'} />
                 </Table.Cell>
@@ -519,6 +521,9 @@ function CashierPerformanceTab({ filters }: { filters: ReportFiltersState }) {
         <Table.HeaderCell align="right" sortKey="returnApprovalsCount" activeSort={activeSort} onSort={onSort}>
           Return approvals
         </Table.HeaderCell>
+        <Table.HeaderCell align="right" sortKey="fulfillmentCancelApprovalsCount" activeSort={activeSort} onSort={onSort}>
+          Fulfillment cancel approvals
+        </Table.HeaderCell>
       </Table.Head>
       <Table.Body>
         {sortedRows.map((r) => (
@@ -537,6 +542,7 @@ function CashierPerformanceTab({ filters }: { filters: ReportFiltersState }) {
             </Table.Cell>
             <Table.Cell align="right">{r.voidApprovalsCount}</Table.Cell>
             <Table.Cell align="right">{r.returnApprovalsCount}</Table.Cell>
+            <Table.Cell align="right">{r.fulfillmentCancelApprovalsCount}</Table.Cell>
           </Table.Row>
         ))}
       </Table.Body>

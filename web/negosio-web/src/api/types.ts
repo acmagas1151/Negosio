@@ -1347,6 +1347,7 @@ export interface CashierPerformanceRowDto {
   // means the actor acted under their own direct authority. Count-only, not value, per spec.
   voidApprovalsCount: number
   returnApprovalsCount: number
+  fulfillmentCancelApprovalsCount: number
 }
 
 export interface CashierPerformanceResultDto {
