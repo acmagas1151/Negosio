@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { reportsApi } from '../api/reports'
@@ -100,6 +100,17 @@ export default function PerformanceReportsPage() {
     })
   }
 
+  const registerView: 'sales' | 'sessions' = params.get('view') === 'sessions' ? 'sessions' : 'sales'
+  const setRegisterView = (next: 'sales' | 'sessions') => {
+    setParams((prev) => {
+      const p = new URLSearchParams(prev)
+      if (next === 'sales') p.delete('view')
+      else p.set('view', next)
+      p.delete('sessionsPage')
+      return p
+    })
+  }
+
   const filters = useReportFilters()
 
   // Owner/Admin can pick a branch (or "All branches"); a Manager's data is already forced
@@ -128,7 +139,9 @@ export default function PerformanceReportsPage() {
         <ReportFilterBar filters={filters} showBranchFilter={showBranchFilter} />
 
         {tab === 'branches' && <BranchPerformanceTab filters={filters} />}
-        {tab === 'registers' && <RegisterPerformanceTab filters={filters} />}
+        {tab === 'registers' && (
+          <RegisterPerformanceTab filters={filters} view={registerView} setView={setRegisterView} />
+        )}
         {tab === 'cashiers' && <CashierPerformanceTab filters={filters} />}
       </div>
     </DashboardLayout>
@@ -242,9 +255,15 @@ function BranchPerformanceTab({ filters }: { filters: ReportFiltersState }) {
 // individually closed sessions with their reconciliation figures. Kept as sibling sub-views rather
 // than one table, same as the plan intends (Sales vs. Closed sessions are different row shapes).
 
-function RegisterPerformanceTab({ filters }: { filters: ReportFiltersState }) {
-  const [view, setView] = useState<'sales' | 'sessions'>('sales')
-
+function RegisterPerformanceTab({
+  filters,
+  view,
+  setView,
+}: {
+  filters: ReportFiltersState
+  view: 'sales' | 'sessions'
+  setView: (next: 'sales' | 'sessions') => void
+}) {
   return (
     <div className="space-y-5">
       <div className="flex justify-end">
@@ -363,13 +382,43 @@ function RegisterSalesView({ filters }: { filters: ReportFiltersState }) {
 }
 
 function RegisterSessionsView({ filters }: { filters: ReportFiltersState }) {
-  const [page, setPage] = useState(1)
+  const [params, setParams] = useSearchParams()
   const pageSize = 20
+  const page = Math.max(1, Number(params.get('sessionsPage')) || 1)
+  const setPage = (next: number) => {
+    setParams((prev) => {
+      const p = new URLSearchParams(prev)
+      if (next <= 1) p.delete('sessionsPage')
+      else p.set('sessionsPage', String(next))
+      return p
+    })
+  }
 
   // A filter change can leave `page` pointing past the new result set's last page (e.g. narrowing
-  // the date range while on page 3) — reset to page 1 whenever the shared filters change.
+  // the date range while on page 3) — reset to page 1 whenever the shared filters actually change.
+  // Compare against the last-observed filter signature rather than a simple "ran once" flag:
+  // unlike the old local-state version (where an initial `setPage(1)` was a harmless no-op against
+  // its own `useState(1)`), `page` now comes from the URL, so a naive "skip the first invocation"
+  // flag would misfire under React StrictMode's dev-mode double-invoke of this effect (the flag
+  // flips permanently on the first, throwaway invocation, so the second, real one still resets
+  // the page) and clobber a `sessionsPage` the user deep-linked to or refreshed with. A value
+  // comparison is idempotent across repeated invocations with the same filters, so it's safe
+  // however many times React chooses to run it for a given commit.
+  const lastFilterSignature = useRef<string | null>(null)
   useEffect(() => {
-    setPage(1)
+    const signature = JSON.stringify([
+      filters.period,
+      filters.fromDate,
+      filters.toDate,
+      filters.branchId,
+      filters.registerId,
+      filters.cashierId,
+    ])
+    if (lastFilterSignature.current !== null && lastFilterSignature.current !== signature) {
+      setPage(1)
+    }
+    lastFilterSignature.current = signature
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.period, filters.fromDate, filters.toDate, filters.branchId, filters.registerId, filters.cashierId])
 
   const query = useQuery({
