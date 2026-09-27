@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { reportsApi } from '../api/reports'
 import { useAuth } from '../auth/AuthContext'
 import { useReportFilters } from '../hooks/useReportFilters'
 import type { ReportFiltersState } from '../hooks/useReportFilters'
 import { formatMoney } from '../lib/format'
+import { buildSalesDrilldownUrl } from '../lib/reportsDrilldown'
 import { DashboardLayout } from '../components/layout/DashboardLayout'
 import { ReportFilterBar } from '../components/reports/ReportFilterBar'
 import { EmptyState, ErrorState, Pagination, SkeletonText, Table } from '../components/ui'
@@ -211,7 +212,14 @@ function BranchPerformanceTab({ filters }: { filters: ReportFiltersState }) {
       <Table.Body>
         {sortedRows.map((r) => (
           <Table.Row key={r.branchId}>
-            <Table.Cell>{r.branchName}</Table.Cell>
+            <Table.Cell>
+              <Link
+                to={buildSalesDrilldownUrl({ fromUtc: query.data.fromUtc, toUtc: query.data.toUtc, branchId: r.branchId })}
+                className="font-semibold text-primary-700 hover:underline"
+              >
+                {r.branchName}
+              </Link>
+            </Table.Cell>
             <Table.Cell align="right">{formatMoney(r.netSales)}</Table.Cell>
             <Table.Cell align="right">{formatMoney(r.grossSales)}</Table.Cell>
             <Table.Cell align="right">{r.completedTransactions}</Table.Cell>
@@ -324,7 +332,19 @@ function RegisterSalesView({ filters }: { filters: ReportFiltersState }) {
       <Table.Body>
         {sortedRows.map((r) => (
           <Table.Row key={r.registerId}>
-            <Table.Cell>{r.registerName}</Table.Cell>
+            <Table.Cell>
+              <Link
+                to={buildSalesDrilldownUrl({
+                  fromUtc: query.data.fromUtc,
+                  toUtc: query.data.toUtc,
+                  branchId: r.branchId,
+                  registerId: r.registerId,
+                })}
+                className="font-semibold text-primary-700 hover:underline"
+              >
+                {r.registerName}
+              </Link>
+            </Table.Cell>
             <Table.Cell>{r.branchName}</Table.Cell>
             <Table.Cell align="right">{formatMoney(r.netSales)}</Table.Cell>
             <Table.Cell align="right">{r.completedTransactions}</Table.Cell>
@@ -412,7 +432,14 @@ function RegisterSessionsView({ filters }: { filters: ReportFiltersState }) {
         <Table.Body>
           {query.data.items.map((r) => (
             <Table.Row key={r.sessionId}>
-              <Table.Cell>{r.registerName}</Table.Cell>
+              <Table.Cell>
+                <Link
+                  to={buildSalesDrilldownUrl({ fromUtc: r.openedAtUtc, toUtc: r.closedAtUtc, registerId: r.registerId, branchId: r.branchId })}
+                  className="font-semibold text-primary-700 hover:underline"
+                >
+                  {r.registerName}
+                </Link>
+              </Table.Cell>
               <Table.Cell>{new Date(r.closedAtUtc).toLocaleString()}</Table.Cell>
               <Table.Cell>{r.closedByName}</Table.Cell>
               <Table.Cell align="right">{formatMoney(r.openingCash)}</Table.Cell>
@@ -528,7 +555,14 @@ function CashierPerformanceTab({ filters }: { filters: ReportFiltersState }) {
       <Table.Body>
         {sortedRows.map((r) => (
           <Table.Row key={r.cashierUserId}>
-            <Table.Cell>{r.cashierName}</Table.Cell>
+            <Table.Cell>
+              <Link
+                to={buildSalesDrilldownUrl({ fromUtc: query.data.fromUtc, toUtc: query.data.toUtc, cashierUserId: r.cashierUserId })}
+                className="font-semibold text-primary-700 hover:underline"
+              >
+                {r.cashierName}
+              </Link>
+            </Table.Cell>
             <Table.Cell align="right">{formatMoney(r.netSales)}</Table.Cell>
             <Table.Cell align="right">{formatMoney(r.grossSales)}</Table.Cell>
             <Table.Cell align="right">{r.completedTransactions}</Table.Cell>
