@@ -356,7 +356,33 @@ public class ReportsTests : IntegrationTest
     }
 
     [Fact]
-    public async Task Delivery_fulfillment_report_shows_one_row_per_sale_with_aggregated_quantities()
+    public async Task Delivery_fulfillment_report_flags_a_sale_that_still_needs_scheduling()
+    {
+        var login = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(login);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, sellingPrice: 100m, openingStock: 20m);
+
+        // Checkout with Method = Delivery, but do NOT create a schedule afterward — checkout succeeded
+        // but the follow-up schedule-creation call never happened.
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 10m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1000m) },
+            Method: FulfillmentMethod.Delivery));
+
+        var report = await Client.GetFromJsonAsync<DeliveryFulfillmentReportResultDto>(
+            "/api/reports/delivery-fulfillment", TestJson.Options);
+
+        var row = report!.Page.Items.Should().ContainSingle(r => r.SaleId == sale.SaleId).Subject;
+        row.NeedsScheduling.Should().BeTrue("checkout succeeded but no schedule was ever created for it");
+        row.ScheduleCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Delivery_fulfillment_report_does_not_flag_a_sale_with_an_active_schedule()
     {
         var login = await RegisterLoginAndAuthorizeAsync();
         var branchId = await GetMainBranchIdAsync(login);
@@ -371,6 +397,7 @@ public class ReportsTests : IntegrationTest
             new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 1000m) },
             Method: FulfillmentMethod.Delivery));
 
+        // Same as above, but DO create a delivery schedule for the sale afterward.
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
         await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
             new CreateDeliveryReceiptRequest(today, "Juan", "123 Ayala Ave", null, null));
@@ -380,9 +407,7 @@ public class ReportsTests : IntegrationTest
 
         var row = report!.Page.Items.Should().ContainSingle(r => r.SaleId == sale.SaleId).Subject;
         row.FulfillmentStatus.Should().Be(SaleFulfillmentStatus.PendingDelivery);
-        row.TotalDeliveryRequiredQuantity.Should().Be(10m); // whole-sale intent, per Task 1
-        row.TotalPendingQuantity.Should().Be(10m);
-        row.TotalUnscheduledQuantity.Should().Be(0m); // a create now schedules 100% in one shot
+        row.NeedsScheduling.Should().BeFalse();
         row.ScheduleCount.Should().Be(1);
     }
 

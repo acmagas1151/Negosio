@@ -640,7 +640,6 @@ public sealed class ReportsService : IReportsService
         DeliveryReportPreset.Today => (todayLocal, todayLocal, FulfillmentStatus.Pending, false),
         DeliveryReportPreset.Upcoming => (todayLocal.AddDays(1), null, FulfillmentStatus.Pending, false),
         DeliveryReportPreset.Overdue => (null, null, null, true),
-        DeliveryReportPreset.NeedsRescheduling => (null, null, null, true),
         DeliveryReportPreset.Delivered => (null, null, FulfillmentStatus.Completed, false),
         DeliveryReportPreset.Cancelled => (null, null, FulfillmentStatus.Cancelled, false),
         _ => (query.FromDate, query.ToDate, query.Status, false),
@@ -797,7 +796,7 @@ public sealed class ReportsService : IReportsService
 
         var mapped = rows.Select(r =>
         {
-            var available = r.TotalRequired - r.TotalPending - r.TotalDelivered;
+            var needsScheduling = r.TotalPending == 0m && r.TotalDelivered == 0m;
             // Delivery-only projection onto the sale-level calculator: this view's "sold" quantity IS the
             // delivery-required quantity (take-now/pickup are out of scope here — see this method's own
             // doc comment). Derive now reads a sale's (method, status) pair off its one active-or-most-
@@ -813,7 +812,7 @@ public sealed class ReportsService : IReportsService
             {
                 Dto = new DeliveryFulfillmentReportRowDto(
                     r.Id, r.SaleNumber, r.CreatedAtUtc, fulfillmentStatus, r.DeliveryCharge,
-                    r.TotalRequired, r.TotalPending, r.TotalDelivered, available, r.ScheduleCount),
+                    needsScheduling, r.ScheduleCount),
                 r.HasOverduePending,
             };
         });

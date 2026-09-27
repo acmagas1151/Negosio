@@ -117,7 +117,6 @@ public enum DeliveryReportPreset
     Overdue = 4,
     Delivered = 5,
     Cancelled = 6,
-    NeedsRescheduling = 7,
 }
 
 /// <summary>
@@ -250,16 +249,18 @@ public sealed record DeliveryFulfillmentReportQuery(
     int Page = 1,
     int PageSize = PagedResult<DeliveryFulfillmentReportRowDto>.DefaultPageSize);
 
+/// <summary>One sale that requires delivery. <see cref="NeedsScheduling"/> is true only in the one
+/// edge case where checkout succeeded but the follow-up schedule-creation call never completed —
+/// under the whole-sale model this is the only way a delivery-flagged sale can have zero active or
+/// completed schedules. <see cref="ScheduleCount"/> counts every schedule ever created for this sale
+/// (a cancel-and-reschedule chain), not just the current one.</summary>
 public sealed record DeliveryFulfillmentReportRowDto(
     Guid SaleId,
     string SaleNumber,
     DateTime SaleCreatedAtUtc,
     SaleFulfillmentStatus FulfillmentStatus,
     decimal DeliveryCharge,
-    decimal TotalDeliveryRequiredQuantity,
-    decimal TotalPendingQuantity,
-    decimal TotalDeliveredQuantity,
-    decimal TotalUnscheduledQuantity,
+    bool NeedsScheduling,
     int ScheduleCount);
 
 public sealed record DeliveryFulfillmentReportTotalsDto(int TotalSales, decimal TotalDeliveryCharges);
