@@ -453,11 +453,41 @@ public sealed class ReportsService : IReportsService
             .Select(g => new { ApproverUserId = g.Key, Count = g.Count() })
             .ToListAsync(cancellationToken);
 
+        // Fulfillment-cancel approvals — a SIXTH sibling bucket to the void/return approvals above,
+        // grouped by DeliveryReceipt.ApprovedByUserId (the approver), filtered to non-null (null means
+        // the actor cancelled under their own direct authority: Owner/Admin/Manager, or a granted
+        // Cashier). CancelledAtUtc is the natural date anchor here, the same role VoidedAtUtc/
+        // SaleReturn.CreatedAtUtc play for the other two buckets. Branch scoping mirrors BaseSalesAsync/
+        // BaseReturnsAsync (Manager forced to their own branch); cashier scoping mirrors BaseReturnsAsync's
+        // own actor filter, applied here to CancelledByUserId. RegisterId is deliberately NOT applied to
+        // this bucket: a DeliveryReceipt has no direct register of its own, and BaseReturnsAsync's own
+        // Sale-join for RegisterId is a tightly-embedded one-liner, not a reusable helper, so resolving a
+        // register here would mean duplicating that join rather than reusing it. Approvals are therefore
+        // only ever branch/cashier-filterable, not register-filterable, for this first cut.
+        var branchFilter = await _branchAccess.ResolveListFilterAsync(filter.BranchId, cancellationToken);
+        var fulfillmentCancelsBase = _db.DeliveryReceipts.AsNoTracking().Where(d => d.TenantId == tenantId);
+        if (branchFilter is { } scopedBranchId)
+        {
+            fulfillmentCancelsBase = fulfillmentCancelsBase.Where(d => d.BranchId == scopedBranchId);
+        }
+        if (filter.CashierId is { } cashierFilterId)
+        {
+            fulfillmentCancelsBase = fulfillmentCancelsBase.Where(d => d.CancelledByUserId == cashierFilterId);
+        }
+
+        var fulfillmentCancelApprovalsByApprover = await fulfillmentCancelsBase
+            .Where(d => d.CancelledAtUtc != null
+                && d.CancelledAtUtc >= range.FromUtc && d.CancelledAtUtc < range.ToUtc && d.ApprovedByUserId != null)
+            .GroupBy(d => d.ApprovedByUserId!.Value)
+            .Select(g => new { ApproverUserId = g.Key, Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
         var userIds = salesByCashier.Select(r => r.CashierUserId)
             .Union(voidedByActor.Select(r => r.ActorUserId))
             .Union(returnsByActor.Select(r => r.ActorUserId))
             .Union(voidApprovalsByApprover.Select(r => r.ApproverUserId))
             .Union(returnApprovalsByApprover.Select(r => r.ApproverUserId))
+            .Union(fulfillmentCancelApprovalsByApprover.Select(r => r.ApproverUserId))
             .Distinct()
             .ToList();
 
@@ -472,6 +502,7 @@ public sealed class ReportsService : IReportsService
             var r = returnsByActor.FirstOrDefault(r => r.ActorUserId == id);
             var va = voidApprovalsByApprover.FirstOrDefault(x => x.ApproverUserId == id);
             var ra = returnApprovalsByApprover.FirstOrDefault(x => x.ApproverUserId == id);
+            var fca = fulfillmentCancelApprovalsByApprover.FirstOrDefault(x => x.ApproverUserId == id);
             var netSales = s?.NetSales ?? 0m;
             var count = s?.CompletedTransactions ?? 0;
             return new CashierPerformanceRowDto(
@@ -487,7 +518,8 @@ public sealed class ReportsService : IReportsService
                 v?.Count ?? 0,
                 v?.Value ?? 0m,
                 va?.Count ?? 0,
-                ra?.Count ?? 0);
+                ra?.Count ?? 0,
+                fca?.Count ?? 0);
         })
         .OrderByDescending(r => r.NetSales)
         .ToList();

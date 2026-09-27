@@ -389,7 +389,15 @@ public sealed record RegisterSessionReconciliationRowDto(
 /// acted under their own direct authority), never conflated with the actor's own
 /// <see cref="VoidedSalesCount"/>/<see cref="ReturnsCount"/> — an approver who never personally voided or
 /// returned anything still gets their own row via these counts. Count-only, not value: an approver isn't
-/// financially "responsible" for the voided/refunded amount the way the actor is.</summary>
+/// financially "responsible" for the voided/refunded amount the way the actor is.
+/// A SIXTH bucket, <see cref="FulfillmentCancelApprovalsCount"/>, follows the identical shape for
+/// fulfillment-schedule cancellations, grouped by
+/// <see cref="Negosio.Domain.Entities.DeliveryReceipt.ApprovedByUserId"/>, filtered by
+/// <see cref="Negosio.Domain.Entities.DeliveryReceipt.CancelledAtUtc"/>, scoped by
+/// <see cref="Negosio.Domain.Entities.DeliveryReceipt.BranchId"/> directly (no Sale join
+/// needed, same as <c>SaleReturn</c>). Never folded into <see cref="VoidApprovalsCount"/> or
+/// <see cref="ReturnApprovalsCount"/>, a cashier who cancels a delivery schedule under Manager
+/// approval is a fully independent event from voiding or returning a sale.</summary>
 public sealed record CashierPerformanceRowDto(
     Guid CashierUserId,
     string CashierName,
@@ -403,7 +411,8 @@ public sealed record CashierPerformanceRowDto(
     int VoidedSalesCount,
     decimal VoidedSalesValue,
     int VoidApprovalsCount,
-    int ReturnApprovalsCount);
+    int ReturnApprovalsCount,
+    int FulfillmentCancelApprovalsCount);
 
 public sealed record CashierPerformanceResultDto(
     DateTime FromUtc,

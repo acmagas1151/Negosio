@@ -810,6 +810,108 @@ public class ReportsTests : IntegrationTest
     }
 
     [Fact]
+    public async Task GetCashierPerformanceAsync_FulfillmentCancelApprovalIsAttributedToTheApprovingManagerNotTheCancellingCashier()
+    {
+        // Same actor/approver split as the void-approval test above, but for a fulfillment-schedule
+        // cancellation instead of a void: a Cashier with no FulfillmentCancel grant cancels a delivery
+        // schedule under a Manager's approval credentials — mirrors the exact fixture
+        // DeliveryReceiptStatusTests.Cashier_without_grant_requires_approval_then_succeeds_with_valid_manager_credentials
+        // uses (checkout as Cashier, create schedule, cancel supplying Approval), just asserting the
+        // reporting side here instead of the cancel response itself.
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(
+            branchId, category.Id, name: "Fulfillment Item", sku: "FULFILL-SKU", sellingPrice: 150m, openingStock: 10m);
+
+        var cashierToken = await AddTenantUserTokenAsync("fulfillcashier@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+        var managerId = await CreateManagerAsync("fulfillmanager@example.com", "Manager123!", branchId);
+
+        Authorize(cashierToken);
+        var session = await OpenSessionAsync(register.Id);
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 1m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 150m) },
+            Method: FulfillmentMethod.Delivery));
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+        var drResp = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
+            new CreateDeliveryReceiptRequest(today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null));
+        var dr = (await drResp.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
+
+        // This Cashier has no FulfillmentCancel grant, so the cancel requires a Manager's approval credentials.
+        var cancelRes = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel",
+            new CancelDeliveryRequest("Changed mind", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null),
+                Approval: new VoidSaleApprovalInput("fulfillmanager@example.com", "Manager123!")));
+        cancelRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Authorize(owner.AccessToken);
+        var result = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            "/api/reports/cashier-performance?period=Last30Days", TestJson.Options);
+
+        var cashierRow = result!.Rows.Should().ContainSingle(r => r.CashierUserId == cashierId).Subject;
+        var managerRow = result.Rows.Should().ContainSingle(r => r.CashierUserId == managerId).Subject;
+
+        cashierRow.FulfillmentCancelApprovalsCount.Should().Be(0,
+            "the Cashier was not the approver of their own cancellation");
+        managerRow.FulfillmentCancelApprovalsCount.Should().Be(1,
+            "the Manager approved the cancellation — a distinct bucket from who performed it");
+    }
+
+    [Fact]
+    public async Task GetCashierPerformanceAsync_FulfillmentCancelApprovalsRespectBranchScoping()
+    {
+        // Same approval flow as above, but the whole scene happens in Branch A. Querying with a filter
+        // forced to Branch B must not surface it — same branch-scoping convention this file already uses
+        // elsewhere (e.g. Owner_sees_tenant_wide_totals_manager_is_forced_to_their_own_branch,
+        // GetCashierPerformanceAsync_HistoricalSaleKeepsItsOriginalBranchRegardlessOfLaterReassignment).
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchA = await GetMainBranchIdAsync(owner);
+        var branchB = await CreateBranchAsync("BGC", "BGC");
+        var register = await CreateRegisterAsync(branchA);
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(
+            branchA, category.Id, name: "Fulfillment Scoped Item", sku: "FULFILL-SCOPE-SKU", sellingPrice: 150m, openingStock: 10m);
+
+        var cashierToken = await AddTenantUserTokenAsync("fulfillscopecashier@example.com", UserRole.Cashier, branchA);
+        var managerId = await CreateManagerAsync("fulfillscopemanager@example.com", "Manager123!", branchA);
+
+        Authorize(cashierToken);
+        var session = await OpenSessionAsync(register.Id);
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchA, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 1m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 150m) },
+            Method: FulfillmentMethod.Delivery));
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+        var drResp = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
+            new CreateDeliveryReceiptRequest(today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null));
+        var dr = (await drResp.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
+
+        var cancelRes = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel",
+            new CancelDeliveryRequest("Changed mind", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null),
+                Approval: new VoidSaleApprovalInput("fulfillscopemanager@example.com", "Manager123!")));
+        cancelRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Authorize(owner.AccessToken);
+        var resultForBranchA = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            $"/api/reports/cashier-performance?period=Last30Days&branchId={branchA}", TestJson.Options);
+        resultForBranchA!.Rows.Should().ContainSingle(r => r.CashierUserId == managerId && r.FulfillmentCancelApprovalsCount == 1,
+            "the approval happened in Branch A, so it must show up when the report is scoped to Branch A");
+
+        var resultForBranchB = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            $"/api/reports/cashier-performance?period=Last30Days&branchId={branchB.Id}", TestJson.Options);
+        resultForBranchB!.Rows.Should().NotContain(r => r.CashierUserId == managerId,
+            "the approval happened in Branch A and this query is scoped to Branch B");
+    }
+
+    [Fact]
     public async Task GetCashierPerformanceAsync_ReturnActivityIsAttributedToWhoeverProcessedIt()
     {
         var owner = await RegisterLoginAndAuthorizeAsync();
