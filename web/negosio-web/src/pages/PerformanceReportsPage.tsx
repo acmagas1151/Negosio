@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { reportsApi } from '../api/reports'
@@ -136,7 +136,11 @@ export default function PerformanceReportsPage() {
           </div>
         </div>
 
-        <ReportFilterBar filters={filters} showBranchFilter={showBranchFilter} />
+        <ReportFilterBar
+          filters={filters}
+          showBranchFilter={showBranchFilter}
+          cashierFilterDisabled={tab === 'registers' && registerView === 'sessions'}
+        />
 
         {tab === 'branches' && <BranchPerformanceTab filters={filters} />}
         {tab === 'registers' && (
@@ -383,6 +387,9 @@ function RegisterSalesView({ filters }: { filters: ReportFiltersState }) {
 
 function RegisterSessionsView({ filters }: { filters: ReportFiltersState }) {
   const [params, setParams] = useSearchParams()
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null)
+  const showBranchColumn = !filters.branchId
+  const columnCount = showBranchColumn ? 10 : 9
   const pageSize = 20
   const page = Math.max(1, Number(params.get('sessionsPage')) || 1)
   const setPage = (next: number) => {
@@ -440,6 +447,9 @@ function RegisterSessionsView({ filters }: { filters: ReportFiltersState }) {
       <Table>
         <Table.Head>
           <Table.HeaderCell>Register</Table.HeaderCell>
+          {showBranchColumn && <Table.HeaderCell>Branch</Table.HeaderCell>}
+          <Table.HeaderCell>Opened</Table.HeaderCell>
+          <Table.HeaderCell>Opened by</Table.HeaderCell>
           <Table.HeaderCell>Closed</Table.HeaderCell>
           <Table.HeaderCell>Closed by</Table.HeaderCell>
           <Table.HeaderCell align="right">Opening cash</Table.HeaderCell>
@@ -450,7 +460,7 @@ function RegisterSessionsView({ filters }: { filters: ReportFiltersState }) {
         <Table.Body>
           {Array.from({ length: 4 }).map((_, i) => (
             <Table.Row key={i}>
-              {Array.from({ length: 7 }).map((__, j) => (
+              {Array.from({ length: columnCount }).map((__, j) => (
                 <Table.Cell key={j}>
                   <SkeletonText className={j === 0 ? 'w-24' : 'w-16'} />
                 </Table.Cell>
@@ -471,6 +481,9 @@ function RegisterSessionsView({ filters }: { filters: ReportFiltersState }) {
       <Table>
         <Table.Head>
           <Table.HeaderCell>Register</Table.HeaderCell>
+          {showBranchColumn && <Table.HeaderCell>Branch</Table.HeaderCell>}
+          <Table.HeaderCell>Opened</Table.HeaderCell>
+          <Table.HeaderCell>Opened by</Table.HeaderCell>
           <Table.HeaderCell>Closed</Table.HeaderCell>
           <Table.HeaderCell>Closed by</Table.HeaderCell>
           <Table.HeaderCell align="right">Opening cash</Table.HeaderCell>
@@ -480,22 +493,54 @@ function RegisterSessionsView({ filters }: { filters: ReportFiltersState }) {
         </Table.Head>
         <Table.Body>
           {query.data.items.map((r) => (
-            <Table.Row key={r.sessionId}>
-              <Table.Cell>
-                <Link
-                  to={buildSalesDrilldownUrl({ fromUtc: r.openedAtUtc, toUtc: r.closedAtUtc, registerId: r.registerId, branchId: r.branchId })}
-                  className="font-semibold text-primary-700 hover:underline"
-                >
-                  {r.registerName}
-                </Link>
-              </Table.Cell>
-              <Table.Cell>{new Date(r.closedAtUtc).toLocaleString()}</Table.Cell>
-              <Table.Cell>{r.closedByName}</Table.Cell>
-              <Table.Cell align="right">{formatMoney(r.openingCash)}</Table.Cell>
-              <Table.Cell align="right">{formatMoney(r.closingCash)}</Table.Cell>
-              <Table.Cell align="right">{formatMoney(r.expectedCash)}</Table.Cell>
-              <Table.Cell align="right">{formatMoney(r.cashDifference)}</Table.Cell>
-            </Table.Row>
+            <Fragment key={r.sessionId}>
+              <Table.Row
+                className="cursor-pointer"
+                onClick={() => setExpandedSessionId((cur) => (cur === r.sessionId ? null : r.sessionId))}
+              >
+                <Table.Cell>
+                  <Link
+                    to={buildSalesDrilldownUrl({ fromUtc: r.openedAtUtc, toUtc: r.closedAtUtc, registerId: r.registerId, branchId: r.branchId })}
+                    className="font-semibold text-primary-700 hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {r.registerName}
+                  </Link>
+                </Table.Cell>
+                {showBranchColumn && <Table.Cell>{r.branchName}</Table.Cell>}
+                <Table.Cell>{new Date(r.openedAtUtc).toLocaleString()}</Table.Cell>
+                <Table.Cell>{r.openedByName}</Table.Cell>
+                <Table.Cell>{new Date(r.closedAtUtc).toLocaleString()}</Table.Cell>
+                <Table.Cell>{r.closedByName}</Table.Cell>
+                <Table.Cell align="right">{formatMoney(r.openingCash)}</Table.Cell>
+                <Table.Cell align="right">{formatMoney(r.closingCash)}</Table.Cell>
+                <Table.Cell align="right">{formatMoney(r.expectedCash)}</Table.Cell>
+                <Table.Cell align="right">{formatMoney(r.cashDifference)}</Table.Cell>
+              </Table.Row>
+              {expandedSessionId === r.sessionId && (
+                <Table.Row>
+                  <Table.Cell colSpan={columnCount} className="bg-surface-subtle">
+                    <div className="flex flex-wrap gap-x-6 gap-y-1 py-1 text-[13px]">
+                      <span>
+                        Gross cash sales: <strong>{formatMoney(r.grossCashSales)}</strong>
+                      </span>
+                      <span>
+                        Voided cash sales: <strong>{formatMoney(r.voidedCashSales)}</strong>
+                      </span>
+                      <span>
+                        Refund cash out: <strong>{formatMoney(r.refundCashOut)}</strong>
+                      </span>
+                      <span>
+                        Cash in: <strong>{formatMoney(r.cashIn)}</strong>
+                      </span>
+                      <span>
+                        Cash out: <strong>{formatMoney(r.cashOut)}</strong>
+                      </span>
+                    </div>
+                  </Table.Cell>
+                </Table.Row>
+              )}
+            </Fragment>
           ))}
         </Table.Body>
       </Table>

@@ -20,9 +20,15 @@ interface Props {
   /** Only Owner/Admin see a branch picker at all — a Manager's data is already forced server-side,
    * and showing them a picker that silently does nothing would be misleading. */
   showBranchFilter: boolean
+  /** True when the currently active sub-view has no per-cashier concept to filter by (e.g. the
+   * Register tab's Closed-sessions sub-view — a session is opened by one user and closed by
+   * another, not owned by a single cashier; RegisterSessionReconciliationQuery has no CashierId).
+   * Disables the control with an explanatory tooltip instead of leaving it clickable and silently
+   * ignored server-side. */
+  cashierFilterDisabled?: boolean
 }
 
-export function ReportFilterBar({ filters, showBranchFilter }: Props) {
+export function ReportFilterBar({ filters, showBranchFilter, cashierFilterDisabled }: Props) {
   const branchesQuery = useQuery({
     queryKey: ['branches', 'reports-filter'],
     queryFn: () => branchesApi.list(),
@@ -113,6 +119,8 @@ export function ReportFilterBar({ filters, showBranchFilter }: Props) {
         className="sm:w-44"
         value={filters.cashierId ?? ''}
         onChange={(e) => filters.setCashierId(e.target.value || undefined)}
+        disabled={cashierFilterDisabled}
+        title={cashierFilterDisabled ? 'Not applicable to closed-session reconciliation' : undefined}
       >
         <option value="">All cashiers</option>
         {cashiers.map((c) => (

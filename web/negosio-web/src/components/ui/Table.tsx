@@ -22,8 +22,20 @@ function Body({ children }: { children: ReactNode }) {
   return <tbody className="divide-y divide-border">{children}</tbody>
 }
 
-function Row({ children, className }: { children: ReactNode; className?: string }) {
-  return <tr className={cn('hover:bg-surface-subtle/60', className)}>{children}</tr>
+function Row({
+  children,
+  className,
+  onClick,
+}: {
+  children: ReactNode
+  className?: string
+  onClick?: () => void
+}) {
+  return (
+    <tr className={cn('hover:bg-surface-subtle/60', className)} onClick={onClick}>
+      {children}
+    </tr>
+  )
 }
 
 interface HeaderCellProps {
@@ -79,13 +91,16 @@ function Cell({
   children,
   align = 'left',
   className,
+  colSpan,
 }: {
   children: ReactNode
   align?: 'left' | 'right'
   className?: string
+  colSpan?: number
 }) {
   return (
     <td
+      colSpan={colSpan}
       className={cn(
         'px-4 py-3 text-text-secondary',
         align === 'right' ? 'text-right' : 'text-left',
