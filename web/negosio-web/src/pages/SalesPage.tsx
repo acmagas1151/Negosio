@@ -24,9 +24,25 @@ type Filters = {
   from: string | undefined
   to: string | undefined
   branchId: string | undefined
+  registerId: string | undefined
+  cashierUserId: string | undefined
+  // Exact UTC instants, set only by a drill-down link from a Performance report — when present,
+  // these take precedence over `from`/`to` (which convert using the BROWSER's local timezone and
+  // would not reproduce a report's Asia/Manila-resolved boundaries exactly).
+  fromUtc: string | undefined
+  toUtc: string | undefined
 }
 
-const DEFAULT_FILTERS: Filters = { status: undefined, from: undefined, to: undefined, branchId: undefined }
+const DEFAULT_FILTERS: Filters = {
+  status: undefined,
+  from: undefined,
+  to: undefined,
+  branchId: undefined,
+  registerId: undefined,
+  cashierUserId: undefined,
+  fromUtc: undefined,
+  toUtc: undefined,
+}
 
 const STATUSES: SaleStatus[] = ['Completed', 'PartiallyRefunded', 'Refunded', 'Voided']
 
@@ -50,6 +66,10 @@ export default function SalesPage() {
         from: q.filters.from,
         to: q.filters.to,
         branchId: q.filters.branchId,
+        registerId: q.filters.registerId,
+        cashierUserId: q.filters.cashierUserId,
+        fromUtc: q.filters.fromUtc,
+        toUtc: q.filters.toUtc,
       },
     ],
     queryFn: () =>
@@ -59,11 +79,16 @@ export default function SalesPage() {
         search: q.search || undefined,
         status: (q.filters.status as SaleStatus) || undefined,
         branchId: q.filters.branchId,
-        // Whole-day bounds in the browser's local zone (no tenant-timezone model yet — accepted).
-        fromUtc: q.filters.from ? new Date(`${q.filters.from}T00:00:00.000`).toISOString() : undefined,
-        toUtc: q.filters.to ? new Date(`${q.filters.to}T23:59:59.999`).toISOString() : undefined,
+        registerId: q.filters.registerId,
+        cashierUserId: q.filters.cashierUserId,
+        // A drill-down link's exact fromUtc/toUtc (Asia/Manila-resolved by the source report) takes
+        // precedence over the from/to date pickers, which convert using the browser's local zone.
+        fromUtc: q.filters.fromUtc ?? (q.filters.from ? new Date(`${q.filters.from}T00:00:00.000`).toISOString() : undefined),
+        toUtc: q.filters.toUtc ?? (q.filters.to ? new Date(`${q.filters.to}T23:59:59.999`).toISOString() : undefined),
       }),
   })
+
+  const hasDrilldownFilter = Boolean(q.filters.registerId || q.filters.cashierUserId || q.filters.fromUtc)
 
   const filtered = Boolean(
     q.search || q.filters.status || q.filters.from || q.filters.to || q.filters.branchId,
@@ -86,6 +111,15 @@ export default function SalesPage() {
     <DashboardLayout title="Sales">
       <div className="space-y-5">
         <h1 className="text-2xl font-bold text-text-primary">Sales</h1>
+
+        {hasDrilldownFilter && (
+          <div className="flex items-center justify-between rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[13px] text-primary-900">
+            <span>Showing sales filtered from a performance report.</span>
+            <Link to="/sales" className="font-semibold underline">
+              Clear filter
+            </Link>
+          </div>
+        )}
 
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <SearchInput
