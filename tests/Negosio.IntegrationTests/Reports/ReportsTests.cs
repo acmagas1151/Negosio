@@ -912,6 +912,55 @@ public class ReportsTests : IntegrationTest
     }
 
     [Fact]
+    public async Task GetCashierPerformanceAsync_FulfillmentCancelApprovalsRespectRegisterScoping()
+    {
+        // Same approval flow as the two tests above, but scoped by RegisterId instead of BranchId — both
+        // registers live in the same branch, so this specifically exercises the DeliveryReceipt.SaleId ->
+        // Sale -> RegisterSession.RegisterId join fulfillmentCancelsBase now applies (mirroring
+        // BaseReturnsAsync's own RegisterId join for SaleReturn), not just the branch filter it already had.
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var registerA = await CreateRegisterAsync(branchId, "Register A", "REG-A");
+        var registerB = await CreateRegisterAsync(branchId, "Register B", "REG-B");
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(
+            branchId, category.Id, name: "Fulfillment Register Scoped Item", sku: "FULFILL-REG-SCOPE-SKU", sellingPrice: 150m, openingStock: 10m);
+
+        var cashierToken = await AddTenantUserTokenAsync("fulfillregscopecashier@example.com", UserRole.Cashier, branchId);
+        var managerId = await CreateManagerAsync("fulfillregscopemanager@example.com", "Manager123!", branchId);
+
+        Authorize(cashierToken);
+        var session = await OpenSessionAsync(registerA.Id);
+        var sale = await CheckoutOkAsync(new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantId, 1m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 150m) },
+            Method: FulfillmentMethod.Delivery));
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+        var drResp = await Client.PostAsJsonAsync($"/api/sales/{sale.SaleId}/delivery-receipts",
+            new CreateDeliveryReceiptRequest(today, "Juan Dela Cruz", "123 Ayala Ave, Makati", null, null));
+        var dr = (await drResp.Content.ReadFromJsonAsync<FulfillmentScheduleDto>(TestJson.Options))!;
+
+        var cancelRes = await Client.PostAsJsonAsync($"/api/delivery-receipts/{dr.Id}/cancel",
+            new CancelDeliveryRequest("Changed mind", CancellationDisposition.DeliverLater, null,
+                RescheduledDelivery: new DeliveryReplacementInput(today.AddDays(1), "Juan Dela Cruz", "456 Ortigas Ave", null, null),
+                Approval: new VoidSaleApprovalInput("fulfillregscopemanager@example.com", "Manager123!")));
+        cancelRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Authorize(owner.AccessToken);
+        var resultForRegisterA = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            $"/api/reports/cashier-performance?period=Last30Days&registerId={registerA.Id}", TestJson.Options);
+        resultForRegisterA!.Rows.Should().ContainSingle(r => r.CashierUserId == managerId && r.FulfillmentCancelApprovalsCount == 1,
+            "the sale (and its delivery cancellation) happened on Register A, so it must show up when the report is scoped to Register A");
+
+        var resultForRegisterB = await Client.GetFromJsonAsync<CashierPerformanceResultDto>(
+            $"/api/reports/cashier-performance?period=Last30Days&registerId={registerB.Id}", TestJson.Options);
+        resultForRegisterB!.Rows.Should().NotContain(r => r.CashierUserId == managerId,
+            "the sale happened on Register A and this query is scoped to Register B");
+    }
+
+    [Fact]
     public async Task GetCashierPerformanceAsync_ReturnActivityIsAttributedToWhoeverProcessedIt()
     {
         var owner = await RegisterLoginAndAuthorizeAsync();

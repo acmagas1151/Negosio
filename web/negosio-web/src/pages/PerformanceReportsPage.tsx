@@ -231,7 +231,13 @@ function BranchPerformanceTab({ filters }: { filters: ReportFiltersState }) {
           <Table.Row key={r.branchId}>
             <Table.Cell>
               <Link
-                to={buildSalesDrilldownUrl({ fromUtc: query.data.fromUtc, toUtc: query.data.toUtc, branchId: r.branchId })}
+                to={buildSalesDrilldownUrl({
+                  fromUtc: query.data.fromUtc,
+                  toUtc: query.data.toUtc,
+                  branchId: r.branchId,
+                  registerId: filters.registerId,
+                  cashierUserId: filters.cashierId,
+                })}
                 className="font-semibold text-primary-700 hover:underline"
               >
                 {r.branchName}
@@ -362,6 +368,7 @@ function RegisterSalesView({ filters }: { filters: ReportFiltersState }) {
                   toUtc: query.data.toUtc,
                   branchId: r.branchId,
                   registerId: r.registerId,
+                  cashierUserId: filters.cashierId,
                 })}
                 className="font-semibold text-primary-700 hover:underline"
               >
@@ -651,7 +658,13 @@ function CashierPerformanceTab({ filters }: { filters: ReportFiltersState }) {
           <Table.Row key={r.cashierUserId}>
             <Table.Cell>
               <Link
-                to={buildSalesDrilldownUrl({ fromUtc: query.data.fromUtc, toUtc: query.data.toUtc, cashierUserId: r.cashierUserId })}
+                to={buildSalesDrilldownUrl({
+                  fromUtc: query.data.fromUtc,
+                  toUtc: query.data.toUtc,
+                  branchId: filters.branchId,
+                  registerId: filters.registerId,
+                  cashierUserId: r.cashierUserId,
+                })}
                 className="font-semibold text-primary-700 hover:underline"
               >
                 {r.cashierName}

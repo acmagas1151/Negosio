@@ -457,13 +457,14 @@ public sealed class ReportsService : IReportsService
         // grouped by DeliveryReceipt.ApprovedByUserId (the approver), filtered to non-null (null means
         // the actor cancelled under their own direct authority: Owner/Admin/Manager, or a granted
         // Cashier). CancelledAtUtc is the natural date anchor here, the same role VoidedAtUtc/
-        // SaleReturn.CreatedAtUtc play for the other two buckets. Branch scoping mirrors BaseSalesAsync/
-        // BaseReturnsAsync (Manager forced to their own branch); cashier scoping mirrors BaseReturnsAsync's
-        // own actor filter, applied here to CancelledByUserId. RegisterId is deliberately NOT applied to
-        // this bucket: a DeliveryReceipt has no direct register of its own, and BaseReturnsAsync's own
-        // Sale-join for RegisterId is a tightly-embedded one-liner, not a reusable helper, so resolving a
-        // register here would mean duplicating that join rather than reusing it. Approvals are therefore
-        // only ever branch/cashier-filterable, not register-filterable, for this first cut.
+        // SaleReturn.CreatedAtUtc play for the other two buckets. Branch/cashier scoping mirrors
+        // BaseSalesAsync/BaseReturnsAsync (Manager forced to their own branch; cashier scoping mirrors
+        // BaseReturnsAsync's own actor filter, applied here to CancelledByUserId). RegisterId is
+        // resolved the same way BaseReturnsAsync resolves it for SaleReturn — DeliveryReceipt has no
+        // register of its own either, so it goes through the identical DeliveryReceipt.SaleId -> Sale ->
+        // RegisterSession.RegisterId join. DeliveryReceipt.SaleId is nullable (a receipt can exist with
+        // no linked sale in some flows), so a null SaleId can never satisfy a register filter and is
+        // excluded outright, same as it would be if it simply had no matching register.
         var branchFilter = await _branchAccess.ResolveListFilterAsync(filter.BranchId, cancellationToken);
         var fulfillmentCancelsBase = _db.DeliveryReceipts.AsNoTracking().Where(d => d.TenantId == tenantId);
         if (branchFilter is { } scopedBranchId)
@@ -473,6 +474,12 @@ public sealed class ReportsService : IReportsService
         if (filter.CashierId is { } cashierFilterId)
         {
             fulfillmentCancelsBase = fulfillmentCancelsBase.Where(d => d.CancelledByUserId == cashierFilterId);
+        }
+        if (filter.RegisterId is { } cancelRegisterId)
+        {
+            fulfillmentCancelsBase = fulfillmentCancelsBase.Where(d => d.SaleId != null
+                && _db.Sales.Any(s => s.Id == d.SaleId!.Value
+                    && _db.RegisterSessions.Any(rs => rs.Id == s.RegisterSessionId && rs.RegisterId == cancelRegisterId)));
         }
 
         var fulfillmentCancelApprovalsByApprover = await fulfillmentCancelsBase

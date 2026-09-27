@@ -91,7 +91,15 @@ export default function SalesPage() {
   const hasDrilldownFilter = Boolean(q.filters.registerId || q.filters.cashierUserId || q.filters.fromUtc)
 
   const filtered = Boolean(
-    q.search || q.filters.status || q.filters.from || q.filters.to || q.filters.branchId,
+    q.search ||
+      q.filters.status ||
+      q.filters.from ||
+      q.filters.to ||
+      q.filters.branchId ||
+      q.filters.registerId ||
+      q.filters.cashierUserId ||
+      q.filters.fromUtc ||
+      q.filters.toUtc,
   )
 
   const header = (
@@ -161,14 +169,25 @@ export default function SalesPage() {
             type="date"
             aria-label="From date"
             value={q.filters.from ?? ''}
-            onChange={(e) => q.setFilter('from', e.target.value || undefined)}
+            onChange={(e) => {
+              // Editing the picker directly exits "drill-down mode" — otherwise fromUtc/toUtc (set
+              // by a report drill-down link) would keep winning over this edit and the picker would
+              // be clickable but inert. Must be one atomic `setFilters` call, not sequential
+              // `setFilter` calls: usePagedQuery.setFilter resolves its "previous params" from this
+              // hook's last-rendered URL, not from an earlier setFilter call made earlier in the
+              // same handler, so two sequential calls would each mutate from the same stale
+              // snapshot and the second call's navigation would clobber the first's.
+              q.setFilters({ from: e.target.value || undefined, fromUtc: undefined, toUtc: undefined })
+            }}
             className="h-11 rounded-lg border border-border-strong bg-white px-3 text-sm text-text-primary focus:border-primary-500 focus:outline-none focus:ring-[3px] focus:ring-primary-500/15"
           />
           <input
             type="date"
             aria-label="To date"
             value={q.filters.to ?? ''}
-            onChange={(e) => q.setFilter('to', e.target.value || undefined)}
+            onChange={(e) => {
+              q.setFilters({ to: e.target.value || undefined, fromUtc: undefined, toUtc: undefined })
+            }}
             className="h-11 rounded-lg border border-border-strong bg-white px-3 text-sm text-text-primary focus:border-primary-500 focus:outline-none focus:ring-[3px] focus:ring-primary-500/15"
           />
         </div>

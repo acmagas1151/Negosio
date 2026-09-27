@@ -10,6 +10,15 @@ export interface PagedQueryState<F extends Record<string, string | undefined>> {
   setSearchInput: (v: string) => void
   filters: F
   setFilter: (key: keyof F, value: string | undefined) => void
+  // Sets several filter keys in a single URL update. NOT equivalent to calling `setFilter`
+  // repeatedly in the same handler: `setFilter` (like react-router's `setSearchParams`) resolves
+  // its "previous params" from this hook's last-rendered `location.search`, not from any earlier
+  // `setFilter` call made earlier in the same synchronous handler — so two sequential `setFilter`
+  // calls each mutate from the SAME stale snapshot and the second call's `navigate` clobbers the
+  // first's. Use `setFilters` whenever a single user action must change more than one filter key
+  // atomically (e.g. clearing a drill-down's exact fromUtc/toUtc when the user edits the plain
+  // date picker that drill-down had overridden).
+  setFilters: (patch: Partial<F>) => void
   sortBy: string | undefined
   sortDirection: 'asc' | 'desc' | undefined
   setSort: (column: string) => void
@@ -95,6 +104,20 @@ export function usePagedQuery<F extends Record<string, string | undefined>>(opts
     [patch],
   )
 
+  const setFilters = useCallback(
+    (filterPatch: Partial<F>) => {
+      patch((next) => {
+        for (const key of Object.keys(filterPatch)) {
+          const value = filterPatch[key as keyof F]
+          if (value) next.set(key, value)
+          else next.delete(key)
+        }
+        next.delete('page')
+      })
+    },
+    [patch],
+  )
+
   const setSort = useCallback(
     (column: string) => {
       patch((next) => {
@@ -133,6 +156,7 @@ export function usePagedQuery<F extends Record<string, string | undefined>>(opts
     setSearchInput,
     filters,
     setFilter,
+    setFilters,
     sortBy,
     sortDirection,
     setSort,
