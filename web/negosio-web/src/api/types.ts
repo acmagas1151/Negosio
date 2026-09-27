@@ -1053,7 +1053,7 @@ export interface ReportFilterParams {
   cashierId?: string
 }
 
-export type DeliveryReportPreset = 'All' | 'Today' | 'Upcoming' | 'Overdue' | 'Delivered' | 'Cancelled' | 'NeedsRescheduling'
+export type DeliveryReportPreset = 'All' | 'Today' | 'Upcoming' | 'Overdue' | 'Delivered' | 'Cancelled'
 
 export interface DeliveryReportRowDto {
   deliveryReceiptId: string
@@ -1157,10 +1157,7 @@ export interface DeliveryFulfillmentReportRowDto {
   saleCreatedAtUtc: string
   fulfillmentStatus: SaleFulfillmentStatus
   deliveryCharge: number
-  totalDeliveryRequiredQuantity: number
-  totalPendingQuantity: number
-  totalDeliveredQuantity: number
-  totalUnscheduledQuantity: number
+  needsScheduling: boolean
   scheduleCount: number
 }
 

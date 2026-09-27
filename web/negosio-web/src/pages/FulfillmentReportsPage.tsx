@@ -19,7 +19,7 @@ import type {
   SaleFulfillmentStatus,
 } from '../api/types'
 import { usePagedQuery } from '../hooks/usePagedQuery'
-import { formatDeliveryCharge, formatMoney, formatQty } from '../lib/format'
+import { formatDeliveryCharge, formatMoney } from '../lib/format'
 import {
   SALE_FULFILLMENT_STATUS_LABELS,
   saleFulfillmentStatusTone,
@@ -48,7 +48,6 @@ const DELIVERY_PRESETS: { value: DeliveryReportPreset; label: string }[] = [
   { value: 'Overdue', label: 'Overdue' },
   { value: 'Delivered', label: 'Delivered' },
   { value: 'Cancelled', label: 'Cancelled' },
-  { value: 'NeedsRescheduling', label: 'Needs rescheduling' },
 ]
 
 type ScheduleFilters = { branchId: string | undefined; preset: DeliveryReportPreset | undefined }
@@ -426,16 +425,13 @@ export default function FulfillmentReportsPage() {
                       <Table.HeaderCell>Sale #</Table.HeaderCell>
                       <Table.HeaderCell>Created</Table.HeaderCell>
                       <Table.HeaderCell>Status</Table.HeaderCell>
-                      <Table.HeaderCell align="right">Required</Table.HeaderCell>
-                      <Table.HeaderCell align="right">Pending</Table.HeaderCell>
-                      <Table.HeaderCell align="right">Delivered</Table.HeaderCell>
-                      <Table.HeaderCell align="right">Unscheduled</Table.HeaderCell>
+                      <Table.HeaderCell>Needs scheduling</Table.HeaderCell>
                       <Table.HeaderCell align="right">Delivery charge</Table.HeaderCell>
                     </Table.Head>
                     <Table.Body>
                       {Array.from({ length: 6 }).map((_, i) => (
                         <Table.Row key={i}>
-                          {Array.from({ length: 8 }).map((__, j) => (
+                          {Array.from({ length: 5 }).map((__, j) => (
                             <Table.Cell key={j}>
                               <SkeletonText className={j === 0 ? 'w-24' : 'w-16'} />
                             </Table.Cell>
@@ -457,10 +453,7 @@ export default function FulfillmentReportsPage() {
                         <Table.HeaderCell>Sale #</Table.HeaderCell>
                         <Table.HeaderCell>Created</Table.HeaderCell>
                         <Table.HeaderCell>Status</Table.HeaderCell>
-                        <Table.HeaderCell align="right">Required</Table.HeaderCell>
-                        <Table.HeaderCell align="right">Pending</Table.HeaderCell>
-                        <Table.HeaderCell align="right">Delivered</Table.HeaderCell>
-                        <Table.HeaderCell align="right">Unscheduled</Table.HeaderCell>
+                        <Table.HeaderCell>Needs scheduling</Table.HeaderCell>
                         <Table.HeaderCell align="right">Delivery charge</Table.HeaderCell>
                       </Table.Head>
                       <Table.Body>
@@ -477,10 +470,13 @@ export default function FulfillmentReportsPage() {
                                 {SALE_FULFILLMENT_STATUS_LABELS[r.fulfillmentStatus]}
                               </Badge>
                             </Table.Cell>
-                            <Table.Cell align="right">{formatQty(r.totalDeliveryRequiredQuantity)}</Table.Cell>
-                            <Table.Cell align="right">{formatQty(r.totalPendingQuantity)}</Table.Cell>
-                            <Table.Cell align="right">{formatQty(r.totalDeliveredQuantity)}</Table.Cell>
-                            <Table.Cell align="right">{formatQty(r.totalUnscheduledQuantity)}</Table.Cell>
+                            <Table.Cell>
+                              {r.needsScheduling ? (
+                                <Badge tone="warning">Needs scheduling</Badge>
+                              ) : (
+                                <span className="text-text-muted">—</span>
+                              )}
+                            </Table.Cell>
                             <Table.Cell align="right">{formatDeliveryCharge(r.deliveryCharge)}</Table.Cell>
                           </Table.Row>
                         ))}
