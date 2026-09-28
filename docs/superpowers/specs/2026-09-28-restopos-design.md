@@ -82,7 +82,7 @@ All of the following are net-new. None of it modifies existing Retail entities e
 - `RowVersion` (client-sent expected-version conflict detection — see Section 7)
 - A filtered unique index: **at most one `Open` `RestoOrder` per `TableId`** — mirrors `RegisterSession`'s existing "one Open session per Register" index exactly, and is what actually prevents two concurrent visits on the same table.
 
-**`RestoOrderRound`** (child of `RestoOrder`) — deliberately thin: `RoundNumber`, `Status` (Draft → Released → Voided), `ReleasedAtUtc?`, `ReleasedByUserId?`. Release is a durable, timestamped event; a released round is never un-released.
+**`RestoOrderRound`** (child of `RestoOrder`) — deliberately thin: `RoundNumber`, `Status` (`Draft`, `Released`, or `Voided` — `Voided` is reachable only from `Draft`, a whole round scrapped before it was ever sent; a round that has reached `Released` can never subsequently become `Voided` or return to `Draft`), `ReleasedAtUtc?`, `ReleasedByUserId?`. Release is a durable, timestamped event; a released round is never un-released.
 
 **`RestoOrderItem`** (child of Round) — the snapshot discipline matches `SaleItem`'s exactly, taken once at add-time and never re-derived:
 - `ProductNameSnapshot`, `VariantNameSnapshot?`, `StationId` + `StationNameSnapshot` (both retained even if the station is later renamed/disabled)
