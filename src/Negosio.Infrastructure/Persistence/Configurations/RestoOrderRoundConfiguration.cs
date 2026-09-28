@@ -28,5 +28,11 @@ public sealed class RestoOrderRoundConfiguration : IEntityTypeConfiguration<Rest
 
         builder.HasIndex(r => new { r.TenantId, r.RestoOrderId })
             .HasDatabaseName("IX_RestoOrderRounds_TenantId_RestoOrderId");
+
+        // Backstops the in-memory RestoOrder.OpenNextRound() sequential-numbering logic — the same
+        // discipline as RegisterSession's filtered unique indexes.
+        builder.HasIndex(r => new { r.TenantId, r.RestoOrderId, r.RoundNumber })
+            .IsUnique()
+            .HasDatabaseName("IX_RestoOrderRounds_TenantId_RestoOrderId_RoundNumber");
     }
 }

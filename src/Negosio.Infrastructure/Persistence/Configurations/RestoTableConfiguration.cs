@@ -20,6 +20,11 @@ public sealed class RestoTableConfiguration : IEntityTypeConfiguration<RestoTabl
         builder.Property(t => t.CreatedAtUtc).IsRequired();
         builder.Property(t => t.UpdatedAtUtc).IsRequired();
 
+        builder.HasOne<Branch>()
+            .WithMany()
+            .HasForeignKey(t => t.BranchId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasIndex(t => new { t.TenantId, t.BranchId })
             .HasDatabaseName("IX_RestoTables_TenantId_BranchId");
     }

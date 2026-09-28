@@ -27,6 +27,10 @@ public sealed class RestoOrderConfiguration : IEntityTypeConfiguration<RestoOrde
         builder.Property(o => o.CreatedAtUtc).IsRequired();
         builder.Property(o => o.UpdatedAtUtc).IsRequired();
 
+        builder.HasOne<Branch>()
+            .WithMany()
+            .HasForeignKey(o => o.BranchId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<RestoTable>()
             .WithMany()
             .HasForeignKey(o => o.TableId)
@@ -34,6 +38,10 @@ public sealed class RestoOrderConfiguration : IEntityTypeConfiguration<RestoOrde
         builder.HasOne<RegisterSession>()
             .WithMany()
             .HasForeignKey(o => o.RegisterSessionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Sale>()
+            .WithMany()
+            .HasForeignKey(o => o.SaleId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasMany(o => o.Rounds)

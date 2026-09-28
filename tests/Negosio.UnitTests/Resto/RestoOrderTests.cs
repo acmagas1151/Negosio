@@ -97,6 +97,17 @@ public class RestoOrderTests
     }
 
     [Fact]
+    public void OpenNextRound_is_rejected_once_the_order_has_been_settled()
+    {
+        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null);
+        order.Settle(Guid.NewGuid(), DateTime.UtcNow);
+
+        var act = () => order.OpenNextRound();
+
+        act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
     public void Cancel_is_rejected_once_any_round_has_been_released()
     {
         var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null);

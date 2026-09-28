@@ -96,6 +96,11 @@ public class RestoOrder : Entity
 
     public RestoOrderRound OpenNextRound()
     {
+        if (Status != RestoOrderStatus.Open)
+        {
+            throw new InvalidOperationException("Only an open order can start a new round.");
+        }
+
         var round = RestoOrderRound.Create(TenantId, Id, _rounds.Count + 1);
         _rounds.Add(round);
         return round;

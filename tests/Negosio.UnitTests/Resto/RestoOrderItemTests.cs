@@ -121,4 +121,87 @@ public class RestoOrderItemTests
         modifier.ModifierOptionNameSnapshot.Should().Be("Extra cheese");
         modifier.PriceDeltaSnapshot.Should().Be(20m);
     }
+
+    [Fact]
+    public void AddModifier_is_rejected_once_the_item_has_been_released_to_the_kitchen()
+    {
+        var (round, item) = NewItem();
+        round.Release(UserId, DateTime.UtcNow);
+
+        var act = () => item.AddModifier("Add-ons", "Extra cheese", 20m);
+
+        act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void AddModifier_rejects_a_blank_group_name()
+    {
+        var (_, item) = NewItem();
+
+        var act = () => item.AddModifier("   ", "Extra cheese", 20m);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void AddModifier_rejects_a_blank_option_name()
+    {
+        var (_, item) = NewItem();
+
+        var act = () => item.AddModifier("Add-ons", "   ", 20m);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void AddModifier_rejects_a_negative_price_delta()
+    {
+        var (_, item) = NewItem();
+
+        var act = () => item.AddModifier("Add-ons", "Extra cheese", -1m);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void Acknowledge_is_rejected_once_the_item_has_been_voided_while_pending()
+    {
+        var (round, item) = NewItem();
+        round.Release(UserId, DateTime.UtcNow);
+        item.Void(UserId, "Kitchen made a mistake", approvedByUserId: null, DateTime.UtcNow);
+
+        var act = () => item.Acknowledge(UserId, DateTime.UtcNow);
+
+        act.Should().Throw<InvalidOperationException>("a voided item must not be progressable");
+    }
+
+    [Fact]
+    public void Create_rejects_a_blank_product_name()
+    {
+        var order = RestoOrder.OpenBillOut(TenantId, Guid.NewGuid(), Guid.NewGuid(), UserId, Guid.NewGuid(), null);
+        var round = order.OpenNextRound();
+
+        var act = () => round.AddItem(
+            ProductVariantId, "   ", "Regular", StationId, "Kitchen",
+            unitPriceSnapshot: 150m, taxRateSnapshot: 12m,
+            grossAmount: 150m, discountAmount: 0m, taxAmount: 18m, netAmount: 150m,
+            quantity: 1m, kitchenNote: null);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Create_rejects_a_negative_gross_amount()
+    {
+        var order = RestoOrder.OpenBillOut(TenantId, Guid.NewGuid(), Guid.NewGuid(), UserId, Guid.NewGuid(), null);
+        var round = order.OpenNextRound();
+
+        var act = () => round.AddItem(
+            ProductVariantId, "Burger", "Regular", StationId, "Kitchen",
+            unitPriceSnapshot: 150m, taxRateSnapshot: 12m,
+            grossAmount: -1m, discountAmount: 0m, taxAmount: 18m, netAmount: 150m,
+            quantity: 1m, kitchenNote: null);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
 }

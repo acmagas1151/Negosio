@@ -12,7 +12,7 @@ using Negosio.Infrastructure.Persistence;
 namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
 {
     [DbContext(typeof(TenantDbContext))]
-    [Migration("20260928050413_AddRestoPos")]
+    [Migration("20260928061837_AddRestoPos")]
     partial class AddRestoPos
     {
         /// <inheritdoc />
@@ -1130,7 +1130,11 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
 
                     b.HasKey("Id");
 
+                    b.HasIndex("BranchId");
+
                     b.HasIndex("RegisterSessionId");
+
+                    b.HasIndex("SaleId");
 
                     b.HasIndex("TableId")
                         .IsUnique()
@@ -1340,6 +1344,10 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                     b.HasIndex("TenantId", "RestoOrderId")
                         .HasDatabaseName("IX_RestoOrderRounds_TenantId_RestoOrderId");
 
+                    b.HasIndex("TenantId", "RestoOrderId", "RoundNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_RestoOrderRounds_TenantId_RestoOrderId_RoundNumber");
+
                     b.ToTable("RestoOrderRounds", (string)null);
                 });
 
@@ -1369,6 +1377,8 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                         .HasColumnType("datetime2");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BranchId");
 
                     b.HasIndex("TenantId", "BranchId")
                         .HasDatabaseName("IX_RestoStations_TenantId_BranchId");
@@ -1402,6 +1412,8 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                         .HasColumnType("datetime2");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BranchId");
 
                     b.HasIndex("TenantId", "BranchId")
                         .HasDatabaseName("IX_RestoTables_TenantId_BranchId");
@@ -2091,11 +2103,22 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
 
             modelBuilder.Entity("Negosio.Domain.Entities.RestoOrder", b =>
                 {
+                    b.HasOne("Negosio.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("Negosio.Domain.Entities.RegisterSession", null)
                         .WithMany()
                         .HasForeignKey("RegisterSessionId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("Negosio.Domain.Entities.Sale", null)
+                        .WithMany()
+                        .HasForeignKey("SaleId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Negosio.Domain.Entities.RestoTable", null)
                         .WithMany()
@@ -2139,6 +2162,24 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                         .WithMany("Rounds")
                         .HasForeignKey("RestoOrderId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Negosio.Domain.Entities.RestoStation", b =>
+                {
+                    b.HasOne("Negosio.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Negosio.Domain.Entities.RestoTable", b =>
+                {
+                    b.HasOne("Negosio.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

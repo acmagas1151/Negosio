@@ -64,6 +64,12 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_RestoStations", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_RestoStations_Branches_BranchId",
+                        column: x => x.BranchId,
+                        principalTable: "Branches",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateTable(
@@ -81,6 +87,12 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_RestoTables", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_RestoTables_Branches_BranchId",
+                        column: x => x.BranchId,
+                        principalTable: "Branches",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateTable(
@@ -164,6 +176,12 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                 {
                     table.PrimaryKey("PK_RestoOrders", x => x.Id);
                     table.ForeignKey(
+                        name: "FK_RestoOrders_Branches_BranchId",
+                        column: x => x.BranchId,
+                        principalTable: "Branches",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Restrict);
+                    table.ForeignKey(
                         name: "FK_RestoOrders_RegisterSessions_RegisterSessionId",
                         column: x => x.RegisterSessionId,
                         principalTable: "RegisterSessions",
@@ -173,6 +191,12 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                         name: "FK_RestoOrders_RestoTables_TableId",
                         column: x => x.TableId,
                         principalTable: "RestoTables",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Restrict);
+                    table.ForeignKey(
+                        name: "FK_RestoOrders_Sales_SaleId",
+                        column: x => x.SaleId,
+                        principalTable: "Sales",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Restrict);
                 });
@@ -360,9 +384,25 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                 columns: new[] { "TenantId", "RestoOrderId" });
 
             migrationBuilder.CreateIndex(
+                name: "IX_RestoOrderRounds_TenantId_RestoOrderId_RoundNumber",
+                table: "RestoOrderRounds",
+                columns: new[] { "TenantId", "RestoOrderId", "RoundNumber" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_RestoOrders_BranchId",
+                table: "RestoOrders",
+                column: "BranchId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_RestoOrders_RegisterSessionId",
                 table: "RestoOrders",
                 column: "RegisterSessionId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_RestoOrders_SaleId",
+                table: "RestoOrders",
+                column: "SaleId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_RestoOrders_TableId_Open",
@@ -377,9 +417,19 @@ namespace Negosio.Infrastructure.Persistence.Migrations.TenantDb
                 columns: new[] { "TenantId", "BranchId", "Status" });
 
             migrationBuilder.CreateIndex(
+                name: "IX_RestoStations_BranchId",
+                table: "RestoStations",
+                column: "BranchId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_RestoStations_TenantId_BranchId",
                 table: "RestoStations",
                 columns: new[] { "TenantId", "BranchId" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_RestoTables_BranchId",
+                table: "RestoTables",
+                column: "BranchId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_RestoTables_TenantId_BranchId",

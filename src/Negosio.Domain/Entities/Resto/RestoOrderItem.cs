@@ -132,6 +132,41 @@ public class RestoOrderItem : Entity
             throw new ArgumentOutOfRangeException(nameof(quantity), "Quantity must be greater than zero.");
         }
 
+        if (string.IsNullOrWhiteSpace(productNameSnapshot))
+        {
+            throw new ArgumentException("Product name is required.", nameof(productNameSnapshot));
+        }
+
+        if (string.IsNullOrWhiteSpace(stationNameSnapshot))
+        {
+            throw new ArgumentException("Station name is required.", nameof(stationNameSnapshot));
+        }
+
+        if (unitPriceSnapshot < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(unitPriceSnapshot), "Unit price cannot be negative.");
+        }
+
+        if (grossAmount < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(grossAmount), "Gross amount cannot be negative.");
+        }
+
+        if (discountAmount < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(discountAmount), "Discount amount cannot be negative.");
+        }
+
+        if (taxAmount < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(taxAmount), "Tax amount cannot be negative.");
+        }
+
+        if (netAmount < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(netAmount), "Net amount cannot be negative.");
+        }
+
         return new RestoOrderItem(
             tenantId, restoOrderRoundId, productVariantId, productNameSnapshot, variantNameSnapshot,
             stationId, stationNameSnapshot, unitPriceSnapshot, taxRateSnapshot, grossAmount, discountAmount,
@@ -144,8 +179,45 @@ public class RestoOrderItem : Entity
         KitchenStatus = RestoKitchenStatus.Pending;
     }
 
+    /// <summary>Adds a frozen modifier line. Only valid before this item has been released to the
+    /// kitchen (<see cref="KitchenStatus"/> is still null) and while it hasn't been voided — a
+    /// modifier added after firing would silently change what the kitchen sees without ever
+    /// reaching them. This domain-only plan does NOT recompute <see cref="UnitPriceSnapshot"/>,
+    /// <see cref="GrossAmount"/>, <see cref="DiscountAmount"/>, <see cref="TaxAmount"/>, or
+    /// <see cref="NetAmount"/> when a modifier is added: those fields are frozen once, at
+    /// <see cref="Create"/>/<see cref="RestoOrderRound.AddItem"/> time. A future M2 application
+    /// service is responsible for calling <see cref="AddModifier"/> (if at all) strictly BEFORE the
+    /// round is released, and for computing this item's pricing snapshot fields so they already
+    /// include every modifier's <see cref="RestoOrderItemModifier.PriceDeltaSnapshot"/> at the moment
+    /// it calls <c>AddItem</c> — otherwise the price shown to the customer during ordering can
+    /// silently drift from what settlement ultimately charges.</summary>
     public RestoOrderItemModifier AddModifier(string modifierGroupNameSnapshot, string modifierOptionNameSnapshot, decimal priceDeltaSnapshot)
     {
+        if (KitchenStatus is not null)
+        {
+            throw new InvalidOperationException("A modifier cannot be added once the item has been released to the kitchen.");
+        }
+
+        if (VoidedAtUtc is not null)
+        {
+            throw new InvalidOperationException("This item has been voided and cannot be progressed further.");
+        }
+
+        if (string.IsNullOrWhiteSpace(modifierGroupNameSnapshot))
+        {
+            throw new ArgumentException("Modifier group name is required.", nameof(modifierGroupNameSnapshot));
+        }
+
+        if (string.IsNullOrWhiteSpace(modifierOptionNameSnapshot))
+        {
+            throw new ArgumentException("Modifier option name is required.", nameof(modifierOptionNameSnapshot));
+        }
+
+        if (priceDeltaSnapshot < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(priceDeltaSnapshot), "A modifier's price delta cannot be negative.");
+        }
+
         var modifier = RestoOrderItemModifier.Create(TenantId, Id, modifierGroupNameSnapshot, modifierOptionNameSnapshot, priceDeltaSnapshot);
         _modifiers.Add(modifier);
         return modifier;
@@ -153,6 +225,11 @@ public class RestoOrderItem : Entity
 
     public void Acknowledge(Guid userId, DateTime nowUtc)
     {
+        if (VoidedAtUtc is not null)
+        {
+            throw new InvalidOperationException("This item has been voided and cannot be progressed further.");
+        }
+
         if (KitchenStatus != RestoKitchenStatus.Pending)
         {
             throw new InvalidOperationException("Only a pending item can be acknowledged.");
@@ -166,6 +243,11 @@ public class RestoOrderItem : Entity
 
     public void MarkReady(Guid userId, DateTime nowUtc)
     {
+        if (VoidedAtUtc is not null)
+        {
+            throw new InvalidOperationException("This item has been voided and cannot be progressed further.");
+        }
+
         if (KitchenStatus != RestoKitchenStatus.Acknowledged)
         {
             throw new InvalidOperationException("Only an acknowledged item can be marked ready.");
@@ -179,6 +261,11 @@ public class RestoOrderItem : Entity
 
     public void MarkServed(Guid userId, DateTime nowUtc)
     {
+        if (VoidedAtUtc is not null)
+        {
+            throw new InvalidOperationException("This item has been voided and cannot be progressed further.");
+        }
+
         if (KitchenStatus != RestoKitchenStatus.Ready)
         {
             throw new InvalidOperationException("Only a ready item can be marked served.");
