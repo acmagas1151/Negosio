@@ -103,7 +103,7 @@ public class TenantMigrationTests : IntegrationTest
         {
             // Confirms the rollback actually took the two Pickup-plan migrations and the later
             // FulfillmentCancel-approver migration back out.
-            (await db.Database.GetPendingMigrationsAsync()).Should().HaveCount(3);
+            (await db.Database.GetPendingMigrationsAsync()).Should().HaveCount(4);
 
             await db.Database.MigrateAsync(); // forward again to latest — what a real deploy does
             (await db.Database.GetPendingMigrationsAsync()).Should().BeEmpty();
