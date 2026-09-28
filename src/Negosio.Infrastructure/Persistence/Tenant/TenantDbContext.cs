@@ -77,6 +77,8 @@ public sealed class TenantDbContext : DbContext, ITenantDbContext
 
     public DbSet<RestoStation> RestoStations => Set<RestoStation>();
 
+    public DbSet<RestoTable> RestoTables => Set<RestoTable>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // Only the operational configurations (not the platform ones, which share this assembly).
