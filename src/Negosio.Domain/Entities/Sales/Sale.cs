@@ -24,7 +24,8 @@ public class Sale : Entity
         Guid registerSessionId,
         string saleNumber,
         Guid clientRequestId,
-        Guid createdByUserId)
+        Guid createdByUserId,
+        SaleOrigin origin)
     {
         TenantId = tenantId;
         BranchId = branchId;
@@ -33,6 +34,7 @@ public class Sale : Entity
         ClientRequestId = clientRequestId;
         CreatedByUserId = createdByUserId;
         Status = SaleStatus.Completed;
+        Origin = origin;
     }
 
     public Guid TenantId { get; private set; }
@@ -46,6 +48,8 @@ public class Sale : Entity
     public Guid ClientRequestId { get; private set; }
 
     public SaleStatus Status { get; private set; }
+
+    public SaleOrigin Origin { get; private set; }
 
     public decimal Subtotal { get; private set; }
 
@@ -88,8 +92,9 @@ public class Sale : Entity
         Guid registerSessionId,
         string saleNumber,
         Guid clientRequestId,
-        Guid createdByUserId) =>
-        new(tenantId, branchId, registerSessionId, saleNumber, clientRequestId, createdByUserId);
+        Guid createdByUserId,
+        SaleOrigin origin = SaleOrigin.Retail) =>
+        new(tenantId, branchId, registerSessionId, saleNumber, clientRequestId, createdByUserId, origin);
 
     public SaleItem AddItem(
         Guid productVariantId,

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Negosio.Domain.Entities;
+using Negosio.Domain.Enums;
 
 namespace Negosio.Infrastructure.Persistence.Configurations;
 
@@ -19,6 +20,7 @@ public sealed class SaleConfiguration : IEntityTypeConfiguration<Sale>
         builder.Property(s => s.SaleNumber).IsRequired().HasMaxLength(30).IsUnicode(false);
         builder.Property(s => s.ClientRequestId).IsRequired();
         builder.Property(s => s.Status).IsRequired().HasConversion<int>();
+        builder.Property(s => s.Origin).IsRequired().HasConversion<int>().HasDefaultValue(SaleOrigin.Retail);
         builder.Property(s => s.Subtotal).HasPrecision(18, 2);
         builder.Property(s => s.DiscountTotal).HasPrecision(18, 2);
         builder.Property(s => s.TaxTotal).HasPrecision(18, 2);

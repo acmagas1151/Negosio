@@ -59,6 +59,10 @@ public class Branch : Entity
 
     public bool IsActive { get; private set; }
 
+    public bool SupportsPayAsYouOrder { get; private set; }
+
+    public bool SupportsBillOut { get; private set; }
+
     public static Branch Create(
         Guid tenantId,
         string name,
@@ -121,6 +125,13 @@ public class Branch : Entity
     public void Reactivate()
     {
         IsActive = true;
+        Touch();
+    }
+
+    public void ConfigureRestoServiceTypes(bool supportsPayAsYouOrder, bool supportsBillOut)
+    {
+        SupportsPayAsYouOrder = supportsPayAsYouOrder;
+        SupportsBillOut = supportsBillOut;
         Touch();
     }
 }
