@@ -79,6 +79,12 @@ public sealed class TenantDbContext : DbContext, ITenantDbContext
 
     public DbSet<RestoTable> RestoTables => Set<RestoTable>();
 
+    public DbSet<ModifierGroup> ModifierGroups => Set<ModifierGroup>();
+
+    public DbSet<ModifierOption> ModifierOptions => Set<ModifierOption>();
+
+    public DbSet<ProductModifierGroup> ProductModifierGroups => Set<ProductModifierGroup>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // Only the operational configurations (not the platform ones, which share this assembly).
