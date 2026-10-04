@@ -12,4 +12,5 @@ public enum UserPermission
     DiscountApply = 3,
     SalesReturn = 4,
     FulfillmentCancel = 5,
+    CashMovement = 6,
 }

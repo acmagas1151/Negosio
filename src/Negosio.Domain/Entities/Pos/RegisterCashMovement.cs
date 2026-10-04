@@ -16,7 +16,7 @@ public class RegisterCashMovement : Entity
 
     private RegisterCashMovement(
         Guid tenantId, Guid branchId, Guid registerSessionId, CashMovementType type,
-        decimal amount, string reason, Guid createdByUserId)
+        decimal amount, string reason, Guid createdByUserId, Guid? approvedByUserId)
     {
         TenantId = tenantId;
         BranchId = branchId;
@@ -25,6 +25,7 @@ public class RegisterCashMovement : Entity
         Amount = amount;
         Reason = reason;
         CreatedByUserId = createdByUserId;
+        ApprovedByUserId = approvedByUserId;
     }
 
     public Guid TenantId { get; private set; }
@@ -41,9 +42,14 @@ public class RegisterCashMovement : Entity
 
     public Guid CreatedByUserId { get; private set; }
 
+    /// <summary>Set only when the creator needed Manager/Admin/Owner approval to record this movement
+    /// (a Cashier without the CashMovement grant) — null when Owner/Admin/Manager acted directly, or a
+    /// Cashier held the grant. Same shape as <see cref="DeliveryReceipt.ApprovedByUserId"/>.</summary>
+    public Guid? ApprovedByUserId { get; private set; }
+
     public static RegisterCashMovement Create(
         Guid tenantId, Guid branchId, Guid registerSessionId, CashMovementType type,
-        decimal amount, string reason, Guid createdByUserId)
+        decimal amount, string reason, Guid createdByUserId, Guid? approvedByUserId = null)
     {
         if (!Enum.IsDefined(type))
         {
@@ -60,6 +66,7 @@ public class RegisterCashMovement : Entity
             throw new ArgumentException("A reason is required.", nameof(reason));
         }
 
-        return new RegisterCashMovement(tenantId, branchId, registerSessionId, type, amount, reason.Trim(), createdByUserId);
+        return new RegisterCashMovement(
+            tenantId, branchId, registerSessionId, type, amount, reason.Trim(), createdByUserId, approvedByUserId);
     }
 }

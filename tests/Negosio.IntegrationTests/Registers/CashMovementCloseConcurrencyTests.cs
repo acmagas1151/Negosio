@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using FluentAssertions;
 using Negosio.Application.Common;
 using Negosio.Application.Registers;
+using Negosio.Application.Staff;
 using Negosio.Domain.Enums;
 using Negosio.IntegrationTests.Infrastructure;
 
@@ -47,6 +48,12 @@ public class CashMovementCloseConcurrencyTests : IntegrationTest
         Client.DefaultRequestHeaders.Authorization = null;
 
         var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+        (await Client.SendAsync(AuthorizedRequest(HttpMethod.Put, $"/api/staff/{cashierId}/permissions", owner.AccessToken,
+            new ChangeStaffPermissionsRequest(
+                SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false,
+                FulfillmentCancel: false, CashMovement: true)))).EnsureSuccessStatusCode();
+
         var openRes = await Client.SendAsync(AuthorizedRequest(HttpMethod.Post, "/api/register-sessions/open", cashierToken,
             new OpenRegisterSessionRequest(register.Id, 1000m)));
         var session = (await openRes.Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;

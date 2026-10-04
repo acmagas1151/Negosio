@@ -1,6 +1,7 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Branches;
 using Negosio.Application.Common;
 using Negosio.Domain.Entities;
 using Negosio.Domain.Enums;
@@ -145,34 +146,8 @@ public sealed class RegisterSessionService : IRegisterSessionService
             throw new BusinessRuleException(ErrorCodes.RegisterSessionNotOpen, "This register session is not open.");
         }
 
-        var saleIds = _db.Sales.Where(s => s.TenantId == tenantId && s.RegisterSessionId == session.Id).Select(s => s.Id);
-
-        // Gross: every cash payment on this session's sales, regardless of a later void — Payment rows
-        // are never deleted. Voided: the subset of that belonging to sales now Status == Voided, so the
-        // UI can show "Gross" and "Voided" as two distinct lines rather than a pre-subtracted number.
-        var grossCashSales = await _db.Payments
-            .Where(p => p.TenantId == tenantId && p.Method == PaymentMethod.Cash && saleIds.Contains(p.SaleId))
-            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
-
-        var voidedSaleIds = _db.Sales.Where(s => s.TenantId == tenantId && s.RegisterSessionId == session.Id && s.Status == SaleStatus.Voided).Select(s => s.Id);
-        var voidedCashSales = await _db.Payments
-            .Where(p => p.TenantId == tenantId && p.Method == PaymentMethod.Cash && voidedSaleIds.Contains(p.SaleId))
-            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
-
-        var returnIds = _db.SaleReturns.Where(r => r.TenantId == tenantId && saleIds.Contains(r.SaleId)).Select(r => r.Id);
-        var refundCashOut = await _db.RefundPayments
-            .Where(r => r.TenantId == tenantId && r.Method == PaymentMethod.Cash && returnIds.Contains(r.SaleReturnId))
-            .SumAsync(r => (decimal?)r.Amount, cancellationToken) ?? 0m;
-
-        var cashIn = await _db.RegisterCashMovements
-            .Where(m => m.TenantId == tenantId && m.RegisterSessionId == session.Id && m.Type == CashMovementType.CashIn)
-            .SumAsync(m => (decimal?)m.Amount, cancellationToken) ?? 0m;
-        var cashOut = await _db.RegisterCashMovements
-            .Where(m => m.TenantId == tenantId && m.RegisterSessionId == session.Id && m.Type == CashMovementType.CashOut)
-            .SumAsync(m => (decimal?)m.Amount, cancellationToken) ?? 0m;
-
-        var expected = session.OpeningCash + grossCashSales - voidedCashSales - refundCashOut + cashIn - cashOut;
-        var breakdown = new CashReconciliationBreakdown(grossCashSales, voidedCashSales, refundCashOut, cashIn, cashOut);
+        var breakdown = await ComputeBreakdownAsync(tenantId, session.Id, cancellationToken);
+        var expected = ExpectedCash(session.OpeningCash, breakdown);
 
         // ClosedByUserId = the acting user (the original cashier on a normal close, an Owner/Admin
         // on a force-close); OpenedByUserId is never touched.
@@ -222,6 +197,67 @@ public sealed class RegisterSessionService : IRegisterSessionService
         }
 
         return await ProjectAsync(id.Value, tenantId, cancellationToken);
+    }
+
+    public async Task<ExpectedCashPreviewDto> PreviewExpectedCashAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        var tenantId = RequireTenant();
+
+        var session = await _db.RegisterSessions.AsNoTracking()
+            .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Id == sessionId, cancellationToken)
+            ?? throw new NotFoundException(ErrorCodes.RegisterSessionNotFound, "Register session not found.");
+
+        // Same scope as the two close actions this preview feeds: the session's own opener
+        // (self-close), or Owner/Admin (force-close, gated by AuthorizationPolicies.RegisterForceClose
+        // at the controller — no branch-scoped Manager force-close path exists to account for here).
+        if (session.OpenedByUserId != _currentUser.UserId && !BranchRoles.IsAllBranch(_currentUser.Role))
+        {
+            throw new ForbiddenAppException(ErrorCodes.SessionNotOwned, "This register session belongs to another user.");
+        }
+
+        if (session.Status != RegisterSessionStatus.Open)
+        {
+            throw new BusinessRuleException(ErrorCodes.RegisterSessionNotOpen, "This register session is not open.");
+        }
+
+        var breakdown = await ComputeBreakdownAsync(tenantId, sessionId, cancellationToken);
+        return new ExpectedCashPreviewDto(session.OpeningCash, breakdown, ExpectedCash(session.OpeningCash, breakdown));
+    }
+
+    private static decimal ExpectedCash(decimal openingCash, CashReconciliationBreakdown breakdown) =>
+        openingCash + breakdown.GrossCashSales - breakdown.VoidedCashSales - breakdown.RefundCashOut + breakdown.CashIn - breakdown.CashOut;
+
+    /// <summary>The four SUM queries behind a session's expected cash — shared by the authoritative,
+    /// lock-protected close path and the advisory, no-lock <see cref="PreviewExpectedCashAsync"/>.</summary>
+    private async Task<CashReconciliationBreakdown> ComputeBreakdownAsync(Guid tenantId, Guid sessionId, CancellationToken cancellationToken)
+    {
+        var saleIds = _db.Sales.Where(s => s.TenantId == tenantId && s.RegisterSessionId == sessionId).Select(s => s.Id);
+
+        // Gross: every cash payment on this session's sales, regardless of a later void — Payment rows
+        // are never deleted. Voided: the subset of that belonging to sales now Status == Voided, so the
+        // UI can show "Gross" and "Voided" as two distinct lines rather than a pre-subtracted number.
+        var grossCashSales = await _db.Payments
+            .Where(p => p.TenantId == tenantId && p.Method == PaymentMethod.Cash && saleIds.Contains(p.SaleId))
+            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+
+        var voidedSaleIds = _db.Sales.Where(s => s.TenantId == tenantId && s.RegisterSessionId == sessionId && s.Status == SaleStatus.Voided).Select(s => s.Id);
+        var voidedCashSales = await _db.Payments
+            .Where(p => p.TenantId == tenantId && p.Method == PaymentMethod.Cash && voidedSaleIds.Contains(p.SaleId))
+            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+
+        var returnIds = _db.SaleReturns.Where(r => r.TenantId == tenantId && saleIds.Contains(r.SaleId)).Select(r => r.Id);
+        var refundCashOut = await _db.RefundPayments
+            .Where(r => r.TenantId == tenantId && r.Method == PaymentMethod.Cash && returnIds.Contains(r.SaleReturnId))
+            .SumAsync(r => (decimal?)r.Amount, cancellationToken) ?? 0m;
+
+        var cashIn = await _db.RegisterCashMovements
+            .Where(m => m.TenantId == tenantId && m.RegisterSessionId == sessionId && m.Type == CashMovementType.CashIn)
+            .SumAsync(m => (decimal?)m.Amount, cancellationToken) ?? 0m;
+        var cashOut = await _db.RegisterCashMovements
+            .Where(m => m.TenantId == tenantId && m.RegisterSessionId == sessionId && m.Type == CashMovementType.CashOut)
+            .SumAsync(m => (decimal?)m.Amount, cancellationToken) ?? 0m;
+
+        return new CashReconciliationBreakdown(grossCashSales, voidedCashSales, refundCashOut, cashIn, cashOut);
     }
 
     private async Task<RegisterSessionDto> ProjectAsync(Guid sessionId, Guid tenantId, CancellationToken cancellationToken)

@@ -265,7 +265,7 @@ public class PickupTests : IntegrationTest
         (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions")
         {
             Content = JsonContent.Create(new ChangeStaffPermissionsRequest(
-                SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false, FulfillmentCancel: true)),
+                SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false, FulfillmentCancel: true, CashMovement: false)),
         })).StatusCode.Should().Be(HttpStatusCode.OK);
 
         Authorize(cashierToken);

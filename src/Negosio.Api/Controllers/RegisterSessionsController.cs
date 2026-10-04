@@ -47,6 +47,14 @@ public sealed class RegisterSessionsController : ControllerBase
         CancellationToken cancellationToken)
         => Ok(await _sessions.ForceCloseAsync(id, request, cancellationToken));
 
+    /// <summary>Advisory expected-cash preview for a still-open session — see
+    /// <see cref="ExpectedCashPreviewDto"/>. Used by the close-session UI's confirmation step; the
+    /// actual close recomputes this itself under its own lock, so a race here is never load-bearing.</summary>
+    [HttpGet("{id:guid}/expected-cash")]
+    [ProducesResponseType(typeof(ExpectedCashPreviewDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ExpectedCashPreviewDto>> PreviewExpectedCash(Guid id, CancellationToken cancellationToken)
+        => Ok(await _sessions.PreviewExpectedCashAsync(id, cancellationToken));
+
     [HttpGet("current")]
     [ProducesResponseType(typeof(RegisterSessionDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<RegisterSessionDto>> Current(

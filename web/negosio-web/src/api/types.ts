@@ -385,12 +385,17 @@ export interface RegisterCashMovementDto {
   createdByUserId: string
   createdByName: string
   createdAtUtc: string
+  /** The Manager/Admin/Owner who approved a Cashier's cash movement — null when the creator acted
+   * directly (a privileged role, or a Cashier with the grant). */
+  approvedByName: string | null
 }
 
 export interface CreateCashMovementRequest {
   type: CashMovementType
   amount: number
   reason: string
+  /** Supplied only on a retry after the server returns CASH_MOVEMENT_APPROVAL_REQUIRED. */
+  approval?: VoidSaleApprovalInput
 }
 
 export interface OpenRegisterSessionRequest {
@@ -400,6 +405,25 @@ export interface OpenRegisterSessionRequest {
 
 export interface CloseRegisterSessionRequest {
   closingCash: number
+}
+
+/** The five components that sum to a session's expected cash — kept separate so the close-session
+ * UI can render an unambiguous breakdown instead of one opaque total. Mirrors the same shape the
+ * post-close reconciliation result already uses. */
+export interface CashReconciliationBreakdown {
+  grossCashSales: number
+  voidedCashSales: number
+  refundCashOut: number
+  cashIn: number
+  cashOut: number
+}
+
+/** Live, advisory expected-cash snapshot for a still-open session — not authoritative; the actual
+ * close recomputes this itself under its own lock. */
+export interface ExpectedCashPreviewDto {
+  openingCash: number
+  breakdown: CashReconciliationBreakdown
+  expectedCash: number
 }
 
 // ---- POS: branch/register context ----
@@ -981,6 +1005,7 @@ export interface StaffMemberDto {
   discountApply: boolean
   cashDrawerOpen: boolean
   fulfillmentCancel: boolean
+  cashMovement: boolean
 }
 
 /** One flag per grantable permission — always sent together, so "Save changes" in the permissions
@@ -991,6 +1016,7 @@ export interface ChangeStaffPermissionsRequest {
   discountApply: boolean
   cashDrawerOpen: boolean
   fulfillmentCancel: boolean
+  cashMovement: boolean
 }
 
 export interface InviteStaffRequest {

@@ -1,9 +1,12 @@
+using System.Net;
+using System.Net.Http;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Negosio.Application.Common;
 using Negosio.Application.Pos;
 using Negosio.Application.Registers;
 using Negosio.Application.Sales;
+using Negosio.Application.Staff;
 using Negosio.Domain.Enums;
 using Negosio.IntegrationTests.Infrastructure;
 
@@ -26,6 +29,14 @@ public class ReconciliationTests : IntegrationTest
         var (_, variantB) = await SeedStockedProductAsync(branchId, category.Id, "Product B", "SKU-B", sellingPrice: 200m, openingStock: 20m);
 
         var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+        (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions")
+        {
+            Content = JsonContent.Create(new ChangeStaffPermissionsRequest(
+                SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false,
+                FulfillmentCancel: false, CashMovement: true)),
+        })).EnsureSuccessStatusCode();
+
         Authorize(cashierToken);
         var session = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
             new OpenRegisterSessionRequest(register.Id, 5000m))).Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
@@ -72,5 +83,101 @@ public class ReconciliationTests : IntegrationTest
         closed.ExpectedCash.Should().Be(4700m);
         closed.ClosingCash.Should().Be(4700m);
         closed.CashDifference.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task Preview_expected_cash_matches_the_eventual_close_reconciliation()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+        var category = await CreateCategoryAsync();
+        var (_, variantA) = await SeedStockedProductAsync(branchId, category.Id, "Product A", "SKU-A", sellingPrice: 500m, openingStock: 20m);
+
+        var cashierToken = await AddTenantUserTokenAsync("cara2@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+        (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions")
+        {
+            Content = JsonContent.Create(new ChangeStaffPermissionsRequest(
+                SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false,
+                FulfillmentCancel: false, CashMovement: true)),
+        })).EnsureSuccessStatusCode();
+
+        Authorize(cashierToken);
+        var session = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
+            new OpenRegisterSessionRequest(register.Id, 1000m))).Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+
+        await Client.PostAsJsonAsync("/api/pos/checkout", new CheckoutRequest(
+            branchId, session.Id, Guid.NewGuid(),
+            new[] { new CheckoutItemInput(variantA, 1m, null) },
+            new[] { new CheckoutPaymentInput(PaymentMethod.Cash, ReceivedAmount: 500m) }));
+        (await Client.PostAsJsonAsync($"/api/register-sessions/{session.Id}/cash-movements",
+            new CreateCashMovementRequest(CashMovementType.CashIn, 200m, "Float top-up"))).EnsureSuccessStatusCode();
+
+        // Preview, taken BEFORE closing, against the same state the close below will see.
+        var preview = await Client.GetFromJsonAsync<ExpectedCashPreviewDto>(
+            $"/api/register-sessions/{session.Id}/expected-cash", TestJson.Options);
+        preview!.OpeningCash.Should().Be(1000m);
+        preview.Breakdown.GrossCashSales.Should().Be(500m);
+        preview.Breakdown.CashIn.Should().Be(200m);
+        preview.ExpectedCash.Should().Be(1700m); // 1000 + 500 - 0 - 0 + 200 - 0
+
+        var closeRes = await Client.PostAsJsonAsync($"/api/register-sessions/{session.Id}/close",
+            new CloseRegisterSessionRequest(1700m));
+        closeRes.EnsureSuccessStatusCode();
+        var closed = (await closeRes.Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+        closed.ExpectedCash.Should().Be(preview.ExpectedCash, "nothing changed between the preview and the real close");
+    }
+
+    [Fact]
+    public async Task Preview_is_forbidden_for_another_cashiers_session()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+        var cashierAToken = await AddTenantUserTokenAsync("a2@example.com", UserRole.Cashier, branchId);
+        var cashierBToken = await AddTenantUserTokenAsync("b2@example.com", UserRole.Cashier, branchId);
+
+        Authorize(cashierAToken);
+        var session = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
+            new OpenRegisterSessionRequest(register.Id, 500m))).Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+
+        Authorize(cashierBToken);
+        var res = await Client.GetAsync($"/api/register-sessions/{session.Id}/expected-cash");
+        res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Owner_can_preview_a_cashiers_open_session()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+        var cashierToken = await AddTenantUserTokenAsync("c2@example.com", UserRole.Cashier, branchId);
+
+        Authorize(cashierToken);
+        var session = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
+            new OpenRegisterSessionRequest(register.Id, 500m))).Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+
+        Authorize(owner.AccessToken);
+        var res = await Client.GetAsync($"/api/register-sessions/{session.Id}/expected-cash");
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Preview_is_rejected_once_the_session_is_closed()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+
+        var session = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
+            new OpenRegisterSessionRequest(register.Id, 500m))).Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+        (await Client.PostAsJsonAsync($"/api/register-sessions/{session.Id}/close", new CloseRegisterSessionRequest(500m)))
+            .EnsureSuccessStatusCode();
+
+        var res = await Client.GetAsync($"/api/register-sessions/{session.Id}/expected-cash");
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be(ErrorCodes.RegisterSessionNotOpen);
     }
 }

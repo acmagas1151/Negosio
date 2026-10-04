@@ -102,7 +102,8 @@ public sealed class StaffService : IStaffService
                 SalesReturn: isCashier && (granted?.Contains(UserPermission.SalesReturn) ?? false),
                 DiscountApply: isCashier && (granted?.Contains(UserPermission.DiscountApply) ?? false),
                 CashDrawerOpen: isCashier && (granted?.Contains(UserPermission.CashDrawerOpen) ?? false),
-                FulfillmentCancel: isCashier && (granted?.Contains(UserPermission.FulfillmentCancel) ?? false));
+                FulfillmentCancel: isCashier && (granted?.Contains(UserPermission.FulfillmentCancel) ?? false),
+                CashMovement: isCashier && (granted?.Contains(UserPermission.CashMovement) ?? false));
         });
 
         var now = UtcNow;
@@ -117,7 +118,8 @@ public sealed class StaffService : IStaffService
             InvitedByName: names.GetValueOrDefault(i.InvitedByUserId),
             BranchId: i.BranchId,
             BranchName: i.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null,
-            SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false, FulfillmentCancel: false));
+            SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false, FulfillmentCancel: false,
+            CashMovement: false));
 
         var assigned = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
         if (assigned is { } branchId)
@@ -544,7 +546,8 @@ public sealed class StaffService : IStaffService
             SalesReturn: granted.Contains(UserPermission.SalesReturn),
             DiscountApply: granted.Contains(UserPermission.DiscountApply),
             CashDrawerOpen: granted.Contains(UserPermission.CashDrawerOpen),
-            FulfillmentCancel: granted.Contains(UserPermission.FulfillmentCancel));
+            FulfillmentCancel: granted.Contains(UserPermission.FulfillmentCancel),
+            CashMovement: granted.Contains(UserPermission.CashMovement));
     }
 
     /// <summary>Branch-scoped role → an active branch id is required; Owner/Admin → must be null.</summary>

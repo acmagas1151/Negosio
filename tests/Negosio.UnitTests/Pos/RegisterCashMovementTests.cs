@@ -36,4 +36,25 @@ public class RegisterCashMovementTests
 
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
+
+    [Fact]
+    public void Create_stamps_the_approver_when_one_was_needed()
+    {
+        var approvedBy = Guid.NewGuid();
+
+        var movement = RegisterCashMovement.Create(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), CashMovementType.CashIn, 100m, "Float top-up",
+            Guid.NewGuid(), approvedBy);
+
+        movement.ApprovedByUserId.Should().Be(approvedBy);
+    }
+
+    [Fact]
+    public void Create_leaves_the_approver_null_when_the_creator_acted_directly()
+    {
+        var movement = RegisterCashMovement.Create(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), CashMovementType.CashIn, 100m, "Float top-up", Guid.NewGuid());
+
+        movement.ApprovedByUserId.Should().BeNull();
+    }
 }

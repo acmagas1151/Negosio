@@ -8,6 +8,7 @@ import type {
   CreateRegisterRequest,
   CreateReturnRequest,
   CloseRegisterSessionRequest,
+  ExpectedCashPreviewDto,
   OpenCashDrawerRequest,
   OpenRegisterSessionRequest,
   PagedResult,
@@ -49,6 +50,8 @@ export const sessionsApi = {
     apiRequest<RegisterSessionDto>(`/api/register-sessions/${id}/close`, { method: 'POST', body }),
   forceClose: (id: string, body: CloseRegisterSessionRequest) =>
     apiRequest<RegisterSessionDto>(`/api/register-sessions/${id}/force-close`, { method: 'POST', body }),
+  previewExpectedCash: (id: string) =>
+    apiRequest<ExpectedCashPreviewDto>(`/api/register-sessions/${id}/expected-cash`),
   cashMovements: {
     create: (sessionId: string, body: CreateCashMovementRequest) =>
       apiRequest<RegisterCashMovementDto>(`/api/register-sessions/${sessionId}/cash-movements`, { method: 'POST', body }),

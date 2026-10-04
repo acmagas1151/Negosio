@@ -20,6 +20,7 @@ public sealed class RegisterCashMovementConfiguration : IEntityTypeConfiguration
         builder.Property(m => m.Amount).HasPrecision(18, 2);
         builder.Property(m => m.Reason).IsRequired().HasMaxLength(500);
         builder.Property(m => m.CreatedByUserId).IsRequired();
+        builder.Property(m => m.ApprovedByUserId);
         builder.Property(m => m.CreatedAtUtc).IsRequired();
         builder.Property(m => m.UpdatedAtUtc).IsRequired();
 

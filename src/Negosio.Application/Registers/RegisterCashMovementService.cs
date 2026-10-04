@@ -14,15 +14,17 @@ public sealed class RegisterCashMovementService : IRegisterCashMovementService
     private readonly ICurrentUser _currentUser;
     private readonly IBranchAccessResolver _branchAccess;
     private readonly IValidator<CreateCashMovementRequest> _validator;
+    private readonly ICashMovementAuthorizationResolver _authResolver;
 
     public RegisterCashMovementService(
         ITenantDbContext db, ICurrentUser currentUser, IBranchAccessResolver branchAccess,
-        IValidator<CreateCashMovementRequest> validator)
+        IValidator<CreateCashMovementRequest> validator, ICashMovementAuthorizationResolver authResolver)
     {
         _db = db;
         _currentUser = currentUser;
         _branchAccess = branchAccess;
         _validator = validator;
+        _authResolver = authResolver;
     }
 
     public async Task<RegisterCashMovementDto> CreateAsync(
@@ -46,6 +48,10 @@ public sealed class RegisterCashMovementService : IRegisterCashMovementService
         {
             throw new BusinessRuleException(ErrorCodes.CashMovementSessionClosed, "This register session is not open.");
         }
+
+        // Fast-fails the common eligibility case above before resolving approver credentials or
+        // opening a transaction — same ordering as VoidSaleService.VoidAsync.
+        var approvedByUserId = await _authResolver.ResolveAsync(session.BranchId, request.Approval, cancellationToken);
 
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
 
@@ -74,7 +80,8 @@ public sealed class RegisterCashMovementService : IRegisterCashMovementService
         }
 
         var movement = RegisterCashMovement.Create(
-            tenantId, session.BranchId, session.Id, request.Type, request.Amount, request.Reason, _currentUser.UserId);
+            tenantId, session.BranchId, session.Id, request.Type, request.Amount, request.Reason,
+            _currentUser.UserId, approvedByUserId);
         _db.RegisterCashMovements.Add(movement);
         await _db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -110,19 +117,27 @@ public sealed class RegisterCashMovementService : IRegisterCashMovementService
             .OrderBy(m => m.CreatedAtUtc)
             .ToListAsync(cancellationToken);
 
+        var actorIds = rows.Select(r => r.CreatedByUserId)
+            .Concat(rows.Where(r => r.ApprovedByUserId is not null).Select(r => r.ApprovedByUserId!.Value))
+            .Distinct();
         var names = await _db.Users.AsNoTracking()
-            .Where(u => rows.Select(r => r.CreatedByUserId).Contains(u.Id))
+            .Where(u => actorIds.Contains(u.Id))
             .ToDictionaryAsync(u => u.Id, u => $"{u.FirstName} {u.LastName}".Trim(), cancellationToken);
 
         return rows.Select(m => new RegisterCashMovementDto(
             m.Id, m.Type, m.Amount, m.Reason, m.CreatedByUserId,
-            names.GetValueOrDefault(m.CreatedByUserId, string.Empty), m.CreatedAtUtc)).ToList();
+            names.GetValueOrDefault(m.CreatedByUserId, string.Empty), m.CreatedAtUtc,
+            m.ApprovedByUserId is { } apu ? names.GetValueOrDefault(apu) : null)).ToList();
     }
 
     private async Task<RegisterCashMovementDto> ToDtoAsync(RegisterCashMovement m, CancellationToken cancellationToken)
     {
         var name = await _db.Users.AsNoTracking().Where(u => u.Id == m.CreatedByUserId)
             .Select(u => u.FirstName + " " + u.LastName).FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
-        return new RegisterCashMovementDto(m.Id, m.Type, m.Amount, m.Reason, m.CreatedByUserId, name, m.CreatedAtUtc);
+        string? approvedByName = m.ApprovedByUserId is { } apu
+            ? await _db.Users.AsNoTracking().Where(u => u.Id == apu)
+                .Select(u => u.FirstName + " " + u.LastName).FirstOrDefaultAsync(cancellationToken)
+            : null;
+        return new RegisterCashMovementDto(m.Id, m.Type, m.Amount, m.Reason, m.CreatedByUserId, name, m.CreatedAtUtc, approvedByName);
     }
 }

@@ -4,6 +4,8 @@ using System.Text;
 using FluentAssertions;
 using Negosio.Application.Common;
 using Negosio.Application.Registers;
+using Negosio.Application.Sales;
+using Negosio.Application.Staff;
 using Negosio.Domain.Enums;
 using Negosio.IntegrationTests.Infrastructure;
 
@@ -16,14 +18,12 @@ public class RegisterCashMovementTests : IntegrationTest
     }
 
     [Fact]
-    public async Task Cashier_can_cash_in_and_out_on_their_own_open_session()
+    public async Task Owner_can_cash_in_and_out_on_an_open_session_without_approval()
     {
         var owner = await RegisterLoginAndAuthorizeAsync();
         var branchId = await GetMainBranchIdAsync(owner);
         var register = await CreateRegisterAsync(branchId, "R1", "R1");
-        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
 
-        Authorize(cashierToken);
         var session = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
             new OpenRegisterSessionRequest(register.Id, 1000m))).Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
 
@@ -38,6 +38,60 @@ public class RegisterCashMovementTests : IntegrationTest
         var list = await Client.GetFromJsonAsync<List<RegisterCashMovementDto>>(
             $"/api/register-sessions/{session.Id}/cash-movements", TestJson.Options);
         list!.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task Cashier_without_grant_requires_approval_then_succeeds_with_valid_manager_credentials()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+        var cashierToken = await AddTenantUserTokenAsync("cara@example.com", UserRole.Cashier, branchId);
+        await CreateManagerAsync("mgr@example.com", "Manager123!", branchId);
+
+        Authorize(cashierToken);
+        var session = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
+            new OpenRegisterSessionRequest(register.Id, 1000m))).Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+
+        var denied = await Client.PostAsJsonAsync($"/api/register-sessions/{session.Id}/cash-movements",
+            new CreateCashMovementRequest(CashMovementType.CashIn, 500m, "Additional float"));
+        denied.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await denied.Content.ReadFromJsonAsync<ApiErrorBody>())!.Code.Should().Be(ErrorCodes.CashMovementApprovalRequired);
+
+        var approved = await Client.PostAsJsonAsync($"/api/register-sessions/{session.Id}/cash-movements",
+            new CreateCashMovementRequest(CashMovementType.CashIn, 500m, "Additional float",
+                Approval: new VoidSaleApprovalInput("mgr@example.com", "Manager123!")));
+        approved.StatusCode.Should().Be(HttpStatusCode.Created);
+        var movement = (await approved.Content.ReadFromJsonAsync<RegisterCashMovementDto>(TestJson.Options))!;
+        movement.ApprovedByName.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Cashier_with_a_direct_grant_records_a_movement_without_any_approval()
+    {
+        var owner = await RegisterLoginAndAuthorizeAsync();
+        var branchId = await GetMainBranchIdAsync(owner);
+        var register = await CreateRegisterAsync(branchId, "R1", "R1");
+        var cashierToken = await AddTenantUserTokenAsync("cara2@example.com", UserRole.Cashier, branchId);
+        var cashierId = await GetUserIdFromTokenAsync(cashierToken);
+
+        (await Client.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"/api/staff/{cashierId}/permissions")
+        {
+            Content = JsonContent.Create(new ChangeStaffPermissionsRequest(
+                SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false,
+                FulfillmentCancel: false, CashMovement: true)),
+        })).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Authorize(cashierToken);
+        var session = (await (await Client.PostAsJsonAsync("/api/register-sessions/open",
+            new OpenRegisterSessionRequest(register.Id, 1000m))).Content.ReadFromJsonAsync<RegisterSessionDto>(TestJson.Options))!;
+
+        var res = await Client.PostAsJsonAsync($"/api/register-sessions/{session.Id}/cash-movements",
+            new CreateCashMovementRequest(CashMovementType.CashOut, 200m, "Petty cash"));
+
+        res.StatusCode.Should().Be(HttpStatusCode.Created);
+        var movement = (await res.Content.ReadFromJsonAsync<RegisterCashMovementDto>(TestJson.Options))!;
+        movement.ApprovedByName.Should().BeNull("the cashier acted on their own direct grant — no approval was used");
     }
 
     [Fact]

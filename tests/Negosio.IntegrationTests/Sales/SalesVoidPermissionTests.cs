@@ -15,7 +15,7 @@ public class SalesVoidPermissionTests : IntegrationTest
     }
 
     private static HttpRequestMessage PermissionsRequest(Guid userId, bool salesVoid) =>
-        new(HttpMethod.Put, $"/api/staff/{userId}/permissions") { Content = JsonContent.Create(new ChangeStaffPermissionsRequest(salesVoid, false, false, false, false)) };
+        new(HttpMethod.Put, $"/api/staff/{userId}/permissions") { Content = JsonContent.Create(new ChangeStaffPermissionsRequest(salesVoid, false, false, false, false, false)) };
 
     private static HttpRequestMessage PermissionsRequest(Guid userId, ChangeStaffPermissionsRequest body) =>
         new(HttpMethod.Put, $"/api/staff/{userId}/permissions") { Content = JsonContent.Create(body) };
@@ -214,7 +214,7 @@ public class SalesVoidPermissionTests : IntegrationTest
         // request always carries all four current values (mirroring the permissions modal's
         // single "Save changes" submitting every toggle's state at once).
         var res = await Client.SendAsync(PermissionsRequest(
-            cashierId, new ChangeStaffPermissionsRequest(SalesVoid: true, SalesReturn: true, DiscountApply: false, CashDrawerOpen: true, FulfillmentCancel: false)));
+            cashierId, new ChangeStaffPermissionsRequest(SalesVoid: true, SalesReturn: true, DiscountApply: false, CashDrawerOpen: true, FulfillmentCancel: false, CashMovement: false)));
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var updated = (await res.Content.ReadFromJsonAsync<StaffMemberDto>(TestJson.Options))!;
         updated.SalesVoid.Should().BeTrue();
@@ -231,7 +231,7 @@ public class SalesVoidPermissionTests : IntegrationTest
 
         // Revoke SalesReturn only — the other three must be unaffected.
         var afterRevoke = await Client.SendAsync(PermissionsRequest(
-            cashierId, new ChangeStaffPermissionsRequest(SalesVoid: true, SalesReturn: false, DiscountApply: false, CashDrawerOpen: true, FulfillmentCancel: false)));
+            cashierId, new ChangeStaffPermissionsRequest(SalesVoid: true, SalesReturn: false, DiscountApply: false, CashDrawerOpen: true, FulfillmentCancel: false, CashMovement: false)));
         afterRevoke.StatusCode.Should().Be(HttpStatusCode.OK);
         var afterRevokeBody = (await afterRevoke.Content.ReadFromJsonAsync<StaffMemberDto>(TestJson.Options))!;
         afterRevokeBody.SalesVoid.Should().BeTrue();
