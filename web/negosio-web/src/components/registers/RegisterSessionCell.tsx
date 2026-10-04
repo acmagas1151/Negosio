@@ -25,8 +25,8 @@ export function RegisterSessionCell({ register }: { register: RegisterDto }) {
   if (!session) {
     return (
       <div className="flex items-center gap-2">
-        <span className="text-text-muted">No open session</span>
-        {canOperate && (
+        <span className="text-text-muted">{register.isActive ? 'No open session' : 'Register inactive'}</span>
+        {canOperate && register.isActive && (
           <Button variant="ghost" size="sm" onClick={() => setOpenOpen(true)}>
             Open session
           </Button>
