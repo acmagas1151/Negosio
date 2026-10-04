@@ -45,4 +45,34 @@ public class BusinessInfoSettingsTests : IntegrationTest
             new UpdateBusinessInfoRequest(null, new string('9', 41)));
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
+
+    [Theory]
+    [InlineData("call me maybe")]
+    [InlineData("0917-ABCDEFG")]
+    [InlineData("none")]
+    public async Task Contact_number_with_letters_is_rejected(string contactNumber)
+    {
+        await RegisterLoginAndAuthorizeAsync();
+        var res = await Client.PutAsJsonAsync("/api/settings/business-info",
+            new UpdateBusinessInfoRequest(contactNumber, null));
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Contact_number_with_too_few_digits_is_rejected()
+    {
+        await RegisterLoginAndAuthorizeAsync();
+        var res = await Client.PutAsJsonAsync("/api/settings/business-info",
+            new UpdateBusinessInfoRequest("+63 2", null));
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Contact_number_with_valid_punctuation_is_accepted()
+    {
+        await RegisterLoginAndAuthorizeAsync();
+        var res = await Client.PutAsJsonAsync("/api/settings/business-info",
+            new UpdateBusinessInfoRequest("+63 (2) 8123-4567", null));
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
 }

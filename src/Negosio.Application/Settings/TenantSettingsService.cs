@@ -27,7 +27,12 @@ public sealed class UpdateBusinessInfoRequestValidator : AbstractValidator<Updat
     public UpdateBusinessInfoRequestValidator()
     {
         RuleFor(x => x.ContactNumber)
-            .MaximumLength(40);
+            .MaximumLength(40)
+            // Digits, spaces, and the punctuation a real phone number actually uses (+, -, (, )) —
+            // never letters. Also requires at least 7 digits, so "+" or "()" alone doesn't pass.
+            .Matches(@"^[0-9+\-()\s]+$").WithMessage("Contact number can only contain digits and + - ( ) characters.")
+            .Must(n => n!.Count(char.IsDigit) >= 7).WithMessage("Contact number must contain at least 7 digits.")
+            .When(x => !string.IsNullOrWhiteSpace(x.ContactNumber));
         RuleFor(x => x.TaxId)
             .MaximumLength(40);
     }
