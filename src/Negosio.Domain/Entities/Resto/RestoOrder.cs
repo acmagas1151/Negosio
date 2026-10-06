@@ -29,7 +29,9 @@ public class RestoOrder : Entity
         RestoServiceType serviceType,
         Guid? tableId,
         string? displayLabel,
-        Guid openedByUserId)
+        Guid openedByUserId,
+        bool pricesIncludeTaxSnapshot,
+        decimal taxRatePercentSnapshot)
     {
         TenantId = tenantId;
         BranchId = branchId;
@@ -40,6 +42,8 @@ public class RestoOrder : Entity
         OpenedByUserId = openedByUserId;
         OpenedAtUtc = DateTime.UtcNow;
         Status = RestoOrderStatus.Open;
+        PricesIncludeTaxSnapshot = pricesIncludeTaxSnapshot;
+        TaxRatePercentSnapshot = taxRatePercentSnapshot;
     }
 
     public Guid TenantId { get; private set; }
@@ -63,15 +67,39 @@ public class RestoOrder : Entity
 
     public DateTime OpenedAtUtc { get; private set; }
 
+    /// <summary>Frozen at open from the tenant's tax mode. Every item on this order is priced with this
+    /// value so a later tenant setting change cannot change what settlement charges (spec G3).</summary>
+    public bool PricesIncludeTaxSnapshot { get; private set; }
+
+    /// <summary>Frozen with the tax mode for the same reason: items on one order must share one rate.</summary>
+    public decimal TaxRatePercentSnapshot { get; private set; }
+
     public DateTime? SettledAtUtc { get; private set; }
 
     public Guid? SaleId { get; private set; }
+
+    /// <summary>Client-supplied settlement idempotency key (spec G7). Unique per tenant when set.</summary>
+    public Guid? SettlementRequestId { get; private set; }
 
     public DateTime? CancelledAtUtc { get; private set; }
 
     public Guid? CancelledByUserId { get; private set; }
 
+    /// <summary>The Manager/Admin/Owner who approved a Cashier's cancellation; null when acted directly.</summary>
+    public Guid? CancelApprovedByUserId { get; private set; }
+
     public string? CancelReason { get; private set; }
+
+    public DateTime? UnpaidClosedAtUtc { get; private set; }
+
+    public Guid? UnpaidClosedByUserId { get; private set; }
+
+    public string? UnpaidClosureReason { get; private set; }
+
+    public Guid? UnpaidClosureApprovedByUserId { get; private set; }
+
+    /// <summary>Client-supplied idempotency key for unpaid closure. Unique per tenant when set.</summary>
+    public Guid? UnpaidClosureRequestId { get; private set; }
 
     /// <summary>SQL Server `rowversion` — EF-managed. See design spec Section 6.3 for how the
     /// application service is required to use this.</summary>
@@ -80,19 +108,27 @@ public class RestoOrder : Entity
     public IReadOnlyCollection<RestoOrderRound> Rounds => _rounds.AsReadOnly();
 
     public static RestoOrder OpenPayAsYouOrder(
-        Guid tenantId, Guid branchId, Guid registerSessionId, Guid openedByUserId, string? displayLabel) =>
-        new(tenantId, branchId, registerSessionId, RestoServiceType.PayAsYouOrder, tableId: null, displayLabel, openedByUserId);
+        Guid tenantId, Guid branchId, Guid registerSessionId, Guid openedByUserId, string? displayLabel,
+        bool pricesIncludeTaxSnapshot, decimal taxRatePercentSnapshot = 0m) =>
+        new(tenantId, branchId, registerSessionId, RestoServiceType.PayAsYouOrder, tableId: null, displayLabel, openedByUserId,
+            pricesIncludeTaxSnapshot, taxRatePercentSnapshot);
 
     public static RestoOrder OpenBillOut(
-        Guid tenantId, Guid branchId, Guid registerSessionId, Guid openedByUserId, Guid tableId, string? displayLabel)
+        Guid tenantId, Guid branchId, Guid registerSessionId, Guid openedByUserId, Guid tableId, string? displayLabel,
+        bool pricesIncludeTaxSnapshot, decimal taxRatePercentSnapshot = 0m)
     {
         if (tableId == Guid.Empty)
         {
             throw new ArgumentException("A Bill-Out order requires a table.", nameof(tableId));
         }
 
-        return new RestoOrder(tenantId, branchId, registerSessionId, RestoServiceType.BillOut, tableId, displayLabel, openedByUserId);
+        return new RestoOrder(tenantId, branchId, registerSessionId, RestoServiceType.BillOut, tableId, displayLabel, openedByUserId,
+            pricesIncludeTaxSnapshot, taxRatePercentSnapshot);
     }
+
+    /// <summary>Bumps this aggregate's version for a change made only to its children (a new round, a new
+    /// item, a round released). Without this a stale client could not detect that the order changed.</summary>
+    public void RecordStructuralChange() => Touch();
 
     public RestoOrderRound OpenNextRound()
     {
@@ -110,7 +146,7 @@ public class RestoOrder : Entity
     /// been created in the same transaction. <paramref name="nowUtc"/> is caller-supplied so the
     /// timestamp matches whatever the settlement transaction used elsewhere, exactly like
     /// <see cref="Sale.Void"/>'s own convention.</summary>
-    public void Settle(Guid saleId, DateTime nowUtc)
+    public void Settle(Guid saleId, Guid settlementRequestId, DateTime nowUtc)
     {
         if (Status != RestoOrderStatus.Open)
         {
@@ -119,6 +155,7 @@ public class RestoOrder : Entity
 
         Status = RestoOrderStatus.Settled;
         SaleId = saleId;
+        SettlementRequestId = settlementRequestId;
         SettledAtUtc = nowUtc;
         Touch();
     }
@@ -128,7 +165,7 @@ public class RestoOrder : Entity
     /// <see cref="RestoOrderRoundStatus.Released"/>, food has genuinely been sent to the kitchen and
     /// this is no longer a "nothing happened" cancellation (design spec Section 10, Unresolved
     /// Decision #2). The application service must route that case through Settlement instead.</summary>
-    public void Cancel(Guid cancelledByUserId, string reason, DateTime nowUtc)
+    public void Cancel(Guid cancelledByUserId, string reason, DateTime nowUtc, Guid? approvedByUserId = null)
     {
         if (Status != RestoOrderStatus.Open)
         {
@@ -148,8 +185,44 @@ public class RestoOrder : Entity
 
         Status = RestoOrderStatus.Cancelled;
         CancelledByUserId = cancelledByUserId;
+        CancelApprovedByUserId = approvedByUserId;
         CancelReason = reason.Trim();
         CancelledAtUtc = nowUtc;
+        Touch();
+    }
+
+    /// <summary>Unpaid closure of a Bill-Out order whose food has already been released to the kitchen
+    /// (spec Section 5.3). Creates no Sale, Payment, or sale number; the application service records
+    /// waste for consumed items in the same transaction.</summary>
+    public void UnpaidClose(
+        Guid closedByUserId, string reason, Guid? approvedByUserId, Guid closureRequestId, DateTime nowUtc)
+    {
+        if (ServiceType != RestoServiceType.BillOut)
+        {
+            throw new InvalidOperationException("Only a Bill-Out order can be closed unpaid.");
+        }
+
+        if (Status != RestoOrderStatus.Open)
+        {
+            throw new InvalidOperationException("Only an open order can be closed unpaid.");
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new ArgumentException("An unpaid-closure reason is required.", nameof(reason));
+        }
+
+        if (!_rounds.Any(r => r.Status == RestoOrderRoundStatus.Released))
+        {
+            throw new InvalidOperationException("An unpaid closure requires at least one released round; cancel an unsent order instead.");
+        }
+
+        Status = RestoOrderStatus.UnpaidClosed;
+        UnpaidClosedByUserId = closedByUserId;
+        UnpaidClosureReason = reason.Trim();
+        UnpaidClosureApprovedByUserId = approvedByUserId;
+        UnpaidClosureRequestId = closureRequestId;
+        UnpaidClosedAtUtc = nowUtc;
         Touch();
     }
 }

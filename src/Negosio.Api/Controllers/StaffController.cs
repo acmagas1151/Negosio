@@ -108,6 +108,9 @@ public sealed class StaffController : ControllerBase
             [UserPermission.CashDrawerOpen] = request.CashDrawerOpen,
             [UserPermission.FulfillmentCancel] = request.FulfillmentCancel,
             [UserPermission.CashMovement] = request.CashMovement,
+            [UserPermission.RestoItemVoid] = request.RestoItemVoid,
+            [UserPermission.RestoOrderCancel] = request.RestoOrderCancel,
+            [UserPermission.RestoUnpaidClose] = request.RestoUnpaidClose,
         };
         return Ok(await _permissions.SetAsync(id, grants, cancellationToken));
     }

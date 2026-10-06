@@ -103,6 +103,38 @@ public static class ErrorCodes
     public const string FulfillmentCancelApprovalRequired = "FULFILLMENT_CANCEL_APPROVAL_REQUIRED";
     public const string CashMovementApprovalRequired = "CASH_MOVEMENT_APPROVAL_REQUIRED";
 
+    // ---- RestoPOS (M2) ----
+    public const string RestoItemVoidApprovalRequired = "RESTO_ITEM_VOID_APPROVAL_REQUIRED";
+    public const string RestoOrderCancelApprovalRequired = "RESTO_ORDER_CANCEL_APPROVAL_REQUIRED";
+    public const string RestoUnpaidCloseApprovalRequired = "RESTO_UNPAID_CLOSE_APPROVAL_REQUIRED";
+    public const string ReturnNotAllowedForResto = "RETURN_NOT_ALLOWED_FOR_RESTO";
+    public const string RestoOrderAlreadySettled = "RESTO_ORDER_ALREADY_SETTLED";
+    public const string RestoOrderConcurrencyConflict = "RESTO_ORDER_CONCURRENCY_CONFLICT";
+    public const string RestoOrderNotOpen = "RESTO_ORDER_NOT_OPEN";
+    public const string RestoOrderNotFound = "RESTO_ORDER_NOT_FOUND";
+    public const string RestoDraftRoundsPending = "RESTO_DRAFT_ROUNDS_PENDING";
+    public const string RestoRoundNotDraft = "RESTO_ROUND_NOT_DRAFT";
+    public const string RestoRoundNotFound = "RESTO_ROUND_NOT_FOUND";
+    public const string RestoServiceTypeNotEnabled = "RESTO_SERVICE_TYPE_NOT_ENABLED";
+    public const string RestoTableRequired = "RESTO_TABLE_REQUIRED";
+    public const string RestoTableNotFound = "RESTO_TABLE_NOT_FOUND";
+    public const string RestoTableOccupied = "RESTO_TABLE_OCCUPIED";
+    public const string RestoOrderCancelHasReleasedRound = "RESTO_ORDER_CANCEL_HAS_RELEASED_ROUND";
+    public const string RestoUnpaidCloseRequiresReleasedRound = "RESTO_UNPAID_CLOSE_REQUIRES_RELEASED_ROUND";
+    public const string RestoItemAlreadyVoided = "RESTO_ITEM_ALREADY_VOIDED";
+    public const string RestoItemNotFound = "RESTO_ITEM_NOT_FOUND";
+    public const string RestoNoBillableItems = "RESTO_NO_BILLABLE_ITEMS";
+    public const string RestoSessionRequired = "RESTO_SESSION_REQUIRED";
+    public const string RestoModifierNotAllowedAfterRelease = "RESTO_MODIFIER_NOT_ALLOWED_AFTER_RELEASE";
+    public const string RestoModifierOptionNotFound = "RESTO_MODIFIER_OPTION_NOT_FOUND";
+    public const string RestoStationNotFound = "RESTO_STATION_NOT_FOUND";
+    public const string RestoStationInactive = "RESTO_STATION_INACTIVE";
+    public const string RestoProductNotOrderable = "RESTO_PRODUCT_NOT_ORDERABLE";
+    public const string RestoPayoSingleRound = "RESTO_PAYO_SINGLE_ROUND";
+    public const string RestoUnpaidCloseBillOutOnly = "RESTO_UNPAID_CLOSE_BILL_OUT_ONLY";
+    public const string RestoRequiredModifierMissing = "RESTO_REQUIRED_MODIFIER_MISSING";
+    public const string RestoModifierSelectionInvalid = "RESTO_MODIFIER_SELECTION_INVALID";
+
     // ---- Delivery receipts ----
     public const string DeliveryReceiptNotFound = "DELIVERY_RECEIPT_NOT_FOUND";
     public const string DeliveryReceiptNotAllowed = "DELIVERY_RECEIPT_NOT_ALLOWED";

@@ -65,6 +65,12 @@ public sealed class ReturnService : IReturnService
             throw new BusinessRuleException(ErrorCodes.ReturnNotAllowed, "This sale cannot be returned against.");
         }
 
+        if (sale.Origin == SaleOrigin.Resto)
+        {
+            throw new BusinessRuleException(ErrorCodes.ReturnNotAllowedForResto,
+                "Returns are not supported for restaurant orders. Void the sale instead.");
+        }
+
         // Cashier direct-grant-or-approval resolution — server-authoritative; the frontend's own
         // "should I show the approval fields" guess is UX only and never the actual security boundary.
         // Non-null only when a Cashier without the grant needed a Manager/Admin/Owner to approve.

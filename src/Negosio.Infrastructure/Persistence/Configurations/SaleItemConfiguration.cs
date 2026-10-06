@@ -40,6 +40,12 @@ public sealed class SaleItemConfiguration : IEntityTypeConfiguration<SaleItem>
             .HasForeignKey(i => i.ProductVariantId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        builder.HasMany(i => i.Modifiers)
+            .WithOne()
+            .HasForeignKey(m => m.SaleItemId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Navigation(i => i.Modifiers).UsePropertyAccessMode(PropertyAccessMode.Field);
+
         builder.HasIndex(i => new { i.TenantId, i.SaleId }).HasDatabaseName("IX_SaleItems_TenantId_SaleId");
         builder.HasIndex(i => new { i.TenantId, i.ProductVariantId }).HasDatabaseName("IX_SaleItems_TenantId_ProductVariantId");
     }

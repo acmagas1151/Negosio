@@ -103,7 +103,10 @@ public sealed class StaffService : IStaffService
                 DiscountApply: isCashier && (granted?.Contains(UserPermission.DiscountApply) ?? false),
                 CashDrawerOpen: isCashier && (granted?.Contains(UserPermission.CashDrawerOpen) ?? false),
                 FulfillmentCancel: isCashier && (granted?.Contains(UserPermission.FulfillmentCancel) ?? false),
-                CashMovement: isCashier && (granted?.Contains(UserPermission.CashMovement) ?? false));
+                CashMovement: isCashier && (granted?.Contains(UserPermission.CashMovement) ?? false),
+                RestoItemVoid: isCashier && (granted?.Contains(UserPermission.RestoItemVoid) ?? false),
+                RestoOrderCancel: isCashier && (granted?.Contains(UserPermission.RestoOrderCancel) ?? false),
+                RestoUnpaidClose: isCashier && (granted?.Contains(UserPermission.RestoUnpaidClose) ?? false));
         });
 
         var now = UtcNow;
@@ -119,7 +122,7 @@ public sealed class StaffService : IStaffService
             BranchId: i.BranchId,
             BranchName: i.BranchId is { } bid ? branchNames.GetValueOrDefault(bid) : null,
             SalesVoid: false, SalesReturn: false, DiscountApply: false, CashDrawerOpen: false, FulfillmentCancel: false,
-            CashMovement: false));
+            CashMovement: false, RestoItemVoid: false, RestoOrderCancel: false, RestoUnpaidClose: false));
 
         var assigned = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
         if (assigned is { } branchId)
@@ -547,7 +550,10 @@ public sealed class StaffService : IStaffService
             DiscountApply: granted.Contains(UserPermission.DiscountApply),
             CashDrawerOpen: granted.Contains(UserPermission.CashDrawerOpen),
             FulfillmentCancel: granted.Contains(UserPermission.FulfillmentCancel),
-            CashMovement: granted.Contains(UserPermission.CashMovement));
+            CashMovement: granted.Contains(UserPermission.CashMovement),
+            RestoItemVoid: granted.Contains(UserPermission.RestoItemVoid),
+            RestoOrderCancel: granted.Contains(UserPermission.RestoOrderCancel),
+            RestoUnpaidClose: granted.Contains(UserPermission.RestoUnpaidClose));
     }
 
     /// <summary>Branch-scoped role → an active branch id is required; Owner/Admin → must be null.</summary>

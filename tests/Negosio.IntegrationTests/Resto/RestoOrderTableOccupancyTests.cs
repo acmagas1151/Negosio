@@ -26,11 +26,11 @@ public class RestoOrderTableOccupancyTests : IntegrationTest
             db.RestoTables.Add(table);
             await db.SaveChangesAsync();
 
-            var firstOrder = RestoOrder.OpenBillOut(login.User.TenantId, branchId, session.Id, login.User.Id, table.Id, null);
+            var firstOrder = RestoOrder.OpenBillOut(login.User.TenantId, branchId, session.Id, login.User.Id, table.Id, null, true);
             db.RestoOrders.Add(firstOrder);
             await db.SaveChangesAsync();
 
-            var secondOrder = RestoOrder.OpenBillOut(login.User.TenantId, branchId, session.Id, login.User.Id, table.Id, null);
+            var secondOrder = RestoOrder.OpenBillOut(login.User.TenantId, branchId, session.Id, login.User.Id, table.Id, null, true);
             db.RestoOrders.Add(secondOrder);
             await db.SaveChangesAsync();
             return true;
@@ -54,7 +54,7 @@ public class RestoOrderTableOccupancyTests : IntegrationTest
             db.RestoTables.Add(table);
             await db.SaveChangesAsync();
 
-            var firstOrder = RestoOrder.OpenBillOut(login.User.TenantId, branchId, session.Id, login.User.Id, table.Id, null);
+            var firstOrder = RestoOrder.OpenBillOut(login.User.TenantId, branchId, session.Id, login.User.Id, table.Id, null, true);
             db.RestoOrders.Add(firstOrder);
             await db.SaveChangesAsync();
 
@@ -64,7 +64,7 @@ public class RestoOrderTableOccupancyTests : IntegrationTest
             firstOrder.Cancel(login.User.Id, "test cleanup", DateTime.UtcNow);
             await db.SaveChangesAsync();
 
-            var secondOrder = RestoOrder.OpenBillOut(login.User.TenantId, branchId, session.Id, login.User.Id, table.Id, null);
+            var secondOrder = RestoOrder.OpenBillOut(login.User.TenantId, branchId, session.Id, login.User.Id, table.Id, null, true);
             db.RestoOrders.Add(secondOrder);
             await db.SaveChangesAsync();
             return secondOrder.Id;
@@ -83,11 +83,11 @@ public class RestoOrderTableOccupancyTests : IntegrationTest
 
         var act = () => InScopeAsync(async db =>
         {
-            var firstOrder = RestoOrder.OpenPayAsYouOrder(login.User.TenantId, branchId, session.Id, login.User.Id, "Counter 1");
+            var firstOrder = RestoOrder.OpenPayAsYouOrder(login.User.TenantId, branchId, session.Id, login.User.Id, "Counter 1", true);
             db.RestoOrders.Add(firstOrder);
             await db.SaveChangesAsync();
 
-            var secondOrder = RestoOrder.OpenPayAsYouOrder(login.User.TenantId, branchId, session.Id, login.User.Id, "Counter 2");
+            var secondOrder = RestoOrder.OpenPayAsYouOrder(login.User.TenantId, branchId, session.Id, login.User.Id, "Counter 2", true);
             db.RestoOrders.Add(secondOrder);
             await db.SaveChangesAsync();
             return true;

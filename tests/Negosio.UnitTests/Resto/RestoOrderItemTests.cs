@@ -14,13 +14,13 @@ public class RestoOrderItemTests
 
     private static (RestoOrderRound Round, RestoOrderItem Item) NewItem()
     {
-        var order = RestoOrder.OpenBillOut(TenantId, Guid.NewGuid(), Guid.NewGuid(), UserId, Guid.NewGuid(), null);
+        var order = RestoOrder.OpenBillOut(TenantId, Guid.NewGuid(), Guid.NewGuid(), UserId, Guid.NewGuid(), null, true);
         var round = order.OpenNextRound();
         var item = round.AddItem(
             ProductVariantId, "Burger", "Regular", StationId, "Kitchen",
             unitPriceSnapshot: 150m, taxRateSnapshot: 12m,
             grossAmount: 150m, discountAmount: 0m, taxAmount: 18m, netAmount: 150m,
-            quantity: 1m, kitchenNote: "No onions");
+            quantity: 1m, kitchenNote: "No onions", discountKind: Negosio.Domain.Enums.DiscountType.None, discountValue: 0m, discountApprovedByUserId: null, costPriceSnapshot: null);
         return (round, item);
     }
 
@@ -178,14 +178,14 @@ public class RestoOrderItemTests
     [Fact]
     public void Create_rejects_a_blank_product_name()
     {
-        var order = RestoOrder.OpenBillOut(TenantId, Guid.NewGuid(), Guid.NewGuid(), UserId, Guid.NewGuid(), null);
+        var order = RestoOrder.OpenBillOut(TenantId, Guid.NewGuid(), Guid.NewGuid(), UserId, Guid.NewGuid(), null, true);
         var round = order.OpenNextRound();
 
         var act = () => round.AddItem(
             ProductVariantId, "   ", "Regular", StationId, "Kitchen",
             unitPriceSnapshot: 150m, taxRateSnapshot: 12m,
             grossAmount: 150m, discountAmount: 0m, taxAmount: 18m, netAmount: 150m,
-            quantity: 1m, kitchenNote: null);
+            quantity: 1m, kitchenNote: null, discountKind: Negosio.Domain.Enums.DiscountType.None, discountValue: 0m, discountApprovedByUserId: null, costPriceSnapshot: null);
 
         act.Should().Throw<ArgumentException>();
     }
@@ -193,14 +193,14 @@ public class RestoOrderItemTests
     [Fact]
     public void Create_rejects_a_negative_gross_amount()
     {
-        var order = RestoOrder.OpenBillOut(TenantId, Guid.NewGuid(), Guid.NewGuid(), UserId, Guid.NewGuid(), null);
+        var order = RestoOrder.OpenBillOut(TenantId, Guid.NewGuid(), Guid.NewGuid(), UserId, Guid.NewGuid(), null, true);
         var round = order.OpenNextRound();
 
         var act = () => round.AddItem(
             ProductVariantId, "Burger", "Regular", StationId, "Kitchen",
             unitPriceSnapshot: 150m, taxRateSnapshot: 12m,
             grossAmount: -1m, discountAmount: 0m, taxAmount: 18m, netAmount: 150m,
-            quantity: 1m, kitchenNote: null);
+            quantity: 1m, kitchenNote: null, discountKind: Negosio.Domain.Enums.DiscountType.None, discountValue: 0m, discountApprovedByUserId: null, costPriceSnapshot: null);
 
         act.Should().Throw<ArgumentOutOfRangeException>();
     }

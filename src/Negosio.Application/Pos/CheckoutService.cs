@@ -154,17 +154,12 @@ public sealed class CheckoutService : ICheckoutService
                 variant.SellingPrice, variant.CostPrice, product.TrackInventory, amounts));
         }
 
-        var subtotal = Money.Round(lines.Sum(l => l.Amounts.Gross));
-        var discountTotal = Money.Round(lines.Sum(l => l.Amounts.Discount));
-        var taxTotal = Money.Round(lines.Sum(l => l.Amounts.Tax));
         var deliveryCharge = Money.Round(request.DeliveryCharge);
-        var saleTotal = tenant.PricesIncludeTax
-            ? subtotal - discountTotal
-            : subtotal - discountTotal + taxTotal;
-        var grandTotal = saleTotal + deliveryCharge;
+        var totals = SaleTotals.Compute(lines.Select(l => l.Amounts), tenant.PricesIncludeTax, deliveryCharge);
+        var (subtotal, discountTotal, taxTotal, grandTotal) = (totals.Subtotal, totals.DiscountTotal, totals.TaxTotal, totals.GrandTotal);
 
         // 5. Resolve payments against the grand total (sale total + delivery charge).
-        var payments = ResolvePayments(request.Payments, grandTotal);
+        var payments = PaymentResolver.Resolve(request.Payments, grandTotal);
 
         // 6-10. One transaction: number, sale, items, payments, inventory, movements.
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
@@ -225,51 +220,6 @@ public sealed class CheckoutService : ICheckoutService
             sale.Id, sale.SaleNumber, tenantId, branch.Id, session.Id, _currentUser.UserId, request.ClientRequestId, grandTotal);
 
         return ToResult(sale, wasExisting: false);
-    }
-
-    private sealed record ResolvedPayment(PaymentMethod Method, decimal Amount, decimal? ReceivedAmount, decimal? ChangeAmount, string? ReferenceNumber);
-
-    private static List<ResolvedPayment> ResolvePayments(IReadOnlyList<CheckoutPaymentInput> inputs, decimal grandTotal)
-    {
-        var outstanding = grandTotal;
-        var result = new List<ResolvedPayment>(inputs.Count);
-
-        foreach (var input in inputs)
-        {
-            if (input.Method == PaymentMethod.Cash)
-            {
-                var received = input.ReceivedAmount ?? input.Amount
-                    ?? throw new BusinessRuleException(ErrorCodes.InvalidPayment, "A cash payment needs the amount received.");
-                if (received <= 0m)
-                {
-                    throw new BusinessRuleException(ErrorCodes.InvalidPayment, "A cash payment must be greater than zero.");
-                }
-
-                var applied = Money.Round(Math.Min(received, Math.Max(outstanding, 0m)));
-                outstanding -= applied;
-                result.Add(new ResolvedPayment(PaymentMethod.Cash, applied, Money.Round(received), Money.Round(received - applied), input.ReferenceNumber));
-            }
-            else
-            {
-                var amount = input.Amount ?? input.ReceivedAmount
-                    ?? throw new BusinessRuleException(ErrorCodes.InvalidPayment, "A non-cash payment needs an amount.");
-                if (amount <= 0m)
-                {
-                    throw new BusinessRuleException(ErrorCodes.InvalidPayment, "A payment must be greater than zero.");
-                }
-
-                var applied = Money.Round(Math.Min(amount, Math.Max(outstanding, 0m)));
-                outstanding -= applied;
-                result.Add(new ResolvedPayment(input.Method, applied, null, null, input.ReferenceNumber));
-            }
-        }
-
-        if (Money.Round(outstanding) > 0m)
-        {
-            throw new BusinessRuleException(ErrorCodes.PaymentInsufficient, "The payments do not cover the sale total.");
-        }
-
-        return result;
     }
 
     /// <summary>

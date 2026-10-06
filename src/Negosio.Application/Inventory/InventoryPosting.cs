@@ -23,6 +23,15 @@ public interface IInventoryPosting
         Guid tenantId, Guid branchId, Guid productVariantId, decimal quantity,
         Guid saleId, Guid userId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Decrement stock for product consumed without a sale (RestoPOS waste: a voided prepared item or an
+    /// unpaid closure). Same conditional guard as <see cref="DeductForSaleAsync"/>: throws
+    /// <see cref="ErrorCodes.InsufficientInventory"/> rather than letting stock go negative.
+    /// </summary>
+    Task DeductForWasteAsync(
+        Guid tenantId, Guid branchId, Guid productVariantId, decimal quantity,
+        string referenceType, Guid referenceId, string reason, Guid userId, CancellationToken cancellationToken = default);
+
     /// <summary>Increment stock for a returned line (never fails).</summary>
     Task RestockForReturnAsync(
         Guid tenantId, Guid branchId, Guid productVariantId, decimal quantity,
@@ -74,6 +83,38 @@ public sealed class InventoryPosting : IInventoryPosting
             tenantId, branchId, productVariantId, StockMovementType.Sale,
             -quantity, after + quantity, after, reason: null, userId,
             referenceType: "Sale", referenceId: saleId));
+    }
+
+    public async Task DeductForWasteAsync(
+        Guid tenantId, Guid branchId, Guid productVariantId, decimal quantity,
+        string referenceType, Guid referenceId, string reason, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+
+        var affected = await _db.BranchInventories
+            .Where(i => i.TenantId == tenantId
+                        && i.BranchId == branchId
+                        && i.ProductVariantId == productVariantId
+                        && i.QuantityOnHand >= quantity)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(i => i.QuantityOnHand, i => i.QuantityOnHand - quantity)
+                      .SetProperty(i => i.UpdatedAtUtc, _ => now),
+                cancellationToken);
+
+        if (affected == 0)
+        {
+            throw new ConflictException(ErrorCodes.InsufficientInventory,
+                "Not enough stock to record this waste. Correct the stock level and try again.");
+        }
+
+        var after = await _db.BranchInventories
+            .Where(i => i.TenantId == tenantId && i.BranchId == branchId && i.ProductVariantId == productVariantId)
+            .Select(i => i.QuantityOnHand)
+            .SingleAsync(cancellationToken);
+
+        _db.StockMovements.Add(StockMovement.Create(
+            tenantId, branchId, productVariantId, StockMovementType.Waste,
+            -quantity, after + quantity, after, reason, userId, referenceType, referenceId));
     }
 
     public Task RestockForReturnAsync(

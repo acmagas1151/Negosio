@@ -10,13 +10,13 @@ public class RestoOrderItemModifierTests
     public void AddModifier_on_an_item_freezes_the_given_snapshot_values()
     {
         var tenantId = Guid.NewGuid();
-        var order = RestoOrder.OpenBillOut(tenantId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), null);
+        var order = RestoOrder.OpenBillOut(tenantId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), null, true);
         var round = order.OpenNextRound();
         var item = round.AddItem(
             Guid.NewGuid(), "Burger", null, Guid.NewGuid(), "Kitchen",
             unitPriceSnapshot: 150m, taxRateSnapshot: 12m,
             grossAmount: 150m, discountAmount: 0m, taxAmount: 18m, netAmount: 150m,
-            quantity: 1m, kitchenNote: null);
+            quantity: 1m, kitchenNote: null, discountKind: Negosio.Domain.Enums.DiscountType.None, discountValue: 0m, discountApprovedByUserId: null, costPriceSnapshot: null);
 
         var modifier = item.AddModifier("Add-ons", "Extra cheese", 20m);
 

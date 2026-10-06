@@ -16,7 +16,7 @@ public class RestoOrderTests
     [Fact]
     public void OpenPayAsYouOrder_has_no_table_and_starts_open()
     {
-        var order = RestoOrder.OpenPayAsYouOrder(TenantId, BranchId, RegisterSessionId, UserId, "Counter 3");
+        var order = RestoOrder.OpenPayAsYouOrder(TenantId, BranchId, RegisterSessionId, UserId, "Counter 3", true);
 
         order.ServiceType.Should().Be(RestoServiceType.PayAsYouOrder);
         order.TableId.Should().BeNull();
@@ -28,7 +28,7 @@ public class RestoOrderTests
     [Fact]
     public void OpenBillOut_requires_a_table()
     {
-        var act = () => RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, Guid.Empty, null);
+        var act = () => RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, Guid.Empty, null, true);
 
         act.Should().Throw<ArgumentException>();
     }
@@ -36,7 +36,7 @@ public class RestoOrderTests
     [Fact]
     public void OpenBillOut_with_a_table_starts_open()
     {
-        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null);
+        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null, true);
 
         order.ServiceType.Should().Be(RestoServiceType.BillOut);
         order.TableId.Should().Be(TableId);
@@ -46,7 +46,7 @@ public class RestoOrderTests
     [Fact]
     public void OpenNextRound_numbers_rounds_sequentially_starting_at_one()
     {
-        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null);
+        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null, true);
 
         var round1 = order.OpenNextRound();
         var round2 = order.OpenNextRound();
@@ -59,10 +59,10 @@ public class RestoOrderTests
     [Fact]
     public void Settle_requires_the_order_to_be_open()
     {
-        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null);
-        order.Settle(Guid.NewGuid(), DateTime.UtcNow);
+        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null, true);
+        order.Settle(Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow);
 
-        var act = () => order.Settle(Guid.NewGuid(), DateTime.UtcNow);
+        var act = () => order.Settle(Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow);
 
         act.Should().Throw<InvalidOperationException>();
     }
@@ -70,11 +70,11 @@ public class RestoOrderTests
     [Fact]
     public void Settle_sets_SaleId_and_flips_status()
     {
-        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null);
+        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null, true);
         var saleId = Guid.NewGuid();
         var now = DateTime.UtcNow;
 
-        order.Settle(saleId, now);
+        order.Settle(saleId, Guid.NewGuid(), now);
 
         order.Status.Should().Be(RestoOrderStatus.Settled);
         order.SaleId.Should().Be(saleId);
@@ -84,7 +84,7 @@ public class RestoOrderTests
     [Fact]
     public void Cancel_succeeds_when_no_round_has_been_released()
     {
-        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null);
+        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null, true);
         order.OpenNextRound();
         var now = DateTime.UtcNow;
 
@@ -99,8 +99,8 @@ public class RestoOrderTests
     [Fact]
     public void OpenNextRound_is_rejected_once_the_order_has_been_settled()
     {
-        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null);
-        order.Settle(Guid.NewGuid(), DateTime.UtcNow);
+        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null, true);
+        order.Settle(Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow);
 
         var act = () => order.OpenNextRound();
 
@@ -110,7 +110,7 @@ public class RestoOrderTests
     [Fact]
     public void Cancel_is_rejected_once_any_round_has_been_released()
     {
-        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null);
+        var order = RestoOrder.OpenBillOut(TenantId, BranchId, RegisterSessionId, UserId, TableId, null, true);
         var round = order.OpenNextRound();
         round.Release(UserId, DateTime.UtcNow);
 

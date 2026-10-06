@@ -53,7 +53,11 @@ public class RestoOrderRound : Entity
         decimal taxAmount,
         decimal netAmount,
         decimal quantity,
-        string? kitchenNote)
+        string? kitchenNote,
+        DiscountType discountKind,
+        decimal discountValue,
+        Guid? discountApprovedByUserId,
+        decimal? costPriceSnapshot)
     {
         if (Status != RestoOrderRoundStatus.Draft)
         {
@@ -62,7 +66,8 @@ public class RestoOrderRound : Entity
 
         var item = RestoOrderItem.Create(
             TenantId, Id, productVariantId, productNameSnapshot, variantNameSnapshot, stationId, stationNameSnapshot,
-            unitPriceSnapshot, taxRateSnapshot, grossAmount, discountAmount, taxAmount, netAmount, quantity, kitchenNote);
+            unitPriceSnapshot, taxRateSnapshot, grossAmount, discountAmount, taxAmount, netAmount, quantity, kitchenNote,
+            discountKind, discountValue, discountApprovedByUserId, costPriceSnapshot);
         _items.Add(item);
         return item;
     }
@@ -71,7 +76,14 @@ public class RestoOrderRound : Entity
     /// round is a no-op that preserves who originally released it, so a retried release call (the
     /// manual recovery button, or the background reconciliation worker) never overwrites the audit
     /// trail or double-fires a ticket.</summary>
-    public void Release(Guid releasedByUserId, DateTime nowUtc)
+    public void Release(Guid releasedByUserId, DateTime nowUtc) => ReleaseCore(releasedByUserId, nowUtc);
+
+    /// <summary>Release performed by the PAYO recovery path (no user actor). Same idempotency and kitchen
+    /// queueing as <see cref="Release"/>; <see cref="ReleasedByUserId"/> stays null to show the release was
+    /// system-initiated.</summary>
+    public void ReleaseBySystem(DateTime nowUtc) => ReleaseCore(null, nowUtc);
+
+    private void ReleaseCore(Guid? releasedByUserId, DateTime nowUtc)
     {
         if (Status == RestoOrderRoundStatus.Released)
         {

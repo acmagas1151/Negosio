@@ -41,7 +41,10 @@ public sealed record StaffMemberDto(
     bool DiscountApply,
     bool CashDrawerOpen,
     bool FulfillmentCancel,
-    bool CashMovement);
+    bool CashMovement,
+    bool RestoItemVoid = false,
+    bool RestoOrderCancel = false,
+    bool RestoUnpaidClose = false);
 
 /// <summary>Branch is required for a branch-scoped role, and must be absent for Owner/Admin.</summary>
 public sealed record InviteStaffRequest(string Email, string Role, string? BranchId = null);
@@ -58,7 +61,8 @@ public sealed record ChangeStaffBranchRequest(string BranchId);
 /// caller in StaffController) when a new permission is added; the write path itself needs no change.
 /// </summary>
 public sealed record ChangeStaffPermissionsRequest(
-    bool SalesVoid, bool SalesReturn, bool DiscountApply, bool CashDrawerOpen, bool FulfillmentCancel, bool CashMovement);
+    bool SalesVoid, bool SalesReturn, bool DiscountApply, bool CashDrawerOpen, bool FulfillmentCancel, bool CashMovement,
+    bool RestoItemVoid = false, bool RestoOrderCancel = false, bool RestoUnpaidClose = false);
 
 /// <summary>
 /// Returned after creating / resending an invitation. <see cref="AcceptPath"/> is populated in

@@ -1,123 +1,118 @@
 # Handover Summary
 
-_Generated: 2026-09-27 (Reports + Fulfillment Polish pass — merged to master and pushed to origin/master as 00d21fc)_
+_Generated: 2026-10-06 — current as of `master` @ `26643ce`, pushed to `origin/master`._
 
 ## Project Context
 
-- **Project:** Negosio — a multi-tenant retail/POS management platform (registers, inventory, staff, delivery/pickup fulfillment, reporting).
+- **Project:** Negosio — a multi-tenant retail/POS management platform (registers, inventory, staff, delivery/pickup fulfillment, reporting, and a new restaurant service flow in progress).
 - **Tech stack:**
   - Backend: .NET 9 / ASP.NET Core Web API / EF Core 9 / SQL Server (LocalDB). Modular monolith: `Api → Infrastructure → Application → Domain`. Database-per-tenant (separate Platform DB + one DB per tenant, per-request connection routing). JWT auth with role-based policies (Owner/Admin/Manager/Cashier/InventoryStaff/KitchenStaff/Viewer). Currency fixed to PHP.
   - Frontend: React 19 / TypeScript (strict) / Vite / React Router 7 / TanStack Query v5 / Tailwind v4 / Recharts.
-- **Working directory:** `C:\Users\Ace\Documents\Negosio`. Git repo, currently on `master`.
-- **Git state:** `master` and `origin/master` are in sync at `00d21fc` — the user reviewed the merged app live and approved committing, pushing, and merging everything. Nothing outstanding.
+- **Working directory:** `C:\Users\Ace\Documents\Negosio`. Git repo on `master`, working tree clean, in sync with `origin/master`.
+- **Full project history** lives in `C:\Users\Ace\Desktop\negosio-status.md` (phases #1–#17). This file covers only the most recent work in depth.
 
 ## Current Task
 
-The prior session's handover flagged four items that two earlier phases (#12 fulfillment simplification, #13 Reports Phase C) had deliberately deferred as non-blocking. This session closed all four in one coordinated pass:
+RestoPOS **Milestone 2 (order lifecycle) backend is implemented and tested, but NOT committed, merged, or pushed.** Awaiting the user's review. Spec: `docs/superpowers/specs/2026-09-28-restopos-design.md` (rev. 2026-10-06). Plan: `docs/superpowers/plans/2026-10-06-restopos-m2-order-lifecycle.md`. Frontend is untouched in M2.
 
-1. **Delivery report cleanup** — the "Sale fulfillment" report view still showed four quantity columns (`Required`/`Pending`/`Delivered`/`Unscheduled`) left over from the old per-item partial-allocation model, plus a dead duplicate filter preset.
-2. **Performance drill-downs** — Branch/Register/Cashier Performance rows had no way to click through to the underlying sales.
-3. **Register sessions UX** — the Cashier filter on the sessions sub-view was clickable but silently did nothing server-side; the sub-view/pagination reset on refresh; several reconciliation fields were never shown.
-4. **Fulfillment-cancel approval reporting** — the fulfillment-cancel-authorization fix from the prior session persisted an approver but never surfaced it anywhere in Reports.
+## Completed Work (most recent first)
 
-Full spec: `docs/superpowers/specs/2026-09-27-reports-fulfillment-polish.md`. Full plan: `docs/superpowers/plans/2026-09-27-reports-fulfillment-polish.md`. Both are on `master`.
+### RestoPOS Milestone 2 — order lifecycle backend (uncommitted, on `master`'s working tree)
+Built inside the existing projects (no new projects), per the user's instruction.
+- **Orders:** open (Pay-as-you-order and Bill-Out, the latter needs a table), rounds, release, item add/void (whole-line, with a KDS-race-safe conditional claim), cancel. Line-level discounts only; discounts are set at add-time only. Modifier summaries are persisted on `SaleItemModifiers`.
+- **Settlement** (`RestoSettlementService.SettleAsync`): locks the caller's register session, then the order (spec 6.1 lock order). Totals come from frozen line amounts. Creates one `Sale` with `Origin = Resto`, deducts stock once at settlement, and marks the order `Settled`. Idempotent on `SettlementRequestId`; a retry with a stale RowVersion returns the original sale. Bill-Out blocks settlement while an unreleased round still has items.
+- **Unpaid closure** (`RestoSettlementService.UnpaidCloseAsync`): Bill-Out only, needs at least one released round, creates no Sale or payment. Consumed items are recorded as waste (blocked on insufficient stock). Authorized by the `RestoUnpaidClose` grant or manager approval.
+- **Returns on Resto sales are rejected** server-side (`ReturnNotAllowedForResto`).
+- **Endpoints:** `api/resto/orders` (open, get, rounds, release, items, items/{id}/void, cancel, settle, unpaid-close).
+- **Migration:** `20261006045817_AddRestoM2Lifecycle` is additive and **not yet applied** to any database.
+- **Permissions:** added `RestoItemVoid`, `RestoOrderCancel`, `RestoUnpaidClose` grants (Staff Permissions API).
 
-**This work is complete, fully verified, and merged to local `master`.** It has not been pushed to `origin/master`.
+**Open items for M2:**
+- The M2 plan's Task 11 documentation is done here; no frontend work for Resto yet (that is M3+).
+- Not done: a manual end-to-end walkthrough through the UI (no UI exists for Resto yet).
+- `DeliveryReceiptConcurrencyTests.Two_concurrent_mark_delivered_calls_on_the_same_delivery_only_one_succeeds` failed once in a full integration run and passed on re-run (14/14 in its class). Known flake under load; not investigated further.
 
-## Completed Work
+### Testing-round fixes — `03c9ee7`, `83f3d99`, `26643ce` (pushed)
+Four issues the user found in live testing, plus one correction made during the fix:
 
-### Process
+1. **Inactive register showed "Open session"** in the admin Registers view (`web/negosio-web/src/components/registers/RegisterSessionCell.tsx`). Backend and POS picker already blocked it; this view was role-gated only. Now shows "Register inactive".
+2. **Cash In/Cash Out had no permission gate.** Added `UserPermission.CashMovement` and `CashMovementAuthorizationResolver` (`src/Negosio.Application/Registers/`), mirroring the Void/Return/Fulfillment-cancel resolvers. Approver persisted on `RegisterCashMovement.ApprovedByUserId` (migration `20261004084822_AddCashMovementApprovedByUserId`). Toggle is in Staff Permissions → Cash operations.
+3. **Business contact number accepted letters** (`src/Negosio.Application/Settings/TenantSettingsService.cs`). Now requires digits/`+ - ( )`/spaces only, ≥7 digits.
+4. **Close register committed on one click.** Added a confirmation step in `CloseSessionModal.tsx` that fetches `GET /api/register-sessions/{id}/expected-cash` (new, read-only, advisory). The real close still recomputes under its own lock. Shared reconciliation math now lives in `ComputeBreakdownAsync` in `RegisterSessionService.cs`.
+   - Sign convention: `difference = counted − expected` (positive = over, negative = short). This matches `RegisterSession.Close`. An earlier preview had the sign inverted; fixed before commit.
 
-Executed as a 10-task plan via subagent-driven development, in an isolated worktree branch (`worktree-reports-fulfillment-polish`, forked from `master` at `74a07a7`) — fresh implementer subagent + fresh task-reviewer subagent per task, followed by a final whole-branch review on the most capable model, one fix wave, one scoped re-review, and one closing live-browser verification pass. Fast-forward-merged into local `master` as `64d31b1`. The worktree's on-disk checkout was cleaned up as part of normal finishing; the branch ref itself was kept (see "Important Decisions" below).
+Items 2 and 4 were committed together because they share files and interfaces. A split would have produced non-compiling intermediate commits.
 
-### 1. Delivery report cleanup
+### RestoPOS Milestone 1 — domain + migration only (merged to `master`)
+Branch `feature/resto_pos`, merged fast-forward to `master`. Nine new entities under `src/Negosio.Domain/Entities/Resto/`, six enums, `Sale.Origin`, two `Branch` service-type flags, and one migration (`AddRestoPos`). **No services, no API, no UI, no behavior change.** Design spec: `docs/superpowers/specs/2026-09-28-restopos-design.md`. Plan: `docs/superpowers/plans/2026-09-28-restopos-domain.md`.
 
-- `DeliveryFulfillmentReportRowDto` (`src/Negosio.Application/Reports/ReportsContracts.cs`) — four quantity fields replaced with one `NeedsScheduling: bool`, true only in the "checkout succeeded, schedule never created" edge case (computed in `GetDeliveryFulfillmentAsync`, `ReportsService.cs`).
-- `DeliveryReportPreset.NeedsRescheduling` removed — confirmed byte-for-byte identical to `Overdue` in `ResolveDeliveryPreset`.
-- Frontend: `FulfillmentReportsPage.tsx`'s "Sale fulfillment" sub-view now shows a "Needs scheduling" badge instead of the four columns; the dead preset option is gone from the filter dropdown.
-
-### 2. Performance drill-downs
-
-- New `buildSalesDrilldownUrl` helper (`web/negosio-web/src/lib/reportsDrilldown.ts`) builds a `/sales?...` link carrying exact `fromUtc`/`toUtc` instants (never a period label or local date-picker conversion) plus `branchId`/`registerId`/`cashierUserId`.
-- `SalesPage.tsx` extended to accept and honor `registerId`/`cashierUserId`/`fromUtc`/`toUtc` from the URL, with `fromUtc`/`toUtc` taking precedence over the local date pickers — **and**, after the final review, editing a date picker now clears `fromUtc`/`toUtc` so the picker isn't a dead control once a drill-down is active. A drill-down banner with a "Clear filter" link shows when any drill-down param is set.
-- `PerformanceReportsPage.tsx` — Branch/Register(Sales)/Cashier rows and register-session rows each link to `/sales`, using the report's own server-resolved `fromUtc`/`toUtc` (session rows use their own exact `openedAtUtc`/`closedAtUtc` instead — more precise). After the final review, each link also merges in the report's OTHER currently-active filters, not just the clicked row's own dimension.
-
-**Why exact instants matter:** every Performance report resolves its date range server-side in Asia/Manila (`ReportPeriodResolver`); `SalesPage`'s own date pickers convert using the browser's local timezone. Passing the report's already-resolved UTC instant through the link is the only way to guarantee the drill-down shows exactly what the report row summarized.
-
-### 3. Register sessions UX
-
-- `RegisterPerformanceTab`'s Sales/Closed-sessions sub-view choice and `RegisterSessionsView`'s own pagination are now URL-synced (`view`/`sessionsPage` params) — survive a refresh. (Fixed a real bug in the plan's own draft here: a naive "reset page to 1" effect would have fired on every mount too, silently stomping a refreshed deep link back to page 1 — replaced with a filter-signature-comparison guard.)
-- `ReportFilterBar`'s Cashier `<select>` gained a `cashierFilterDisabled` prop — now visibly disabled with a tooltip when the Closed-sessions sub-view is active (previously clickable but silently ignored server-side, since `RegisterSessionReconciliationQuery` has no `CashierId` — a session is opened by one user and closed by another, not owned by one cashier).
-- `RegisterSessionsView` gained Opened/Opened-by columns (always) and a Branch column (only when viewing all branches), plus a click-to-expand per-row cash-flow detail (gross/voided cash sales, refund cash-out, cash in/out) instead of five more always-on columns.
-
-### 4. Fulfillment-cancel approval reporting
-
-- `CashierPerformanceRowDto` gained `FulfillmentCancelApprovalsCount`, a new independently-keyed bucket in `GetCashierPerformanceAsync` (`ReportsService.cs`) — grouped by `DeliveryReceipt.ApprovedByUserId`, filtered by `CancelledAtUtc`, scoped by branch/register/cashier — mirroring the existing `VoidApprovalsCount`/`ReturnApprovalsCount` buckets exactly, never folded into them.
-- (After the final review) register-scoping was added to this bucket too — the exact one-line join `BaseReturnsAsync` already used, reused here.
-- Frontend: a new "Fulfillment cancel approvals" column on the Cashier Performance table.
-
-### Final whole-branch review findings (all fixed in one wave, re-reviewed clean)
-
-The per-task reviews were all clean individually, but a final whole-branch review (on the most capable model) found 4 real cross-task integration bugs no single task's review could see in isolation:
-1. Drill-down links only carried the clicked row's own filter dimension, dropping any OTHER filter the report itself was already scoped to.
-2. `/sales`'s date pickers became inert once a drill-down's `fromUtc`/`toUtc` were in the URL (same "clickable but inert" bug class the sessions Cashier-filter fix exists to prevent, reintroduced on a different page).
-3. `SalesPage`'s empty-state message didn't recognize a drill-down-only filter as "filtered" — promoted from a previously-accepted cosmetic minor to a required fix once traced through Task 3+7's interaction.
-4. The fulfillment-cancel approvals bucket's missing `RegisterId` scoping (accepted as a documented gap at that task's own review) turned out to have a trivially reusable fix.
-
-All 4 fixed in commit `64d31b1`, verified by a scoped re-review, then confirmed by one more live-browser pass against a fresh self-registered tenant (the two frontend fixes had only been statically verified until then).
+### Earlier in this body of work
+- Fulfillment-cancel authorization (Cashiers can cancel a delivery/pickup schedule with a grant or approval) — `74a07a7`.
+- Reports + Fulfillment Polish (drill-downs, sessions UX, approval counts) — `64d31b1`, pushed as `00d21fc`.
+- Fulfillment recovery/void fixes + Reports Phase C — `8039d44`.
 
 ## Current State
 
-**Verified:**
-- Backend: **524/524 tests passing** (182 unit + 342 integration). The one known pre-existing flake (`DeliveryReceiptConcurrencyTests.Two_concurrent_mark_delivered_calls_on_the_same_delivery_only_one_succeeds`) did not trigger on the final full run.
-- Frontend: `tsc -b` and `npm run build` both zero-error.
-- Full live manual pass via a self-registered fresh tenant confirmed every checklist item, including the highest-risk one: a register-session row's drill-down link navigates without triggering the row's click-to-expand (directly observed via `document.elementFromPoint`).
-- No application bugs found anywhere in this body of work.
+**Verified with the M2 working tree (on top of `26643ce`):**
+- Build: 0 errors (3 pre-existing nullable warnings in `IntegrationTests`).
+- Backend unit: **248/248**.
+- Backend integration: **368/368** on the latest full run. Includes 16 new Resto HTTP tests (`RestoSettlementTests` 4, `RestoOrderLifecycleTests` 5 plus the shared `RestoTestBase`). The earlier `DeliveryReceiptConcurrencyTests` failure did not recur.
+- Bug fixed on the way: `SqlUniqueViolation.ExtractIndexName` took the first quoted token, which is the table name, so constraint-name mapping never matched. It now reads the name after `unique index` / `UNIQUE KEY constraint`. This affects every caller that maps a duplicate to an error code; the full suite still passes.
+- Tenant migrations: `dotnet ef migrations list` shows `AddRestoM2Lifecycle` pending.
+- Frontend: not re-verified for M2 (no frontend changes).
+
+**Verified on `26643ce` (previous state):**
+- Backend: **585/585** — 229 unit + 356 integration. The usually-flaky `DeliveryReceiptConcurrencyTests.Two_concurrent_mark_delivered_calls_on_the_same_delivery_only_one_succeeds` passes in isolation and passed on the final run.
+- Frontend: `tsc -b` and `npm run build` clean (only the pre-existing chunk-size advisory).
+- Servers: API `http://localhost:5170` and frontend `http://localhost:5173` were restarted on `26643ce` and responding (API 401 on protected routes is expected).
+- Test accounts exist: `owner@testco.com` / `TestPass123!` (Owner) and `cashier@testco.com` / `CashierPass123!` (Cashier), both on "Demo Test Co" / Main Branch. Seeded with 6 products, 3 categories, stock, and a register (REG01 "Counter 1").
 
 **Git state:**
-- `master` is at `64d31b1`, a fast-forward merge from `74a07a7` — 10 new commits, no merge commit, no conflicts.
-- 11 commits ahead of `origin/master` total. **Not pushed.**
-- The `worktree-reports-fulfillment-polish` branch ref still exists (kept, not deleted, per the standing "don't delete a merged branch" preference) — but its on-disk worktree checkout under `.claude/worktrees/` was already removed as part of normal cleanup, so only the branch ref remains, not a working checkout.
+- `master` == `origin/master` == `26643ce` at last push. **Working tree has many uncommitted M2 changes** (domain, application, infrastructure, api, tests, migration, and design docs). Nothing committed for M2. Do not commit or push without the user's explicit go-ahead.
+- Branch refs kept on purpose (standing preference: don't delete branches after merging): `feature/resto_pos`, `worktree-restopos-domain`, `worktree-reports-fulfillment-polish`.
 
-**Nothing currently known to be broken.**
+**Open items:**
+- **Issue #3 from the testing round — duplicate sale numbers across registers.** Code review says it cannot happen: sale numbers come from an atomic `UPDATE … OUTPUT` on a per-branch counter row. The user has not yet given repro steps. Do not change the numbering code without a repro.
+- **Same contact-number gap elsewhere:** `Branch` and `DeliveryReceipt` contact-number fields only validate length. Not changed; a candidate follow-up.
 
-## Known Issues / Bugs
-
-- Same pre-existing flaky test as always (see above) — not a regression, not touched by this work.
-- Small, deliberately-deferred follow-ups from the final review (all Minor, none blocking): the clickable session-detail row has no keyboard affordance (mouse-only); `SalesPage`'s date-range upper bound is inclusive while every report's is exclusive (negligible practical impact); the sessions-page-reset pushes a browser-history entry instead of replacing one; the disabled Cashier select can still visually show a stale-looking prior selection; a bookmarked URL using the removed `NeedsRescheduling` preset would 400 instead of degrading gracefully; one redundant branch-resolution DB lookup per Cashier Performance request.
+**Known, not fixed:**
+- Deferred Minor items from the Reports polish pass: keyboard accessibility on the clickable session-detail row; a few cosmetic/robustness items (see status file #15).
 
 ## Important Decisions
 
-- **Worktree-branch commits are the correct SDD mechanic, not a violation of "don't commit without asking."** Early in this session a plan-writing mistake (over-applying the user's "don't commit/push/merge without asking" instruction) told the first task's implementer not to commit at all — this was corrected immediately: that instruction governs `master`/`origin`, not per-task commits inside an isolated worktree branch, which the whole review-diff process depends on. Nothing was pushed or merged to shared state without the user's explicit choice at the end.
-- **Standing workflow preference: don't delete a feature/working branch after merging it.** Applied here — `worktree-reports-fulfillment-polish`'s branch ref was kept even after the fast-forward merge to `master`.
-- **Two mid-execution plan defects were found and fixed, not just flagged:** (1) a task's literal test-fixture skeleton referenced a nonexistent test pattern — the implementer substituted the file's real, established HTTP-client test idiom; (2) a task's literal "reset page to 1" effect would have fired on every mount too (including a refresh restoring a deep-linked page number), silently defeating that same task's whole purpose — replaced with a filter-signature-comparison guard. Both were reviewed and accepted on their technical merits, not on faith.
-- **The final whole-branch review is genuinely load-bearing, not a formality.** All 4 of its findings were real, would have shipped silently otherwise, and needed a second, whole-branch-aware pass to surface — no single task's isolated review could have seen them.
-- **Live-browser verification was pursued deliberately, twice**, using this project's established pattern of self-registering a fresh tenant through the app's own public `/register` flow (not hunting for or guessing any other tenant's credentials) — once in Task 10's own final-verification pass, and once more after the fix wave to close the one item that had only been statically verified.
+- **Authorization pattern is standardized.** Every sensitive POS action uses one shape: Owner/Admin/Manager act directly; a Cashier needs a per-user grant or live Manager/Admin/Owner approval; the approver is persisted. Applies to Void, Return, Discount, Open cash drawer, Fulfillment-cancel, and Cash In/Out. Each has its own resolver by design. Don't fold them into one.
+- **The void cascade never re-checks fulfillment-cancel authorization.** It is already authorized by the void's own resolver. A throwing test stub enforces this.
+- **Close-session preview is advisory only.** The authoritative close re-locks and recomputes. Don't treat the preview as the source of truth.
+- **Sign convention for over/short is `counted − expected`** everywhere (backend `RegisterSession.Close`, preview, and UI).
+- **RestoPOS Milestone 2 is blocked on four product decisions** listed in the status file #16 (bill-level discount, cancel-after-release, modifier itemization on receipts, partial-quantity void). Do not start M2 services until these are signed off.
+- **Don't delete branches after merging** (standing user preference).
+- **Commit/push/merge only when asked.** This session's push and merge were explicit user requests.
 
 ## Files to Review
 
-- `docs/superpowers/specs/2026-09-27-reports-fulfillment-polish.md` / `docs/superpowers/plans/2026-09-27-reports-fulfillment-polish.md` — full spec and 10-task plan, now on `master`.
-- `src/Negosio.Application/Reports/ReportsService.cs` — `GetDeliveryFulfillmentAsync` (item 1), `GetCashierPerformanceAsync` (item 4).
-- `web/negosio-web/src/lib/reportsDrilldown.ts` and `web/negosio-web/src/pages/PerformanceReportsPage.tsx` — the drill-down mechanism (item 2).
-- `web/negosio-web/src/pages/SalesPage.tsx` — the drill-down-aware filter handling, including the post-review date-picker fix.
-- `C:\Users\Ace\Desktop\negosio-status.md` — full project history across all phases; this handover only covers this session's work in depth.
+- `src/Negosio.Application/Registers/RegisterSessionService.cs` — `PreviewExpectedCashAsync`, `ComputeBreakdownAsync`, `ReconcileAndCloseAsync`.
+- `src/Negosio.Application/Registers/CashMovementAuthorizationResolver.cs` — the newest authorization resolver.
+- `web/negosio-web/src/components/pos/CloseSessionModal.tsx` — confirmation step and preview.
+- `web/negosio-web/src/components/pos/CashMovementModal.tsx` — approval UI for cash movements.
+- `docs/superpowers/specs/2026-09-28-restopos-design.md` — RestoPOS design, including Section 10 open decisions.
+- `C:\Users\Ace\Desktop\negosio-status.md` — full history across all phases.
 
 ## Next Steps
 
-1. Consider the deferred Minor follow-ups above — keyboard accessibility on the session-detail row is the most user-facing one, worth a small follow-up pass.
-2. No other known limitations remain open from phases #12/#13/#14 — this session's work closed all four items those phases had deliberately deferred.
-3. `master`/`origin/master` are fully in sync — nothing is pending on a push/merge decision.
+1. The user is choosing the next plan in ChatGPT. Wait for their direction before starting new work.
+2. If RestoPOS is the next plan: resolve the four Section 10 product decisions first, then write the M2 spec and plan (order lifecycle services). Keep the frozen-snapshot guarantee and the existing `VoidSaleService` unmodified.
+3. If the duplicate sale-number report comes back with repro steps: reproduce first. Don't change the numbering code otherwise.
+4. Small follow-ups if wanted: contact-number validation on `Branch` and `DeliveryReceipt`; keyboard accessibility on the session-detail row.
 
 ## Prompt for Next Claude Session
 
 ```
-I'm continuing work on Negosio, a multi-tenant retail POS platform (.NET 9 / EF Core 9 / SQL Server backend, React 19 / TypeScript / Vite frontend). Read C:\Users\Ace\Documents\Negosio\handover.md for full context on the most recent body of work (a "Reports + Fulfillment Polish" pass closing four deferred items: stale delivery-report columns, missing performance drill-downs, an inert sessions-view Cashier filter, and a missing fulfillment-cancel-approvals count). That work is fully verified, MERGED to master, and PUSHED to origin/master as 00d21fc — check `git status`/`git log` first before assuming anything about state.
+I'm continuing work on Negosio, a multi-tenant retail POS platform (.NET 9 / EF Core 9 / SQL Server backend, React 19 / TypeScript / Vite frontend). Read C:\Users\Ace\Documents\Negosio\handover.md for the most recent state. Full history is in C:\Users\Ace\Desktop\negosio-status.md.
 
 Before doing anything else:
-1. Run `git status` and `git log -5` to confirm master is still at 00d21fc (or later) and see if anything's changed since.
-2. Check whether the API (localhost:5170) and frontend dev server (localhost:5173) are still running; restart them if not.
-3. Read C:\Users\Ace\Desktop\negosio-status.md for the full project history/status across all phases.
-4. Do not push to origin/master, merge, or commit anything without asking me first — that's an explicit standing rule on this project. Also: don't delete a feature/working branch after merging it — leave the branch ref in place.
+1. Run `git status` and `git log -3`. Expect master == origin/master == 26643ce and a clean tree. If that's not true, stop and tell me.
+2. Check the API (localhost:5170) and frontend (localhost:5173). Restart them if they're down.
+3. Do not commit, push, or merge without asking me first. Do not delete any branch after merging.
 
-Then [describe what you want done next].
+Then: [describe the next plan — e.g. "RestoPOS Milestone 2: resolve the Section 10 decisions, then write the M2 spec and plan" or "fix the duplicate sale-number issue once I send repro steps"].
 ```

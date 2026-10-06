@@ -93,6 +93,8 @@ public sealed class TenantDbContext : DbContext, ITenantDbContext
 
     public DbSet<RestoOrderItemModifier> RestoOrderItemModifiers => Set<RestoOrderItemModifier>();
 
+    public DbSet<SaleItemModifier> SaleItemModifiers => Set<SaleItemModifier>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // Only the operational configurations (not the platform ones, which share this assembly).

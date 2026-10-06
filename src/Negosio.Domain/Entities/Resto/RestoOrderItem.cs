@@ -35,8 +35,16 @@ public class RestoOrderItem : Entity
         decimal taxAmount,
         decimal netAmount,
         decimal quantity,
-        string? kitchenNote)
+        string? kitchenNote,
+        DiscountType discountKind,
+        decimal discountValue,
+        Guid? discountApprovedByUserId,
+        decimal? costPriceSnapshot)
     {
+        DiscountKind = discountKind;
+        DiscountValue = discountValue;
+        DiscountApprovedByUserId = discountApprovedByUserId;
+        CostPriceSnapshot = costPriceSnapshot;
         TenantId = tenantId;
         RestoOrderRoundId = restoOrderRoundId;
         ProductVariantId = productVariantId;
@@ -86,6 +94,17 @@ public class RestoOrderItem : Entity
 
     public string? KitchenNote { get; private set; }
 
+    /// <summary>Frozen discount input, kept so the Sale item reproduces it exactly (spec G1).</summary>
+    public DiscountType DiscountKind { get; private set; }
+
+    public decimal DiscountValue { get; private set; }
+
+    /// <summary>The Manager/Admin/Owner who approved this line's discount, when the applier needed one.</summary>
+    public Guid? DiscountApprovedByUserId { get; private set; }
+
+    /// <summary>From the catalog at add-time, so the Sale item carries the same cost (spec G2).</summary>
+    public decimal? CostPriceSnapshot { get; private set; }
+
     public RestoKitchenStatus? KitchenStatus { get; private set; }
 
     public DateTime? AcknowledgedAtUtc { get; private set; }
@@ -125,11 +144,20 @@ public class RestoOrderItem : Entity
         decimal taxAmount,
         decimal netAmount,
         decimal quantity,
-        string? kitchenNote)
+        string? kitchenNote,
+        DiscountType discountKind,
+        decimal discountValue,
+        Guid? discountApprovedByUserId,
+        decimal? costPriceSnapshot)
     {
         if (quantity <= 0m)
         {
             throw new ArgumentOutOfRangeException(nameof(quantity), "Quantity must be greater than zero.");
+        }
+
+        if (costPriceSnapshot is < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(costPriceSnapshot), "Cost price cannot be negative.");
         }
 
         if (string.IsNullOrWhiteSpace(productNameSnapshot))
@@ -170,7 +198,7 @@ public class RestoOrderItem : Entity
         return new RestoOrderItem(
             tenantId, restoOrderRoundId, productVariantId, productNameSnapshot, variantNameSnapshot,
             stationId, stationNameSnapshot, unitPriceSnapshot, taxRateSnapshot, grossAmount, discountAmount,
-            taxAmount, netAmount, quantity, kitchenNote);
+            taxAmount, netAmount, quantity, kitchenNote, discountKind, discountValue, discountApprovedByUserId, costPriceSnapshot);
     }
 
     /// <summary>Called by <see cref="RestoOrderRound.Release"/> for every non-voided item in the round.</summary>

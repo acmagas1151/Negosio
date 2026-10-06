@@ -13,7 +13,7 @@ public class RestoOrderRoundTests
     private static readonly Guid ProductVariantId = Guid.NewGuid();
 
     private static RestoOrder NewOrder() =>
-        RestoOrder.OpenBillOut(TenantId, Guid.NewGuid(), Guid.NewGuid(), UserId, Guid.NewGuid(), null);
+        RestoOrder.OpenBillOut(TenantId, Guid.NewGuid(), Guid.NewGuid(), UserId, Guid.NewGuid(), null, true);
 
     [Fact]
     public void OpenNextRound_starts_in_Draft_with_no_items()
@@ -36,7 +36,7 @@ public class RestoOrderRoundTests
             ProductVariantId, "Burger", null, StationId, "Kitchen",
             unitPriceSnapshot: 150m, taxRateSnapshot: 12m,
             grossAmount: 150m, discountAmount: 0m, taxAmount: 18m, netAmount: 150m,
-            quantity: 1m, kitchenNote: null);
+            quantity: 1m, kitchenNote: null, discountKind: Negosio.Domain.Enums.DiscountType.None, discountValue: 0m, discountApprovedByUserId: null, costPriceSnapshot: null);
         var now = DateTime.UtcNow;
 
         round.Release(UserId, now);
@@ -69,7 +69,7 @@ public class RestoOrderRoundTests
 
         var act = () => round.AddItem(
             ProductVariantId, "Burger", null, StationId, "Kitchen",
-            150m, 12m, 150m, 0m, 18m, 150m, 1m, null);
+            150m, 12m, 150m, 0m, 18m, 150m, 1m, null, Negosio.Domain.Enums.DiscountType.None, 0m, null, null);
 
         act.Should().Throw<InvalidOperationException>();
     }

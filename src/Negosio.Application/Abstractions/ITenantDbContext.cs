@@ -64,6 +64,27 @@ public interface ITenantDbContext : IAsyncDisposable
 
     DbSet<UserPermissionGrant> UserPermissionGrants { get; }
 
+    // RestoPOS
+    DbSet<RestoStation> RestoStations { get; }
+
+    DbSet<RestoTable> RestoTables { get; }
+
+    DbSet<ModifierGroup> ModifierGroups { get; }
+
+    DbSet<ModifierOption> ModifierOptions { get; }
+
+    DbSet<ProductModifierGroup> ProductModifierGroups { get; }
+
+    DbSet<RestoOrder> RestoOrders { get; }
+
+    DbSet<RestoOrderRound> RestoOrderRounds { get; }
+
+    DbSet<RestoOrderItem> RestoOrderItems { get; }
+
+    DbSet<RestoOrderItemModifier> RestoOrderItemModifiers { get; }
+
+    DbSet<SaleItemModifier> SaleItemModifiers { get; }
+
     DatabaseFacade Database { get; }
 
     EntityEntry<TEntity> Entry<TEntity>(TEntity entity) where TEntity : class;

@@ -10,6 +10,8 @@ namespace Negosio.Domain.Entities;
 /// </summary>
 public class SaleItem : Entity
 {
+    private readonly List<SaleItemModifier> _modifiers = new();
+
     private SaleItem()
     {
         ProductNameSnapshot = string.Empty;
@@ -151,6 +153,17 @@ public class SaleItem : Entity
         }
 
         Touch();
+    }
+
+    /// <summary>Modifiers chosen for this line, in the order the order item recorded them. Empty for retail lines.</summary>
+    public IReadOnlyCollection<SaleItemModifier> Modifiers => _modifiers.AsReadOnly();
+
+    public SaleItemModifier AddModifier(string modifierGroupNameSnapshot, string modifierOptionNameSnapshot, decimal priceDeltaSnapshot)
+    {
+        var modifier = new SaleItemModifier(
+            TenantId, Id, modifierGroupNameSnapshot, modifierOptionNameSnapshot, priceDeltaSnapshot, _modifiers.Count + 1);
+        _modifiers.Add(modifier);
+        return modifier;
     }
 
     public void RecordReturn(decimal quantity)

@@ -27,6 +27,10 @@ public sealed class RestoOrderItemConfiguration : IEntityTypeConfiguration<Resto
         builder.Property(i => i.TaxAmount).HasPrecision(18, 2);
         builder.Property(i => i.NetAmount).HasPrecision(18, 2);
         builder.Property(i => i.Quantity).HasPrecision(18, 3);
+        builder.Property(i => i.DiscountKind).IsRequired().HasConversion<int>();
+        builder.Property(i => i.DiscountValue).HasPrecision(18, 2);
+        builder.Property(i => i.DiscountApprovedByUserId);
+        builder.Property(i => i.CostPriceSnapshot).HasPrecision(18, 2);
         builder.Property(i => i.KitchenNote).HasMaxLength(500);
         builder.Property(i => i.KitchenStatus).HasConversion<int?>();
         builder.Property(i => i.VoidReason).HasMaxLength(500);

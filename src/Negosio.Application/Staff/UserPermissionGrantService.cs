@@ -108,6 +108,9 @@ public sealed class UserPermissionGrantService : IUserPermissionGrantService
             DiscountApply: grants.GetValueOrDefault(UserPermission.DiscountApply),
             CashDrawerOpen: grants.GetValueOrDefault(UserPermission.CashDrawerOpen),
             FulfillmentCancel: grants.GetValueOrDefault(UserPermission.FulfillmentCancel),
-            CashMovement: grants.GetValueOrDefault(UserPermission.CashMovement));
+            CashMovement: grants.GetValueOrDefault(UserPermission.CashMovement),
+            RestoItemVoid: grants.GetValueOrDefault(UserPermission.RestoItemVoid),
+            RestoOrderCancel: grants.GetValueOrDefault(UserPermission.RestoOrderCancel),
+            RestoUnpaidClose: grants.GetValueOrDefault(UserPermission.RestoUnpaidClose));
     }
 }

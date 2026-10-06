@@ -23,6 +23,15 @@ public sealed class RestoOrderConfiguration : IEntityTypeConfiguration<RestoOrde
         builder.Property(o => o.OpenedByUserId).IsRequired();
         builder.Property(o => o.OpenedAtUtc).IsRequired();
         builder.Property(o => o.CancelReason).HasMaxLength(500);
+        builder.Property(o => o.CancelApprovedByUserId);
+        builder.Property(o => o.PricesIncludeTaxSnapshot).IsRequired();
+        builder.Property(o => o.TaxRatePercentSnapshot).HasPrecision(9, 4).HasDefaultValue(0m);
+        builder.Property(o => o.SettlementRequestId);
+        builder.Property(o => o.UnpaidClosedAtUtc);
+        builder.Property(o => o.UnpaidClosedByUserId);
+        builder.Property(o => o.UnpaidClosureReason).HasMaxLength(500);
+        builder.Property(o => o.UnpaidClosureApprovedByUserId);
+        builder.Property(o => o.UnpaidClosureRequestId);
         builder.Property(o => o.RowVersion).IsRowVersion();
         builder.Property(o => o.CreatedAtUtc).IsRequired();
         builder.Property(o => o.UpdatedAtUtc).IsRequired();
@@ -59,5 +68,16 @@ public sealed class RestoOrderConfiguration : IEntityTypeConfiguration<RestoOrde
 
         builder.HasIndex(o => new { o.TenantId, o.BranchId, o.Status })
             .HasDatabaseName("IX_RestoOrders_TenantId_BranchId_Status");
+
+        // Settlement and unpaid-closure idempotency keys: a retry carrying the same key resolves to the
+        // original outcome; a different key on an already-decided order is rejected.
+        builder.HasIndex(o => new { o.TenantId, o.SettlementRequestId })
+            .IsUnique()
+            .HasFilter("[SettlementRequestId] IS NOT NULL")
+            .HasDatabaseName("IX_RestoOrders_TenantId_SettlementRequestId");
+        builder.HasIndex(o => new { o.TenantId, o.UnpaidClosureRequestId })
+            .IsUnique()
+            .HasFilter("[UnpaidClosureRequestId] IS NOT NULL")
+            .HasDatabaseName("IX_RestoOrders_TenantId_UnpaidClosureRequestId");
     }
 }

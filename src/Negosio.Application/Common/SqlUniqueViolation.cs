@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 
 namespace Negosio.Application.Common;
@@ -53,18 +54,16 @@ public static class SqlUniqueViolation
     }
 
     /// <summary>
-    /// SQL Server phrasing: "...unique index 'IX_ProductVariants_TenantId_Sku'..." or
-    /// "...UNIQUE KEY constraint 'IX_...'. Cannot insert duplicate key...".
+    /// SQL Server phrasing: "Cannot insert duplicate key row in object 'dbo.RestoOrders' with unique index
+    /// 'IX_RestoOrders_TableId_Open'." The first quoted token is the table, so the index name is read from the
+    /// text that introduces it ("unique index" or "UNIQUE KEY constraint").
     /// </summary>
     private static string? ExtractIndexName(string message)
     {
-        var start = message.IndexOf('\'');
-        if (start < 0)
-        {
-            return null;
-        }
-
-        var end = message.IndexOf('\'', start + 1);
-        return end < 0 ? null : message[(start + 1)..end];
+        var match = IndexNamePattern.Match(message);
+        return match.Success ? match.Groups[1].Value : null;
     }
+
+    private static readonly Regex IndexNamePattern = new(
+        @"(?:unique index|UNIQUE KEY constraint) '([^']+)'", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 }

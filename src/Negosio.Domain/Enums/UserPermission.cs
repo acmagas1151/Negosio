@@ -13,4 +13,7 @@ public enum UserPermission
     SalesReturn = 4,
     FulfillmentCancel = 5,
     CashMovement = 6,
+    RestoItemVoid = 7,
+    RestoOrderCancel = 8,
+    RestoUnpaidClose = 9,
 }
