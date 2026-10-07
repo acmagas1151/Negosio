@@ -3,6 +3,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Negosio.Application.Catalog;
 using Negosio.Application.Pos;
+using Negosio.Application.Auth;
 using Negosio.Application.Resto;
 using Negosio.Domain.Entities;
 using Negosio.Domain.Enums;
@@ -45,6 +46,45 @@ public abstract class RestoTestBase : IntegrationTest
         var session = await OpenSessionAsync(register.Id);
 
         return new Setup(branchId, tableId, stationId, variantId, session.Id, login.AccessToken, tenantId);
+    }
+
+    /// <summary>A Pay-as-you-order setup: no table, one stocked product. A different <paramref name="request"/> creates another tenant.</summary>
+    protected async Task<Setup> SetupPayoAsync(decimal openingStock, RegisterRequest? request = null)
+    {
+        var login = await RegisterLoginAndAuthorizeAsync(request);
+        var branchId = await GetMainBranchIdAsync(login);
+        var tenantId = login.User.TenantId;
+
+        var stationId = await InScopeAsync(async db =>
+        {
+            var branch = await db.Branches.SingleAsync(b => b.Id == branchId);
+            branch.ConfigureRestoServiceTypes(supportsPayAsYouOrder: true, supportsBillOut: true);
+            var station = RestoStation.Create(tenantId, branchId, "Kitchen");
+            db.RestoStations.Add(station);
+            await db.SaveChangesAsync();
+            return station.Id;
+        });
+
+        var category = await CreateCategoryAsync();
+        var (_, variantId) = await SeedStockedProductAsync(branchId, category.Id, openingStock: openingStock);
+        var register = await CreateRegisterAsync(branchId);
+        var session = await OpenSessionAsync(register.Id);
+
+        return new Setup(branchId, Guid.Empty, stationId, variantId, session.Id, login.AccessToken, tenantId);
+    }
+
+    /// <summary>Opens, adds one item, and settles a Pay-as-you-order order. Its single round stays Draft for the worker.</summary>
+    protected async Task<RestoOrderDto> SettlePayoOrderAsync(Setup setup, decimal quantity = 1m)
+    {
+        var open = await Client.PostAsJsonAsync("/api/resto/orders",
+            new OpenRestoOrderRequest(RestoServiceType.PayAsYouOrder, setup.SessionId, setup.BranchId, null, "Counter"));
+        open.EnsureSuccessStatusCode();
+        var order = (await open.Content.ReadFromJsonAsync<RestoOrderDto>(TestJson.Options))!;
+        order = await AddRoundAsync(order);
+        var roundId = order.Rounds.Single().Id;
+        order = await AddItemAsync(order, roundId, setup, quantity);
+        await SettleAsync(order, setup, Guid.NewGuid());
+        return await GetOrderAsync(order.Id);
     }
 
     protected async Task<RestoOrderDto> OpenOrderAsync(Setup setup, Guid? tableId = null)

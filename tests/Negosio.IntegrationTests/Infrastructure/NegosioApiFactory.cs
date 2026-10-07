@@ -89,7 +89,9 @@ public sealed class NegosioApiFactory : WebApplicationFactory<Program>, IAsyncLi
                 ["Jwt:Issuer"] = "negosio-api",
                 ["Jwt:Audience"] = "negosio-web",
                 ["Jwt:SigningKey"] = TestSigningKey,
-                ["Jwt:AccessTokenMinutes"] = "60"
+                ["Jwt:AccessTokenMinutes"] = "60",
+                ["Resto:Reconciliation:Enabled"] = "false",
+                ["Resto:Reconciliation:ReleaseGraceSeconds"] = "0"
             });
         });
     }

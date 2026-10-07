@@ -16,11 +16,13 @@ public sealed class RestoOrdersController : ControllerBase
 {
     private readonly IRestoOrderService _orders;
     private readonly IRestoSettlementService _settlement;
+    private readonly IRestoReleaseQueryService _releases;
 
-    public RestoOrdersController(IRestoOrderService orders, IRestoSettlementService settlement)
+    public RestoOrdersController(IRestoOrderService orders, IRestoSettlementService settlement, IRestoReleaseQueryService releases)
     {
         _orders = orders;
         _settlement = settlement;
+        _releases = releases;
     }
 
     [HttpPost]
@@ -72,4 +74,21 @@ public sealed class RestoOrdersController : ControllerBase
     [ProducesResponseType(typeof(RestoOrderDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<RestoOrderDto>> UnpaidClose(Guid id, [FromBody] UnpaidCloseRestoOrderRequest request, CancellationToken cancellationToken)
         => Ok(await _settlement.UnpaidCloseAsync(id, request, cancellationToken));
+
+    /// <summary>Settled Pay-as-you-order rounds still waiting for release. Oldest first; <c>limit</c> defaults to 50, capped at 200.</summary>
+    [HttpGet("pending-releases")]
+    [ProducesResponseType(typeof(RestoKeysetPageDto<PendingPayoReleaseRowDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RestoKeysetPageDto<PendingPayoReleaseRowDto>>> PendingReleases(
+        [FromQuery] Guid? branchId, [FromQuery] Guid? afterOrderId, [FromQuery] int? limit, CancellationToken cancellationToken)
+        => Ok(await _releases.ListPendingReleasesAsync(branchId, afterOrderId, limit, cancellationToken));
+
+    /// <summary>
+    /// Kitchen tickets available to the kitchen but unacknowledged longer than the configured threshold. This does not prove
+    /// the kitchen received the ticket. <c>limit</c> defaults to 50, capped at 200.
+    /// </summary>
+    [HttpGet("unacknowledged-tickets")]
+    [ProducesResponseType(typeof(RestoKeysetPageDto<UnacknowledgedTicketRowDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RestoKeysetPageDto<UnacknowledgedTicketRowDto>>> UnacknowledgedTickets(
+        [FromQuery] Guid? branchId, [FromQuery] Guid? afterItemId, [FromQuery] int? limit, CancellationToken cancellationToken)
+        => Ok(await _releases.ListUnacknowledgedTicketsAsync(branchId, afterItemId, limit, cancellationToken));
 }

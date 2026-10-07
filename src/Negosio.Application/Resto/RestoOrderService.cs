@@ -29,14 +29,6 @@ public interface IRestoOrderService
 
     Task<RestoOrderDto> CancelAsync(Guid orderId, CancelRestoOrderRequest request, CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// Recovery release for a settled Pay-as-you-order whose round was not released by the first attempt
-    /// (design spec 6.4). Safe to call repeatedly and from several app instances: a round already released,
-    /// voided, or not yet eligible is a no-op. No user actor and no client RowVersion.
-    /// </summary>
-    Task ReleaseRoundBySystemAsync(Guid orderId, Guid roundId, CancellationToken cancellationToken = default);
-
-    Task<IReadOnlyList<PendingPayoReleaseDto>> ListPendingPayoReleasesAsync(DateTime settledBeforeUtc, Guid? branchId, CancellationToken cancellationToken = default);
 }
 
 public sealed class RestoOrderService : IRestoOrderService
@@ -195,65 +187,48 @@ public sealed class RestoOrderService : IRestoOrderService
     {
         await _structuralValidator.ValidateAndThrowAppAsync(request, cancellationToken);
 
+        // Manual release is the same operation the worker runs (PayoRoundReleaseCore); this wrapper adds the
+        // client RowVersion check and the caller's branch scope, and maps the outcome to HTTP-facing errors.
+        var tenantId = RequireTenant();
+        var branchScope = await _branchAccess.AssignedBranchIdAsync(cancellationToken);
+
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
-        var order = await LockAndLoadOrderAsync(orderId, request.ExpectedRowVersion, cancellationToken);
-        var round = FindRound(order, roundId);
-
-        if (round.Status == RestoOrderRoundStatus.Voided)
-        {
-            throw new BusinessRuleException(ErrorCodes.RestoRoundNotDraft, "A voided round cannot be released.");
-        }
-
-        if (round.Status == RestoOrderRoundStatus.Released)
-        {
-            await transaction.CommitAsync(cancellationToken);
-            return await ProjectAsync(orderId, cancellationToken);
-        }
-
-        RequireReleasable(order);
-        round.Release(_currentUser.UserId, _timeProvider.GetUtcNow().UtcDateTime);
-        order.RecordStructuralChange();
-        await SaveAsync(cancellationToken);
+        var result = await PayoRoundReleaseCore.ReleaseAsync(
+            _db,
+            new PayoReleaseCommand(tenantId, orderId, roundId, _currentUser.UserId, request.ExpectedRowVersion, branchScope),
+            _timeProvider,
+            cancellationToken);
+        ThrowForManualOutcome(result);
         await transaction.CommitAsync(cancellationToken);
 
         return await ProjectAsync(orderId, cancellationToken);
     }
 
-    public async Task ReleaseRoundBySystemAsync(Guid orderId, Guid roundId, CancellationToken cancellationToken = default)
+    private static void ThrowForManualOutcome(PayoReleaseResult result)
     {
-        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
-        var order = await LockAndLoadOrderAsync(orderId, expectedRowVersion: null, cancellationToken);
-        var round = order.Rounds.SingleOrDefault(r => r.Id == roundId);
-
-        if (round is { Status: RestoOrderRoundStatus.Draft } && IsUserReleasable(order))
+        switch (result.Outcome)
         {
-            round.ReleaseBySystem(_timeProvider.GetUtcNow().UtcDateTime);
-            order.RecordStructuralChange();
-            await SaveAsync(cancellationToken);
+            case PayoReleaseOutcome.Released:
+            case PayoReleaseOutcome.AlreadyReleased:
+                return;
+            case PayoReleaseOutcome.NotFound:
+                throw new NotFoundException(ErrorCodes.RestoOrderNotFound, "Order not found.");
+            case PayoReleaseOutcome.RoundNotFound:
+                throw new NotFoundException(ErrorCodes.RestoRoundNotFound, "Round not found.");
+            case PayoReleaseOutcome.RowVersionMismatch:
+                throw new ConflictException(ErrorCodes.RestoOrderConcurrencyConflict,
+                    "This order was changed by someone else. Refresh and try again.");
         }
 
-        await transaction.CommitAsync(cancellationToken);
-    }
-
-    public async Task<IReadOnlyList<PendingPayoReleaseDto>> ListPendingPayoReleasesAsync(
-        DateTime settledBeforeUtc, Guid? branchId, CancellationToken cancellationToken = default)
-    {
-        var tenantId = RequireTenant();
-        var scope = await _branchAccess.AssignedBranchIdAsync(cancellationToken) ?? branchId;
-
-        return await (
-            from o in _db.RestoOrders.AsNoTracking()
-            join r in _db.RestoOrderRounds.AsNoTracking() on o.Id equals r.RestoOrderId
-            where o.TenantId == tenantId
-                && o.ServiceType == RestoServiceType.PayAsYouOrder
-                && o.Status == RestoOrderStatus.Settled
-                && o.SettledAtUtc <= settledBeforeUtc
-                && r.Status == RestoOrderRoundStatus.Draft
-                && (scope == null || o.BranchId == scope)
-                && _db.RestoOrderItems.Any(i => i.RestoOrderRoundId == r.Id && i.VoidedAtUtc == null)
-            orderby o.SettledAtUtc
-            select new PendingPayoReleaseDto(o.Id, r.Id, o.BranchId, o.SettledAtUtc!.Value)
-        ).ToListAsync(cancellationToken);
+        throw result.Refusal switch
+        {
+            PayoRefusalReason.RoundVoided => new BusinessRuleException(ErrorCodes.RestoRoundNotDraft, "A voided round cannot be released."),
+            PayoRefusalReason.OrderNotReleasable => new BusinessRuleException(ErrorCodes.RestoOrderNotOpen,
+                "This order is no longer open for release."),
+            PayoRefusalReason.NoBillableItems => new BusinessRuleException(ErrorCodes.RestoNoBillableItems, "There is nothing to release on this round."),
+            _ => new BusinessRuleException(ErrorCodes.RestoReleaseSaleNotCompleted,
+                "The sale for this order is no longer completed, so the round cannot be released."),
+        };
     }
 
     // ---- Items ---------------------------------------------------------------------------------
@@ -582,23 +557,6 @@ public sealed class RestoOrderService : IRestoOrderService
             throw new BusinessRuleException(ErrorCodes.RestoOrderNotOpen, "This order is no longer open.");
         }
     }
-
-    /// <summary>Bill-Out releases while the order is open and unpaid. PAYO releases only after settlement (spec 6.4).</summary>
-    private static void RequireReleasable(RestoOrder order)
-    {
-        if (!IsUserReleasable(order))
-        {
-            throw new BusinessRuleException(ErrorCodes.RestoOrderNotOpen,
-                order.ServiceType == RestoServiceType.PayAsYouOrder
-                    ? "A Pay-as-you-order round is released only after the order is paid."
-                    : "This order is no longer open.");
-        }
-    }
-
-    private static bool IsUserReleasable(RestoOrder order) =>
-        order.ServiceType == RestoServiceType.BillOut
-            ? order.Status == RestoOrderStatus.Open
-            : order.Status == RestoOrderStatus.Settled;
 
     private async Task GuardBranchAsync(Guid branchId, CancellationToken cancellationToken)
     {

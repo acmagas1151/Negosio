@@ -88,9 +88,6 @@ public sealed record RestoOrderDto(
     RestoOrderSummaryDto Summary,
     Guid? SaleId);
 
-/// <summary>A settled Pay-as-you-order whose single round has not yet been released to the kitchen (spec 6.4).</summary>
-public sealed record PendingPayoReleaseDto(Guid OrderId, Guid RoundId, Guid BranchId, DateTime SettledAtUtc);
-
 public sealed record RestoSettlementResultDto(
     Guid SaleId,
     string SaleNumber,

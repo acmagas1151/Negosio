@@ -13,7 +13,7 @@ _Generated: 2026-10-06 — current as of `master` @ `26643ce`, pushed to `origin
 
 ## Current Task
 
-RestoPOS **Milestone 2 (order lifecycle) backend is implemented and tested, but NOT committed, merged, or pushed.** Awaiting the user's review. Spec: `docs/superpowers/specs/2026-09-28-restopos-design.md` (rev. 2026-10-06). Plan: `docs/superpowers/plans/2026-10-06-restopos-m2-order-lifecycle.md`. Frontend is untouched in M2.
+RestoPOS **Milestone 2 (order lifecycle) is committed as `1020a3c` on `feature/resto_pos` and fast-forward merged into local `master`. Pushed to `origin/master`.** Spec: `docs/superpowers/specs/2026-09-28-restopos-design.md` (rev. 2026-10-06). Plan: `docs/superpowers/plans/2026-10-06-restopos-m2-order-lifecycle.md`. Frontend is untouched in M2.
 
 ## Completed Work (most recent first)
 
@@ -68,7 +68,7 @@ Branch `feature/resto_pos`, merged fast-forward to `master`. Nine new entities u
 - Test accounts exist: `owner@testco.com` / `TestPass123!` (Owner) and `cashier@testco.com` / `CashierPass123!` (Cashier), both on "Demo Test Co" / Main Branch. Seeded with 6 products, 3 categories, stock, and a register (REG01 "Counter 1").
 
 **Git state:**
-- `master` == `origin/master` == `26643ce` at last push. **Working tree has many uncommitted M2 changes** (domain, application, infrastructure, api, tests, migration, and design docs). Nothing committed for M2. Do not commit or push without the user's explicit go-ahead.
+- Local `master` == `feature/resto_pos` == `1020a3c` (M2), not pushed. `origin/master` == `1020a3c` (pushed). Working tree clean.
 - Branch refs kept on purpose (standing preference: don't delete branches after merging): `feature/resto_pos`, `worktree-restopos-domain`, `worktree-reports-fulfillment-polish`.
 
 **Open items:**
@@ -116,3 +116,23 @@ Before doing anything else:
 
 Then: [describe the next plan — e.g. "RestoPOS Milestone 2: resolve the Section 10 decisions, then write the M2 spec and plan" or "fix the duplicate sale-number issue once I send repro steps"].
 ```
+
+## Local migration status (2026-10-06)
+- `20261006045817_AddRestoM2Lifecycle` is applied to all 40 tenant databases mapped in local `Negosio_Platform` (`(localdb)\MSSQLLocalDB`, server key `default`). Verified 40/40.
+- 14 `Negosio.BrunosCafe_*` databases exist on disk but are not mapped in `TenantDatabases`; they were not touched.
+- No staging or production database was touched.
+- M3 plan: `docs/superpowers/plans/2026-10-06-restopos-m3-reliability.md` (draft, awaiting review; no M3 code yet).
+
+## RestoPOS M3 — reliability and reconciliation (2026-10-07, branch `resto_pos_m3`, uncommitted)
+- Built: shared release core (`PayoRoundReleaseCore`) used by the manual action and the worker; the sale must still be Completed under the lock; lock order is register session, then order. Background worker `PayoReleaseWorker` (API host, `BackgroundService`) with per-tenant isolation, in-memory backoff, and structured logs. Endpoints: `GET api/resto/orders/pending-releases` and `GET api/resto/orders/unacknowledged-tickets` (keyset paging, limit 50, cap 200).
+- Config `Resto:Reconciliation`: `Enabled` (true), `PollIntervalSeconds` (15, range 10–15), `ReleaseGraceSeconds` (30, range 0–300), `BatchSize` (50), `UnacknowledgedAlertMinutes` (5), `FailureBackoffMaxMinutes` (10). Invalid values stop startup.
+- Tests: unit 257/257; integration 381/381 (13 new in `RestoPayoReleaseTests`).
+- Local DB: M2 migration applied to the 40 mapped dev tenant databases. The 14 unmapped BrunosCafe databases are untouched.
+- Limitations: backoff resets on restart; refused orders are re-examined each cycle (bounded to 10 pages × batch); per-order failure isolation and mid-batch cancellation are covered by code review, not by automated tests; "unacknowledged" means available to the kitchen but not acknowledged, not proof of receipt.
+
+## M3 verification gaps closed (2026-10-07)
+- Found a real starvation bug during review: the 10-page-per-cycle budget reset to the head of the queue every cycle, so a head full of permanently refused orders would hide every later order forever. Fixed with a per-tenant cursor (`PayoReleaseCursorStore`, in-memory, resets on restart) that persists across cycles and only resets once a full pass reaches the end. Backoff moved from a SQL exclusion list into an in-memory check for the same reason (an unbounded `NOT IN` list risked the SQL parameter limit).
+- Added and verified: per-order failure isolation (a real constraint-violation failure on one order; a later order in the same tenant still releases, and a mutation check confirmed `PayoReleaseCycleResult.Failures` actually asserts), mid-batch cancellation (a row lock blocks the worker inside the first order; cancelling mid-processing leaves no partial release; a later pass recovers both orders), and the cross-cycle starvation fix itself (mutation-tested: reverting the cursor persistence makes the test fail).
+- Removed now-dead code (`RequireReleasable`, `IsUserReleasable`) left behind by the manual-release refactor.
+- Final counts: unit 257/257; integration 384/384 (16 in `RestoPayoReleaseTests`, up from 13).
+- Still uncommitted, unmerged, unpushed on `resto_pos_m3`.

@@ -132,6 +132,7 @@ public static class ErrorCodes
     public const string RestoProductNotOrderable = "RESTO_PRODUCT_NOT_ORDERABLE";
     public const string RestoPayoSingleRound = "RESTO_PAYO_SINGLE_ROUND";
     public const string RestoUnpaidCloseBillOutOnly = "RESTO_UNPAID_CLOSE_BILL_OUT_ONLY";
+    public const string RestoReleaseSaleNotCompleted = "RESTO_RELEASE_SALE_NOT_COMPLETED";
     public const string RestoRequiredModifierMissing = "RESTO_REQUIRED_MODIFIER_MISSING";
     public const string RestoModifierSelectionInvalid = "RESTO_MODIFIER_SELECTION_INVALID";
 

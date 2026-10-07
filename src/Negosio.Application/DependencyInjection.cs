@@ -52,6 +52,12 @@ public static class DependencyInjection
         services.AddScoped<IRestoUnpaidCloseAuthorizationResolver, RestoUnpaidCloseAuthorizationResolver>();
         services.AddScoped<IRestoOrderService, RestoOrderService>();
         services.AddScoped<IRestoSettlementService, RestoSettlementService>();
+        services.AddScoped<IRestoReleaseQueryService, RestoReleaseQueryService>();
+        services.AddScoped<IPayoReleaseWorkerService, PayoReleaseWorkerService>();
+        // Process-wide: failing orders stay in backoff across worker cycles. Resets on restart by design (M3).
+        services.AddSingleton<FailureBackoff<(Guid TenantId, Guid OrderId)>>();
+        // Process-wide resume point per tenant, so a pass that stops at its page budget continues on the next poll.
+        services.AddSingleton<PayoReleaseCursorStore>();
         services.AddScoped<IRegisterCashMovementService, RegisterCashMovementService>();
         services.AddScoped<ICashDrawerService, CashDrawerService>();
         services.AddScoped<IPosCatalogService, PosCatalogService>();

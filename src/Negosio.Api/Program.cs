@@ -1,11 +1,14 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Negosio.Api.Authentication;
 using Negosio.Api.Authorization;
+using Negosio.Api.Hosting;
 using Negosio.Api.Middleware;
 using Negosio.Application;
 using Negosio.Application.Abstractions;
+using Negosio.Application.Resto;
 using Negosio.Infrastructure;
 using Negosio.Infrastructure.Persistence;
 using Negosio.Infrastructure.Tenancy;
@@ -31,6 +34,15 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// PAYO release worker and kitchen-ticket alert settings (section Resto:Reconciliation). Bound through IOptions so the
+// values are read after the host is built; invalid values stop startup (ValidateOnStart).
+builder.Services.AddOptions<RestoReconciliationOptions>()
+    .Bind(builder.Configuration.GetSection("Resto:Reconciliation"))
+    .Validate(options => options.Validate().Count == 0, "Invalid Resto:Reconciliation settings; see RestoReconciliationOptions.Validate.")
+    .ValidateOnStart();
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<RestoReconciliationOptions>>().Value);
+builder.Services.AddHostedService<PayoReleaseWorker>();
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
